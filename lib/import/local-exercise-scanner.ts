@@ -22,6 +22,7 @@
 import type {
   AiExerciseDiagram,
   AiExerciseImport,
+  AiPoint,
   AiRect,
 } from "./types";
 import { createImportDebug, type ImportDebugCollector } from "./debug";
@@ -43,10 +44,12 @@ import {
   classifyCourt,
   detectCourtCandidates,
   detectCourtRect,
+  courtToCanonical,
   detectPlayingArea,
   regionSignature,
   signatureDistance,
 } from "./court-geometry";
+import { isolateLandmarkInk, registerLandmarkCourt } from "./landmark-court";
 import { recoverReferenceInk } from "./reference-ink";
 import { recoverRedArrows } from "./reference-arrows";
 import { analyseGraphic } from "./diagram-vision";
@@ -1114,6 +1117,50 @@ export async function scanExerciseLocally(
 
       onStatus?.(`Reconstruction des schémas dans Plaquette${suffix}…`);
       const labelled = graphicRegions(layout, canvas.width, canvas.height);
+      // Single upright paper diagrams: calibrate the basketball markings before
+      // looking for strokes. Keep these proposals in the review rather than
+      // allowing a high stroke count to promote a false court.
+      if (!isVideo && !labelled.length) {
+        const registered = registerLandmarkCourt(canvas);
+        if (registered) {
+          const { canvas: aligned, play, anchors } = registered;
+          const courtReference = makeCourtReference(aligned, play);
+          if (courtReference) {
+            debug.note(`Calage sur ligne de fond, coins de raquette et arc à 3 points${anchors.corners ? " (raccords latéraux reconnus)" : ""}.`);
+            state.rectifiedImage = courtReference.url;
+            const geometry: CourtGeometry = {
+              rect: play, play, playDetected: true, kind: "half", orientation: "identity",
+              confidence: .65, reasons: ["Repères de raquette et de ligne à trois points"],
+            };
+            const analysis = await debug.time("vision-reperes-terrain", () =>
+              analyseGraphic(isolateLandmarkInk(aligned), geometry, "reperes")).catch(error => {
+                debug.note(`Tracés non analysés après calage : ${error instanceof Error ? error.message : String(error)}`);
+                return null;
+              });
+            const players = (analysis?.players ?? []).filter(player => player.label && player.labelConfident !== false);
+            const keys = new Set(players.map(player => player.key));
+            const keyTop = courtToCanonical({ x: 5.05 / 15, y: 0 }, "half");
+            const keyEnd = courtToCanonical({ x: 9.95 / 15, y: 5.8 / 14 }, "half");
+            const inPaint = (point: AiPoint) => point.x > keyTop.x - .015 && point.x < keyEnd.x + .015
+              && point.y < keyEnd.y + .02;
+            const actions = (analysis?.actions ?? []).filter(action => action.action !== "screen"
+              && (action.confidence ?? 0) >= .65
+              // On the printed key, inner lane lines can survive the outer
+              // contour mask. Do not promote isolated fragments of those lines.
+              && !(anchors.painted && action.from && inPaint(action.from) && inPaint(action.to)))
+              .map(action => ({
+                ...action, fromPlayer: keys.has(action.fromPlayer ?? "") ? action.fromPlayer : undefined,
+                toPlayer: keys.has(action.toPlayer ?? "") ? action.toPlayer : undefined, confidence: .45,
+                source: "Tracé analysé après calage sur les lignes du terrain : à vérifier",
+              }));
+            state.referenceFallback = {
+              detected: true, courtType: "half", players, objects: [], actions, notes: "", rectified: true,
+              courtReference, landmarkAligned: true,
+            };
+            continue;
+          }
+        }
+      }
       const regions = labelled.length ? labelled : fallbackGraphicRegions(canvas, debug);
 
       if (!regions.length) {

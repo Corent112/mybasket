@@ -127,6 +127,8 @@ export type AiExerciseDiagram = {
   sourceLabel?: string;
   /** true si ce schéma vient d'un terrain redressé par homographie. */
   rectified?: boolean;
+  /** Calage sur les marquages internes du demi-terrain. */
+  landmarkAligned?: boolean;
   /** Image de référence recadrée sur les lignes du terrain, orientée comme les objets. */
   courtReference?: { url: string; play: AiRect };
   /** Score du redressement (marquages officiels retrouvés), quand applicable. */

@@ -714,6 +714,18 @@ export default function ImportReview({
     }));
   };
 
+  const reverseAction = (index: number) => {
+    updateDiagram(item => ({ ...item, actions: item.actions.map((action, i) => {
+      if (i !== index || !action.from) return action;
+      return {
+        ...action, from: action.to, to: action.from,
+        points: action.points ? [...action.points].reverse() : undefined,
+        fromPlayer: action.action === "pass" ? action.toPlayer : undefined,
+        toPlayer: action.action === "pass" ? action.fromPlayer : undefined,
+      };
+    }) }));
+  };
+
   const confirmSelected = () => {
     if (!selection || !diagram) return;
     updateDiagram((item) => {
@@ -825,7 +837,7 @@ export default function ImportReview({
           <h2 style={styles.title}>{result.referenceFallback && !diagram.players.length && !diagram.actions.length && !diagram.objects.length ? "Reconstitue le schéma sur le calque" : "Vérifie le schéma importé"}</h2>
           {result.referenceFallback && <p style={styles.hint}>Le terrain est reconnu. Vérifie les tracés proposés et ajoute les joueurs et les mouvements manquants.</p>}
           <p style={styles.subtitle}>
-            {diagram.rectified
+            {diagram.landmarkAligned ? "Calage sur la raquette et la ligne à trois points" : diagram.rectified
               ? `Terrain redressé (fiabilité ${Math.round((diagram.rectifyScore ?? 0) * 100)} %)`
               : "Terrain détecté sans redressement"}
             {typeof result.importConfidence === "number"
@@ -993,6 +1005,11 @@ export default function ImportReview({
                       Trajectoire détectée : <strong>{selectedAction.action}</strong>. Choisis sa signification MyBasket ;
                       la géométrie du tracé est conservée.
                     </p>
+                    {selectedAction.from && selectedAction.action !== "freedraw" && (
+                      <button type="button" style={styles.button} onClick={() => reverseAction(selection.index)}>
+                        Inverser le sens
+                      </button>
+                    )}
                     {selectedAction.action !== "freedraw" && (
                       <div style={styles.fieldRow}>
                         <label style={styles.fieldLabel}>
