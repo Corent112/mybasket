@@ -129,7 +129,7 @@ export default function ExercisePhotoImport({ onImported, playersOnly = false, d
       if (IMPORT_DEBUG_ENABLED) setDebug(exercise.debug ?? null);
       if (isImage) setSourceImage(URL.createObjectURL(file));
       setStatus("");
-      setStep(drawingOnly && diagramsOf(exercise).length ? "review" : "summary");
+      setStep(drawingOnly && (diagramsOf(exercise).length || exercise.referenceFallback) ? "review" : "summary");
     } catch (e) {
       setStatus("");
       setStep("idle");
@@ -252,7 +252,9 @@ export default function ExercisePhotoImport({ onImported, playersOnly = false, d
             )}
             {diagramCount === 0 && (
               <span style={summaryStyles.hint}>
-                Le texte lu sera repris dans le formulaire ; le schéma reste à dessiner dans Plaquette.
+                {pending.referenceFallback
+                  ? "Le terrain est aligné. Ouvre le calque pour vérifier et retracer les éléments manquants."
+                  : "Le texte lu sera repris dans le formulaire ; le schéma reste à dessiner dans Plaquette."}
               </span>
             )}
           </div>
@@ -269,10 +271,10 @@ export default function ExercisePhotoImport({ onImported, playersOnly = false, d
             <button
               type="button"
               style={summaryStyles.button}
-              disabled={diagramCount === 0}
+              disabled={diagramCount === 0 && !pending.referenceFallback}
               onClick={() => setStep("review")}
             >
-              Corriger
+              {pending.referenceFallback ? "Ouvrir le calque" : "Corriger"}
             </button>
           </div>
 
@@ -313,7 +315,7 @@ export default function ExercisePhotoImport({ onImported, playersOnly = false, d
             <button
               type="button"
               style={summaryStyles.buttonPrimary}
-              disabled={busy}
+              disabled={busy || (drawingOnly && diagramCount === 0)}
               onClick={() => void validate(pending)}
             >
               Valider l’import

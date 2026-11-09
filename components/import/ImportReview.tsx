@@ -188,7 +188,8 @@ export default function ImportReview({
   validateLabel = "Valider l'import",
 }: Props) {
   const initial = useMemo<AiExerciseDiagram[]>(() => {
-    const source = diagramsOf(result);
+    const detected = diagramsOf(result);
+    const source = !detected.length && result.referenceFallback ? [result.referenceFallback] : detected;
     // Copie profonde : on ne modifie jamais le résultat d'import reçu.
     return source.map((diagram) => ({
       ...diagram,
@@ -210,6 +211,9 @@ export default function ImportReview({
   const traceRef = useRef<AiPoint[] | null>(null);
   const [tracePreview, setTracePreview] = useState<AiPoint[]>([]);
   const [addMode, setAddMode] = useState<AiDetectionType | null>(null);
+  const [annotationMode, setAnnotationMode] = useState(false);
+  const [annotation, setAnnotation] = useState("");
+  const [inkColor, setInkColor] = useState("#0f0f12");
   const [dragging, setDragging] = useState(false);
 
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -290,7 +294,7 @@ export default function ImportReview({
 
     if (tracePreview.length > 1) {
       ctx.save();
-      ctx.strokeStyle = COLORS.selected;
+      ctx.strokeStyle = inkColor;
       ctx.lineWidth = 3;
       ctx.beginPath();
       tracePreview.forEach((point, index) => {
@@ -308,7 +312,7 @@ export default function ImportReview({
       const doubt = needsReview(action.confidence);
       const isSelected = selection?.kind === "action" && selection.index === index;
       ctx.save();
-      ctx.strokeStyle = isSelected ? COLORS.selected : doubt ? COLORS.doubt : action.color || COLORS.ink;
+      ctx.strokeStyle = isSelected ? COLORS.selected : action.color || (doubt ? COLORS.doubt : COLORS.ink);
       ctx.lineWidth = isSelected ? 4 : 3;
       ctx.setLineDash(action.action === "pass" ? [9, 6] : []);
       ctx.beginPath();
@@ -381,7 +385,7 @@ export default function ImportReview({
         ctx.arc(0, 0, 9, 0, Math.PI * 2);
         ctx.fill();
       } else if (object.kind === "text") {
-        ctx.fillStyle = doubt ? COLORS.doubt : COLORS.ink;
+        ctx.fillStyle = doubt ? COLORS.doubt : object.color || COLORS.ink;
         ctx.font = "600 13px system-ui, sans-serif";
         ctx.textAlign = "center";
         ctx.fillText(object.text ?? "", 0, 4);
@@ -440,7 +444,7 @@ export default function ImportReview({
       ctx.fillText(type === "unknown" ? "?" : String(player.label ?? ""), 0, 1);
       ctx.restore();
     });
-  }, [diagram, courtType, overlay, overlayReady, selection, nativeCourtReady, tracePreview]);
+  }, [diagram, courtType, overlay, overlayReady, selection, nativeCourtReady, tracePreview, inkColor]);
 
   useEffect(() => {
     draw();
@@ -496,6 +500,18 @@ export default function ImportReview({
       traceRef.current = [point];
       setTracePreview([point]);
       event.currentTarget.setPointerCapture(event.pointerId);
+      return;
+    }
+
+    if (annotationMode) {
+      const label = annotation.trim();
+      if (!label) return;
+      const point = pixelToCanonical(x, y, canvas.width, canvas.height, courtType);
+      updateDiagram(item => ({ ...item, objects: [...item.objects, {
+        ...point, kind: "text", text: label, color: inkColor, confidence: 1, source: "ajouté à la main",
+      }] }));
+      setAnnotationMode(false);
+      setSelection({ kind: "object", index: diagram.objects.length });
       return;
     }
 
@@ -584,7 +600,7 @@ export default function ImportReview({
     if (!points || points.length < 2) return;
     updateDiagram(item => ({ ...item, actions: [...item.actions, {
       action: traceKind, from: points[0], to: points[points.length - 1], points,
-      confidence: 1, source: "retracé à la main",
+      color: inkColor, confidence: 1, source: "retracé à la main",
     }] }));
     setSelection({ kind: "action", index: diagram.actions.length, end: "to" });
   };
@@ -712,13 +728,15 @@ export default function ImportReview({
 
   const doubtful = useMemo(() => reviewItemsOfDiagram(diagram), [diagram]);
 
+  const kept = diagrams.filter(
+    (item) => item.players.length > 0 || item.actions.length > 0 || item.objects.length > 0
+  );
   const validate = () => {
-    const kept = diagrams.filter(
-      (item) => item.players.length > 0 || item.actions.length > 0 || item.objects.length > 0
-    );
+    if (result.referenceFallback && !kept.length) return;
     onValidate({
       ...result,
-      diagram: kept[0] ?? result.diagram,
+      referenceFallback: undefined,
+      diagram: kept[0] ?? { ...result.diagram, detected: false },
       diagrams: kept,
       warnings: [
         ...(result.warnings ?? []),
@@ -777,7 +795,8 @@ export default function ImportReview({
     <div style={styles.wrapper}>
       <div style={styles.header}>
         <div>
-          <h2 style={styles.title}>Vérifie le schéma importé</h2>
+          <h2 style={styles.title}>{result.referenceFallback ? "Reconstitue le schéma sur le calque" : "Vérifie le schéma importé"}</h2>
+          {result.referenceFallback && <p style={styles.hint}>Le terrain est reconnu. Vérifie les tracés proposés et ajoute les joueurs et les mouvements manquants.</p>}
           <p style={styles.subtitle}>
             {diagram.rectified
               ? `Terrain redressé (fiabilité ${Math.round((diagram.rectifyScore ?? 0) * 100)} %)`
@@ -848,21 +867,21 @@ export default function ImportReview({
               <button
                 type="button"
                 style={addMode === "attacker" ? styles.buttonPrimary : styles.button}
-                onClick={() => { setTraceMode(false); setAddMode(addMode === "attacker" ? null : "attacker"); }}
+                onClick={() => { setTraceMode(false); setAnnotationMode(false); setAddMode(addMode === "attacker" ? null : "attacker"); }}
               >
                 + Attaquant
               </button>
               <button
                 type="button"
                 style={addMode === "defender" ? styles.buttonPrimary : styles.button}
-                onClick={() => { setTraceMode(false); setAddMode(addMode === "defender" ? null : "defender"); }}
+                onClick={() => { setTraceMode(false); setAnnotationMode(false); setAddMode(addMode === "defender" ? null : "defender"); }}
               >
                 + Défenseur
               </button>
             </div>
             <div style={styles.row}>
               <button type="button" style={traceMode ? styles.buttonPrimary : styles.button}
-                aria-pressed={traceMode} onClick={() => { setTraceMode(!traceMode); setAddMode(null); }}>
+                aria-pressed={traceMode} onClick={() => { setTraceMode(!traceMode); setAddMode(null); setAnnotationMode(false); }}>
                 Retracer un mouvement
               </button>
               {traceMode && <select aria-label="Type de mouvement à retracer" value={traceKind}
@@ -872,6 +891,18 @@ export default function ImportReview({
                 <option value="screen">Écran</option><option value="shoot">Tir</option>
               </select>}
             </div>
+            <div style={styles.row}>
+              <button type="button" style={annotationMode ? styles.buttonPrimary : styles.button}
+                aria-pressed={annotationMode} onClick={() => { setAnnotationMode(!annotationMode); setTraceMode(false); setAddMode(null); }}>
+                + Texte ou numéro
+              </button>
+              {annotationMode && <input aria-label="Texte ou numéro à placer" maxLength={40} value={annotation}
+                onChange={event => setAnnotation(event.target.value)} placeholder="Ex. 1" />}
+              {(traceMode || annotationMode) && <label style={styles.slider}>Couleur
+                <input type="color" value={inkColor} onChange={event => setInkColor(event.target.value)} />
+              </label>}
+            </div>
+            {annotationMode && <p style={styles.hint}>Saisis le texte, puis clique sur le terrain pour le placer.</p>}
             {traceMode && <p style={styles.hint}>Suis le tracé de la photo du départ à l’arrivée.</p>}
             {addMode ? <p style={styles.hint}>Clique sur le terrain pour le placer.</p> : null}
           </section>
@@ -994,7 +1025,7 @@ export default function ImportReview({
             {cancelLabel}
           </button>
         ) : null}
-        <button type="button" style={styles.buttonPrimary} onClick={validate}>
+        <button type="button" style={styles.buttonPrimary} disabled={Boolean(result.referenceFallback && !kept.length)} onClick={validate}>
           {doubtful.length
             ? `Valider malgré ${doubtful.length} élément${doubtful.length > 1 ? "s" : ""} à confirmer`
             : validateLabel}

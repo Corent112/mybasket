@@ -469,6 +469,32 @@ async function main() {
   );
   await unmount();
 
+  console.log("\n7b. Calque en cas de reconnaissance partielle");
+  await mount();
+  await runImport(importResult({
+    diagram: diagram({ detected: false, players: [] }), diagrams: [],
+    referenceFallback: diagram({ players: [] }),
+  }));
+  await click("Ouvrir le calque");
+  check("la photo est proposée même sans schéma automatique", /photo alignée sur le terrain/i.test(text()));
+  check("pas d’insertion d’un calque vide", findButton("Valider l’import").disabled && injections.length === 0);
+  await click("+ Texte ou numéro");
+  const annotation = document.querySelector('[aria-label="Texte ou numéro à placer"]');
+  await act(async () => {
+    Object.getOwnPropertyDescriptor(dom.window.HTMLInputElement.prototype, "value").set.call(annotation, "1");
+    annotation.dispatchEvent(new dom.window.Event("input", { bubbles: true }));
+  });
+  const fallbackCanvas = document.querySelector("canvas");
+  fallbackCanvas.getBoundingClientRect = () => ({ left: 0, top: 0, width: fallbackCanvas.width, height: fallbackCanvas.height });
+  await act(async () => {
+    fallbackCanvas.dispatchEvent(new dom.window.MouseEvent("pointerdown", { bubbles: true, clientX: 160, clientY: 140 }));
+  });
+  await click("Valider l’import");
+  const annotationObject = ui.importToPlaquetteSchema(lastImported)?.phases[0]?.objects[0];
+  check("le numéro est inséré comme objet natif", annotationObject?.kind === "text" && annotationObject.text === "1");
+  check("le calque temporaire n'est pas réinjecté", !lastImported.referenceFallback);
+  await unmount();
+
   /* 8. needsReview ------------------------------------------------------- */
   console.log("\n8. needsReview");
   await mount();

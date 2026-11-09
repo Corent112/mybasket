@@ -46,6 +46,7 @@ import {
   regionSignature,
   signatureDistance,
 } from "./court-geometry";
+import { recoverRedArrows } from "./reference-arrows";
 import { analyseGraphic } from "./diagram-vision";
 import { courtMarkingScore, quadBounds, rectifyCourt, type Rectified } from "./court-rectify";
 import type { CourtGeometry } from "./court-geometry";
@@ -753,6 +754,7 @@ export type DiagramCollector = {
   /** Régions déjà retenues : deux schémas ne peuvent pas se superposer. */
   accepted: AiRect[];
   rectifiedImage?: string;
+  referenceFallback?: AiExerciseDiagram;
   mediumConfidence: boolean;
 };
 
@@ -763,6 +765,24 @@ export const createDiagramCollector = (): DiagramCollector => ({
   accepted: [],
   mediumConfidence: false,
 });
+
+function makeCourtReference(source: HTMLCanvasElement, play: AiRect): AiExerciseDiagram["courtReference"] {
+  try {
+    const scale = Math.min(1, 900 / Math.max(source.width, source.height));
+    const preview = document.createElement("canvas");
+    preview.width = Math.max(1, Math.round(source.width * scale));
+    preview.height = Math.max(1, Math.round(source.height * scale));
+    const ctx = preview.getContext("2d");
+    if (ctx && source.width && source.height && play.x1 > play.x0 && play.y1 > play.y0) {
+      ctx.drawImage(source, 0, 0, preview.width, preview.height);
+      return {
+        url: preview.toDataURL("image/jpeg", 0.85),
+        play: { x0: play.x0 / source.width, x1: play.x1 / source.width,
+          y0: play.y0 / source.height, y1: play.y1 / source.height },
+      };
+    }
+  } catch { /* La numérisation reste utilisable sans calque de référence. */ }
+}
 
 /** Intersection sur union de deux rectangles. */
 function overlapRatio(a: AiRect, b: AiRect): number {
@@ -929,6 +949,16 @@ export async function collectFromRegion(
 
   const minimum = usedRectified && rectified && rectified.level === "haute" ? 0.8 : 2.2;
   if (chosen.score < minimum) {
+    if (rectified && rectified.score > (state.referenceFallback?.rectifyScore ?? 0)) {
+      const courtReference = makeCourtReference(rectified.canvas, rectified.play);
+      if (courtReference) {
+        state.referenceFallback = {
+          detected: true, courtType: rectified.kind, players: [], objects: [],
+          actions: recoverRedArrows(rectified), notes: "", rectified: true,
+          rectifyScore: rectified.score, courtReference,
+        };
+      }
+    }
     debug.reject({
       stage: "schéma",
       what: "graphique",
@@ -960,24 +990,7 @@ export async function collectFromRegion(
   }
 
   if (usedRectified && rectified && rectified.level === "moyenne") state.mediumConfidence = true;
-  try {
-    // Use the same oriented bitmap and the same play rect as symbol detection.
-    const source = analysis.workCanvas;
-    const play = analysis.playRect;
-    const scale = Math.min(1, 900 / Math.max(source.width, source.height));
-    const preview = document.createElement("canvas");
-    preview.width = Math.max(1, Math.round(source.width * scale));
-    preview.height = Math.max(1, Math.round(source.height * scale));
-    const ctx = preview.getContext("2d");
-    if (ctx && source.width && source.height && play.x1 > play.x0 && play.y1 > play.y0) {
-      ctx.drawImage(source, 0, 0, preview.width, preview.height);
-      candidate.courtReference = {
-        url: preview.toDataURL("image/jpeg", 0.85),
-        play: { x0: play.x0 / source.width, x1: play.x1 / source.width,
-          y0: play.y0 / source.height, y1: play.y1 / source.height },
-      };
-    }
-  } catch { /* La numérisation reste utilisable sans calque de référence. */ }
+  candidate.courtReference = makeCourtReference(analysis.workCanvas, analysis.playRect);
   state.contentSignatures.add(content);
   state.accepted.push(region);
   state.diagrams.push(candidate);
@@ -1158,8 +1171,8 @@ export async function scanExerciseLocally(
     if (!deroulement.length) warnings.push("Aucune zone Description / Déroulement n'a été trouvée : le champ reste vide.");
     if (!diagrams.length) {
       warnings.push(
-        state.rectifiedImage
-          ? "Aucun élément n'a pu être reconnu, mais le terrain a été redressé : l'image est utilisable comme calque dans Plaquette."
+        !isVideo && state.referenceFallback
+          ? "Reconstruction partielle : vérifie le calque et complète les éléments manquants."
           : "Aucun schéma exploitable n'a été reconnu : tu peux le dessiner dans Plaquette."
       );
     }
@@ -1252,6 +1265,7 @@ export async function scanExerciseLocally(
       diagrams,
       source: "local",
       rectifiedImage: state.rectifiedImage,
+      referenceFallback: !isVideo && diagrams.length === 0 ? state.referenceFallback : undefined,
       importConfidence,
       confidence: {
         text: bestOcrConfidence,

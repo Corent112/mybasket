@@ -153,6 +153,8 @@ export type AiExerciseImport = {
   themes: string[];
   diagram: AiExerciseDiagram;
   diagrams?: AiExerciseDiagram[];
+  /** Calque aligné proposé en révision quand aucun schéma complet n’est fiable. */
+  referenceFallback?: AiExerciseDiagram;
   source?: "local" | "ai";
   /**
    * Terrain REDRESSÉ (vue de dessus, perspective annulée), en data URL.
