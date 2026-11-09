@@ -489,9 +489,17 @@ async function main() {
   await act(async () => {
     fallbackCanvas.dispatchEvent(new dom.window.MouseEvent("pointerdown", { bubbles: true, clientX: 160, clientY: 140 }));
   });
+  for (const [button, x, y] of [["+ Attaquant", 190, 190], ["+ Attaquant", 330, 310], ["+ Défenseur", 280, 250], ["+ Défenseur", 360, 200]]) {
+    await click(button);
+    await act(async () => {
+      fallbackCanvas.dispatchEvent(new dom.window.MouseEvent("pointerdown", { bubbles: true, clientX: x, clientY: y }));
+    });
+  }
   await click("Valider l’import");
   const annotationObject = ui.importToPlaquetteSchema(lastImported)?.phases[0]?.objects[0];
   check("le numéro est inséré comme objet natif", annotationObject?.kind === "text" && annotationObject.text === "1");
+  check("les défenseurs ont leur propre numérotation dans la Plaquette",
+    ui.importToPlaquetteSchema(lastImported)?.phases[0]?.players.map(p => p.label).join(",") === "1,2,X1,X2");
   check("le calque temporaire n'est pas réinjecté", !lastImported.referenceFallback);
   await unmount();
 

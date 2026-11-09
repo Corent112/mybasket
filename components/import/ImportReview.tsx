@@ -517,13 +517,15 @@ export default function ImportReview({
 
     if (addMode) {
       const point = pixelToCanonical(x, y, canvas.width, canvas.height, courtType);
-      const label = String(
-        diagram.players.filter((player) => (player.type ?? "attacker") !== "defender").length + 1
-      );
+      const team = addMode === "defender" ? "def" : "att";
+      const usedNumbers = new Set(diagram.players.filter(player => player.team === team)
+        .map(player => player.label.trim().replace(/^x\s*/i, "")));
+      let number = 1;
+      while (usedNumbers.has(String(number))) number++;
       const added: AiDiagramPlayer = {
         key: `manual-${Date.now()}`,
-        label: addMode === "defender" ? `X${label}` : label,
-        team: addMode === "defender" ? "def" : "att",
+        label: team === "def" ? `X${number}` : String(number),
+        team,
         x: point.x,
         y: point.y,
         shape: "circle",
