@@ -3,7 +3,7 @@ import type { Rectified } from "./court-rectify";
 import type { AiDiagramAction } from "./types";
 
 /** In partial review, suggest isolated red arrows only when their head is distinguishable. */
-export function recoverRedArrows({ canvas, play, kind }: Rectified): AiDiagramAction[] {
+export function recoverRedArrows({ canvas, play, kind }: Pick<Rectified, "canvas" | "play" | "kind">): AiDiagramAction[] {
   const ctx = canvas.getContext("2d");
   if (!ctx) return [];
   const width = canvas.width;

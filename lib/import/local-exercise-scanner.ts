@@ -43,6 +43,7 @@ import {
   classifyCourt,
   detectCourtCandidates,
   detectCourtRect,
+  detectPlayingArea,
   regionSignature,
   signatureDistance,
 } from "./court-geometry";
@@ -784,6 +785,59 @@ function makeCourtReference(source: HTMLCanvasElement, play: AiRect): AiExercise
   } catch { /* La numérisation reste utilisable sans calque de référence. */ }
 }
 
+/**
+ * A screen capture with four intact, straight edges does not need a perspective
+ * transform. The independently recognized court supplies the kind/orientation
+ * and bounds the search, so an unrelated page border cannot replace the court.
+ */
+function flatCourtReference(canvas: HTMLCanvasElement, rectified: Rectified) {
+  const [tl, tr, , bl] = rectified.quad;
+  if (tr.x <= tl.x || bl.y <= tl.y) return null;
+  const bounds = quadBounds(rectified.quad);
+  const width = bounds.x1 - bounds.x0, height = bounds.y1 - bounds.y0;
+  const pad = Math.ceil(Math.min(width, height) * 0.12);
+  const search = {
+    x0: Math.max(0, Math.floor(bounds.x0) - pad), y0: Math.max(0, Math.floor(bounds.y0) - pad),
+    x1: Math.min(canvas.width, Math.ceil(bounds.x1) + pad), y1: Math.min(canvas.height, Math.ceil(bounds.y1) + pad),
+  };
+  const area = detectPlayingArea(canvas, search);
+  if (area.sides !== 4) return null;
+  const { x0, x1, y0, y1 } = area.rect;
+  const w = x1 - x0, h = y1 - y0;
+  const aspect = rectified.kind === "half" ? 15 / 14 : 15 / 28;
+  if (Math.abs(w / h / aspect - 1) > 0.06) return null;
+  const corners = [{ x: x0, y: y0 }, { x: x1, y: y0 }, { x: x1, y: y1 }, { x: x0, y: y1 }];
+  if (rectified.quad.some((point, i) => Math.hypot(point.x - corners[i].x, point.y - corners[i].y) > pad)) return null;
+
+  const ctx = canvas.getContext("2d");
+  if (!ctx) return null;
+  const pixels = ctx.getImageData(x0, y0, w, h).data;
+  const dark = (x: number, y: number) => {
+    const i = (y * w + x) * 4;
+    return pixels[i] + pixels[i + 1] + pixels[i + 2] < 330;
+  };
+  const straight = (size: number, test: (i: number) => boolean) => {
+    let hits = 0;
+    for (let i = 0; i < size; i++) if (test(i)) hits++;
+    return hits / size >= 0.93;
+  };
+  if (![straight(w, x => dark(x, 0) || dark(x, 1)),
+        straight(w, x => dark(x, h - 1) || dark(x, h - 2)),
+        straight(h, y => dark(0, y) || dark(1, y)),
+        straight(h, y => dark(w - 1, y) || dark(w - 2, y))].every(Boolean)) return null;
+
+  const crop = document.createElement("canvas");
+  const margin = Math.round(Math.min(w, h) * 0.03);
+  crop.width = w + margin * 2;
+  crop.height = h + margin * 2;
+  const cropCtx = crop.getContext("2d");
+  if (!cropCtx) return null;
+  cropCtx.fillStyle = "#fff";
+  cropCtx.fillRect(0, 0, crop.width, crop.height);
+  cropCtx.drawImage(canvas, margin - x0, margin - y0);
+  return { canvas: crop, play: { x0: margin, y0: margin, x1: margin + w, y1: margin + h }, kind: rectified.kind };
+}
+
 /** Intersection sur union de deux rectangles. */
 function overlapRatio(a: AiRect, b: AiRect): number {
   const ix = Math.max(0, Math.min(a.x1, b.x1) - Math.max(a.x0, b.x0));
@@ -950,11 +1004,13 @@ export async function collectFromRegion(
   const minimum = usedRectified && rectified && rectified.level === "haute" ? 0.8 : 2.2;
   if (chosen.score < minimum) {
     if (rectified && rectified.score > (state.referenceFallback?.rectifyScore ?? 0)) {
-      const courtReference = makeCourtReference(rectified.canvas, rectified.play);
+      const flat = flatCourtReference(canvas, rectified);
+      const reference = flat ?? rectified;
+      const courtReference = makeCourtReference(reference.canvas, reference.play);
       if (courtReference) {
         state.referenceFallback = {
           detected: true, courtType: rectified.kind, players: [], objects: [],
-          actions: recoverRedArrows(rectified), notes: "", rectified: true,
+          actions: recoverRedArrows(reference), notes: "", rectified: !flat,
           rectifyScore: rectified.score, courtReference,
         };
       }
