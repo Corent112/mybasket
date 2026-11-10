@@ -27,7 +27,7 @@ export default function PlayerForm({
   onClose,
 }: {
   initial?: Player;
-  onSave: (p: Player) => void;
+  onSave: (p: Player) => void | Promise<void>;
   onClose: () => void;
 }) {
   const isEdit = !!initial?.id;
@@ -46,6 +46,8 @@ export default function PlayerForm({
   });
 
   const fileRef = useRef<HTMLInputElement>(null);
+  const submitting = useRef(false);
+  const [saving, setSaving] = useState(false);
 
   function set<K extends keyof PlayerExtra>(key: K, value: PlayerExtra[K]) {
     setP((prev) => ({ ...prev, [key]: value }));
@@ -81,28 +83,30 @@ export default function PlayerForm({
     reader.readAsDataURL(file);
   }
 
-  function submit() {
-    if (!p.firstName.trim()) {
+  async function submit() {
+    if (submitting.current) return;
+    const firstName = p.firstName.trim();
+    if (!firstName) {
       alert("Le prénom est obligatoire.");
       return;
     }
 
-    const playerToSave: Player = {
-      ...(p as Player),
-      id:
-        p.id ||
-        (typeof crypto !== "undefined" && "randomUUID" in crypto
-          ? crypto.randomUUID()
-          : p.id),
-    };
-
-    onSave(playerToSave);
+    submitting.current = true;
+    setSaving(true);
+    try {
+      // Keep a new player's ID empty: the shared store inserts the row
+      // and gets its ID from the database. Existing IDs are passed through.
+      await onSave({ ...p, firstName, lastName: p.lastName.trim() });
+    } finally {
+      submitting.current = false;
+      setSaving(false);
+    }
   }
 
   const num = (v: number | null) => (v == null ? "" : String(v));
 
   return (
-    <div className="mbk-modal-overlay" onClick={onClose}>
+    <div className="mbk-modal-overlay" onClick={() => { if (!submitting.current) onClose(); }}>
       <div className="mbk-modal player-form-light" onClick={(e) => e.stopPropagation()}>
         <style jsx global>{`
           .player-form-light {
@@ -471,12 +475,12 @@ export default function PlayerForm({
         </div>
 
         <div className="mbk-modal-actions">
-          <button className="mbk-btn mbk-btn-ghost" onClick={onClose}>
+          <button className="mbk-btn mbk-btn-ghost" disabled={saving} onClick={onClose}>
             Annuler
           </button>
 
-          <button className="mbk-btn mbk-btn-orange" onClick={submit}>
-            {isEdit ? "Sauvegarder" : "Ajouter le joueur"}
+          <button className="mbk-btn mbk-btn-orange" disabled={saving} onClick={submit}>
+            {saving ? "Enregistrement…" : isEdit ? "Sauvegarder" : "Ajouter le joueur"}
           </button>
         </div>
       </div>
