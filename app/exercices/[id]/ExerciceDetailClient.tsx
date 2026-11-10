@@ -103,6 +103,7 @@ export default function ExerciceDetailClient() {
   }, [id, router, supabase]);
 
   const images = useMemo(() => getSchemaImages(exercise), [exercise]);
+  const attachedPhotos = (exercise?.images ?? []).filter(Boolean);
   const markers = exerciseDrawingMarkers(images, exercise?.schemaDataList, exercise?.schemaData);
   const hasOptions = markers.some(Boolean);
   const videos = useMemo(() => getVideos(exercise), [exercise]);
@@ -419,6 +420,18 @@ export default function ExerciceDetailClient() {
               </div>
             )}
           </article>
+
+          {attachedPhotos.length > 0 && (
+            <article className="exo-card">
+              <h2>PHOTOS ET DESSINS SUR PAPIER</h2>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(min(180px, 100%), 1fr))", gap: 12 }}>
+                {attachedPhotos.map((src, index) => (
+                  <img key={`${src}-${index}`} src={src} alt={`Image jointe ${index + 1}`}
+                    loading="lazy" style={{ width: "100%", maxHeight: 420, objectFit: "contain", borderRadius: 8 }} />
+                ))}
+              </div>
+            </article>
+          )}
 
           {videos.length > 0 && (
             <article className="exo-card">
