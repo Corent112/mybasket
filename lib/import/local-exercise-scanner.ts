@@ -55,6 +55,7 @@ import { readLandmarkPlayers } from "./landmark-players";
 import { isolateLandmarkInk, locateFilledLandmarkCourt, registerLandmarkCourt } from "./landmark-court";
 import { recoverReferenceInk } from "./reference-ink";
 import { recoverRedArrows } from "./reference-arrows";
+import { supplementReferenceSymbols } from "./reference-symbols";
 import { analyseGraphic } from "./diagram-vision";
 import { courtMarkingScore, quadBounds, rectifyCourt, type Rectified } from "./court-rectify";
 import type { CourtGeometry } from "./court-geometry";
@@ -1048,6 +1049,10 @@ export async function collectFromRegion(
     rectifyScore: usedRectified && rectified ? rectified.score : undefined,
   };
 
+  if (rectified) {
+    const flat = flatCourtReference(canvas, rectified);
+    if (flat && flat.kind === candidate.courtType) supplementReferenceSymbols(candidate, flat);
+  }
   const content = diagramContentSignature(candidate);
   if (state.contentSignatures.has(content)) {
     debug.reject({ stage: "schéma", what: "graphique", why: "mêmes joueurs et mêmes tracés qu'un schéma déjà importé" });
@@ -1280,6 +1285,7 @@ export async function scanExerciseLocally(
         });
         referenceFallback.actions = [...recovered.actions, ...colored]
           .map((action, index) => ({ ...action, order: index + 1 }));
+        supplementReferenceSymbols(referenceFallback, state.flatReference);
       } catch (error) {
         debug.note(`Reconnaissance des tracés noirs indisponible : ${error instanceof Error ? error.message : String(error)}`);
       }

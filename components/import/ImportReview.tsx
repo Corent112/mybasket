@@ -214,7 +214,7 @@ export default function ImportReview({
   const [traceKind, setTraceKind] = useState<AiDiagramActionKind>("freedraw");
   const traceRef = useRef<AiPoint[] | null>(null);
   const [tracePreview, setTracePreview] = useState<AiPoint[]>([]);
-  const [addMode, setAddMode] = useState<AiDetectionType | null>(null);
+  const [addMode, setAddMode] = useState<AiDetectionType | "cone" | null>(null);
   const [annotationMode, setAnnotationMode] = useState(false);
   const [annotation, setAnnotation] = useState("");
   const [inkColor, setInkColor] = useState("#0f0f12");
@@ -521,6 +521,14 @@ export default function ImportReview({
 
     if (addMode) {
       const point = pixelToCanonical(x, y, canvas.width, canvas.height, courtType);
+      if (addMode === "cone") {
+        updateDiagram(item => ({ ...item, objects: [...item.objects, {
+          ...point, kind: "cone", color: "#F05A16", confidence: 1, source: "ajouté à la main",
+        }] }));
+        setAddMode(null);
+        setSelection({ kind: "object", index: diagram.objects.length });
+        return;
+      }
       const team = addMode === "defender" ? "def" : "att";
       const usedNumbers = new Set(diagram.players.filter(player => player.team === team)
         .map(player => player.label.trim().replace(/^x\s*/i, "")));
@@ -922,6 +930,10 @@ export default function ImportReview({
                 onClick={() => { setTraceMode(false); setAnnotationMode(false); setAddMode(addMode === "defender" ? null : "defender"); }}
               >
                 + Défenseur
+              </button>
+              <button type="button" style={addMode === "cone" ? styles.buttonPrimary : styles.button}
+                onClick={() => { setTraceMode(false); setAnnotationMode(false); setAddMode(addMode === "cone" ? null : "cone"); }}>
+                + Plot
               </button>
             </div>
             <div style={styles.row}>
