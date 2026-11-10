@@ -243,6 +243,7 @@ export default function ExercisePhotoImport({ onImported, playersOnly = false, d
             MyBasket détecte le terrain, redresse la perspective, isole joueurs et tracés puis reconstruit chaque dessin
             avec les objets natifs de Plaquette. Tu peux aussi glisser-déposer une image ici. Rien n’est enregistré tant que tu n’as pas validé.
           </p>
+          <p><strong>Plusieurs phases ?</strong> Prends une photo par phase, puis sélectionne toutes les photos dans la même fenêtre.</p>
         </div>
       </div>
 

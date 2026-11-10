@@ -127,7 +127,14 @@ export async function readLandmarkPlayers(
       && right(.79,.94)-left(.79,.94)>width*.68));
     const two = columns.some((_,x)=>x<width*.27 && ruling(x)) && width/height>.43 && width/height<.69
       && right(.14,.36)>width*.85 && right(.73,.83)<width*.49 && right(.84,.96)>width*.65 && left(.14,.36)>width*.23;
-    const shape = one ? "1" : read?.text==="4" && three ? "3" : read?.text==="4" && four ? "4" : two ? "2" : null;
+    // A handwritten 5 can disappear from OCR near the paint. Its top bar
+    // and lower bowl reach right, while the upper stem stays on the left.
+    const five = !g.ring && width/height > .36 && width/height < .71
+      && left(.03,.16) < width*.23 && right(.03,.16) > width*.85
+      && left(.24,.34) < width*.23 && right(.24,.34) < width*.71
+      && right(.45,.69) > width*.86 && left(.76,.9) < width*.24
+      && right(.76,.9) > width*.8 && (!read || read.confidence < .57);
+    const shape = one ? "1" : read?.text==="4" && three ? "3" : read?.text==="4" && four ? "4" : two ? "2" : five ? "5" : null;
     const label = shape ?? (read && (read.confidence>=.57 || (read.confidence>=.30 && standard?.text===variant?.text)) ? read.text : null);
     if (!label || players.some(p=>p.label===label)) continue;
     const xs = kept.map(i=>i%w);
