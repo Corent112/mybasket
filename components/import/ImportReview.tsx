@@ -73,6 +73,7 @@ type Props = {
   onCancel?: () => void;
   /** Index du schéma affiché au départ, si l'import en contient plusieurs. */
   initialDiagram?: number;
+  batchMode?: boolean;
   /** Libellé du bouton de retrait (« Annuler » par défaut, « Retour » depuis l'écran de résumé). */
   cancelLabel?: string;
   /** Libellé du bouton de validation quand plus rien n'est à confirmer. */
@@ -186,6 +187,7 @@ export default function ImportReview({
   onValidate,
   onCancel,
   initialDiagram = 0,
+  batchMode = false,
   cancelLabel = "Annuler",
   validateLabel = "Valider l'import",
 }: Props) {
@@ -770,8 +772,9 @@ export default function ImportReview({
   const kept = diagrams.filter(
     (item) => item.players.length > 0 || item.actions.length > 0 || item.objects.length > 0
   );
+  const totalDoubtful = batchMode ? diagrams.reduce((sum, item) => sum + reviewItemsOfDiagram(item).length, 0) : doubtful.length;
   const validate = () => {
-    if (result.referenceFallback && !kept.length) return;
+    if ((result.referenceFallback || batchMode) && !kept.length) return;
     onValidate({
       ...result,
       referenceFallback: undefined,
@@ -1093,14 +1096,21 @@ export default function ImportReview({
       </div>
 
       <div style={styles.footer}>
+        {batchMode && diagrams.length > 1 && (
+          <button type="button" style={styles.buttonGhost} onClick={() => {
+            setDiagrams(items => items.filter((_, i) => i !== current));
+            setCurrent(Math.min(current, diagrams.length - 2));
+            setSelection(null);
+          }}>Retirer cette phase du lot</button>
+        )}
         {onCancel ? (
           <button type="button" style={styles.buttonGhost} onClick={onCancel}>
             {cancelLabel}
           </button>
         ) : null}
-        <button type="button" style={styles.buttonPrimary} disabled={Boolean(result.referenceFallback && !kept.length)} onClick={validate}>
-          {doubtful.length
-            ? `Valider malgré ${doubtful.length} élément${doubtful.length > 1 ? "s" : ""} à confirmer`
+        <button type="button" style={styles.buttonPrimary} disabled={Boolean((result.referenceFallback || batchMode) && !kept.length)} onClick={validate}>
+          {totalDoubtful
+            ? `Valider malgré ${totalDoubtful} élément${totalDoubtful > 1 ? "s" : ""} à confirmer`
             : validateLabel}
         </button>
       </div>

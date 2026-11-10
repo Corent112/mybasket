@@ -251,13 +251,13 @@ async function unmount() {
 }
 
 /** Simule le clic « Importer » + la sélection d'un fichier. */
-async function runImport(result, { video = false } = {}) {
+async function runImport(result, { video = false, count = 1 } = {}) {
   ui.setScanResult(result);
   const input = document.querySelector("input[type=file]");
   const file = new dom.window.File(["x"], video ? "clip.mp4" : "photo.jpg", {
     type: video ? "video/mp4" : "image/jpeg",
   });
-  Object.defineProperty(input, "files", { value: [file], configurable: true });
+  Object.defineProperty(input, "files", { value: Array.from({length: count}, () => file), configurable: true });
   await act(async () => {
     input.dispatchEvent(new dom.window.Event("change", { bubbles: true }));
   });
@@ -377,7 +377,7 @@ async function main() {
   await click("Annuler");
   check("aucune injection après annulation", injections.length === 0, `injections=${injections.length}`);
   check("écran de validation refermé", !text().includes("Analyse terminée"));
-  check("bouton d'import de nouveau disponible", !!findButton("📸 Scanner un schéma"));
+  check("bouton d'import de nouveau disponible", !!findButton("📸 Scanner des schémas"));
   // Annulation depuis l'écran de correction : retour au résumé, toujours rien.
   await runImport(importResult());
   await click("Corriger");
@@ -634,6 +634,25 @@ async function main() {
   await click("Annuler");
   check("import annulé : formulaire inchangé", form.schemaImages.length === 3 && form.title === "Défense sur écran");
   check("import annulé : pas d'injection supplémentaire", injections.length === 2);
+  await unmount();
+
+  console.log("\n11. Import de plusieurs photos");
+  await mount();
+  const photos = () => ["1", "2", "3"].map((label) => importResult({
+    diagrams: [diagram({ players: [player(label, .4, .2)] })],
+  }));
+  await runImport(photos(), { count: 3 });
+  check("les trois photos ouvrent une vérification commune", !!findButton("Schéma 3") && injections.length === 0);
+  await click("Schéma 2");
+  await click("Retirer cette phase du lot");
+  await click("Valider l'import");
+  const batch = lastImported && ui.importToPlaquetteSchema(lastImported);
+  check("les deux phases restantes sont ordonnées dans un même groupe",
+    injections.length === 1 && batch?.phases.map(phase => phase.players[0].label).join(",") === "1,3"
+    && new Set(batch.entries.map(entry => entry.schemaGroupId)).size === 1);
+  await runImport(photos(), { count: 3 });
+  await click("Annuler");
+  check("annuler le lot ne modifie pas la fiche", injections.length === 1);
   await unmount();
 
   /* --------------------------------------------------------------- bilan */

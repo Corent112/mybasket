@@ -17,7 +17,10 @@ import {
   getPlaquetteTransfer,
   setPlaquetteTransfer,
   removePlaquetteTransfer,
+  preparePlaquetteNavigation,
 } from "@/lib/plaquette-transfer";
+import { drawingSessionStorage } from "@/lib/drawing-session-storage";
+import { readAttachedImages } from "@/lib/import/attached-images";
 
 type Systeme = {
   id?: string;
@@ -100,8 +103,10 @@ function normalizeSchemaData(schema: any, index: number, image = "") {
   return {
     title: schema?.title ?? `Schéma ${index + 1}`,
     schemaGroupId: schema?.schemaGroupId ?? crypto.randomUUID(),
-    phaseIndex: index,
+    phaseIndex: schema?.phaseIndex ?? index,
     courtType: schema?.courtType ?? "half",
+    courtStyle: schema?.courtStyle,
+    courtBranding: schema?.courtBranding,
     phases: Array.isArray(schema?.phases) ? schema.phases : [],
     sheet: schema?.sheet ?? null,
     current: typeof schema?.current === "number" ? schema.current : 0,
@@ -169,6 +174,9 @@ export default function SystemesClient() {
   const [toast, setToast] = useState("");
   const [loading, setLoading] = useState(false);
   const [draftReady, setDraftReady] = useState(false);
+  const drawingPending = useRef(false);
+  const [drawingOpening, setDrawingOpening] = useState(false);
+  const [drawingOpenError, setDrawingOpenError] = useState("");
   const [systemStorageId, setSystemStorageId] = useState<string>(editId || "");
   const [personalTempsForts,setPersonalTempsForts]=useState<string[]>([]);
   useEffect(()=>{ listPersonalSystemTags().then(rows=>setPersonalTempsForts(rows.map(x=>x.name))).catch(()=>setPersonalTempsForts(DEFAULT_TEMPS_FORTS)); },[]);
@@ -209,7 +217,7 @@ export default function SystemesClient() {
     }
 
     const key = `${draftKey}_storage_id`;
-    const existing = localStorage.getItem(key);
+    const existing = drawingSessionStorage.getItem(key);
 
     if (existing) {
       setSystemStorageId(existing);
@@ -217,14 +225,14 @@ export default function SystemesClient() {
     }
 
     const temporaryDraftId = crypto.randomUUID();
-    localStorage.setItem(key, temporaryDraftId);
+    drawingSessionStorage.setItem(key, temporaryDraftId);
     setSystemStorageId(temporaryDraftId);
   }, [editId, draftKey]);
 
   useEffect(() => {
     // Ne jamais écrire le formulaire vide au premier rendu.
     // Les schémas/images peuvent être volumineux : même stockage que les exercices.
-    if (!draftReady) return;
+    if (!draftReady || drawingOpening) return;
 
     const timer = window.setTimeout(() => {
       void setPlaquetteTransfer(draftKey, systeme).catch((error) => {
@@ -233,7 +241,7 @@ export default function SystemesClient() {
     }, 120);
 
     return () => window.clearTimeout(timer);
-  }, [draftKey, systeme, draftReady]);
+  }, [draftKey, systeme, draftReady, drawingOpening]);
 
   useEffect(() => {
     const load = async () => {
@@ -241,12 +249,13 @@ export default function SystemesClient() {
       let base = blank();
 
       try {
-        const resultStored = await getPlaquetteTransfer<any>(RESULT_KEY);
+        const storedResult = await getPlaquetteTransfer<any>(RESULT_KEY);
+        const resultStored = storedResult?.targetType === "exercise" ? null : storedResult;
         const draftStored =
           await getPlaquetteTransfer<Partial<Systeme>>(draftKey);
         let syncDraft: Partial<Systeme> | null = null;
         try {
-          const raw = localStorage.getItem(`${draftKey}_sync`);
+          const raw = drawingSessionStorage.getItem(`${draftKey}_sync`);
           syncDraft = raw ? JSON.parse(raw) : null;
         } catch { syncDraft = null; }
         let sourceMeta: (Partial<Systeme> & { originalSystemId?: string }) | null = null;
@@ -286,18 +295,20 @@ export default function SystemesClient() {
         }
 
         if (isNew) {
-          localStorage.removeItem(RETURN_KEY);
+          drawingSessionStorage.removeItem(RETURN_KEY);
           await removePlaquetteTransfer(LOAD_KEY);
+          await setPlaquetteTransfer(draftKey, base);
+          drawingSessionStorage.removeItem(`${draftKey}_sync`);
           await removePlaquetteTransfer(RESULT_KEY);
-          localStorage.removeItem(EDIT_INDEX_KEY);
-          localStorage.removeItem(EDIT_SCHEMA_GROUP_KEY);
-          localStorage.removeItem(EDIT_SYSTEM_ID_KEY);
-          localStorage.removeItem(CURRENT_SYSTEM_ID_KEY);
+          drawingSessionStorage.removeItem(EDIT_INDEX_KEY);
+          drawingSessionStorage.removeItem(EDIT_SCHEMA_GROUP_KEY);
+          drawingSessionStorage.removeItem(EDIT_SYSTEM_ID_KEY);
+          drawingSessionStorage.removeItem(CURRENT_SYSTEM_ID_KEY);
           await removePlaquetteTransfer(draftKey);
-          localStorage.removeItem(`${draftKey}_storage_id`);
+          drawingSessionStorage.removeItem(`${draftKey}_storage_id`);
 
           const temporaryDraftId = crypto.randomUUID();
-          localStorage.setItem(`${DRAFT_KEY}_storage_id`, temporaryDraftId);
+          drawingSessionStorage.setItem(`${DRAFT_KEY}_storage_id`, temporaryDraftId);
           setSystemStorageId(temporaryDraftId);
           setSysteme(blank());
           setDraftReady(true);
@@ -314,12 +325,8 @@ export default function SystemesClient() {
 
             // Comme pour les exercices, le brouillon local doit rester prioritaire
             // au retour de la plaquette afin de ne pas perdre les champs saisis.
-            if (draftStored) {
-              base = {
-                ...base,
-                ...draftStored,
-                id: existing.id,
-              };
+            if (draftStored || syncDraft) {
+              base = { ...base, ...draftStored, ...syncDraft, id: existing.id };
             }
 
             if (!DEFAULT_CATEGORIES.includes(base.categorie)) {
@@ -340,7 +347,7 @@ export default function SystemesClient() {
           const result = resultStored;
 
           const incomingImages: string[] = Array.isArray(result.schemaImages)
-            ? result.schemaImages.filter(Boolean)
+            ? result.schemaImages
             : result.schemaImage
             ? [result.schemaImage]
             : [];
@@ -351,7 +358,7 @@ export default function SystemesClient() {
             ? [result.schemaData]
             : [];
 
-          const storedEditIndex = localStorage.getItem(EDIT_INDEX_KEY);
+          const storedEditIndex = drawingSessionStorage.getItem(EDIT_INDEX_KEY);
 
           const editIndex =
             typeof result.editIndex === "number"
@@ -364,54 +371,34 @@ export default function SystemesClient() {
             base = { ...base, schemaVideo: result.schemaVideo };
           }
 
-          if (incomingImages.length) {
-            const nextImages = [...base.schemaImages];
-            const nextData = [...base.schemaDataList];
-
-            if (
-              editIndex !== null &&
-              Number.isFinite(editIndex) &&
-              editIndex >= 0 &&
-              editIndex < nextImages.length
-            ) {
-              nextImages.splice(editIndex, 1, ...incomingImages);
-
-              nextData.splice(
-                editIndex,
-                1,
-                ...incomingImages.map((img, idx) =>
-                  normalizeSchemaData(incomingData[idx], editIndex + idx, img)
-                )
-              );
-            } else {
-              const startIndex = nextImages.length;
-
-              nextImages.push(...incomingImages);
-
-              incomingImages.forEach((img, idx) => {
-                nextData.push(
-                  normalizeSchemaData(incomingData[idx], startIndex + idx, img)
-                );
-              });
+          if (incomingImages.length || incomingData.length) {
+            const nextData = syncSchemas(base.schemaImages, base.schemaDataList);
+            const nextImages = nextData.map((schema, i) => base.schemaImages[i] || schema.imageData || "");
+            const group = typeof result.schemaGroupId === "string" && result.schemaGroupId
+              ? result.schemaGroupId : editIndex !== null ? nextData[editIndex]?.schemaGroupId : null;
+            const members = group ? nextData.flatMap((schema, i) => schema.schemaGroupId === group ? [i] : []) : [];
+            if (!members.length && editIndex !== null && Number.isInteger(editIndex)
+              && editIndex >= 0 && editIndex < nextData.length) members.push(editIndex);
+            const at = members[0] ?? nextData.length;
+            for (const i of members.slice().reverse()) {
+              nextImages.splice(i, 1);
+              nextData.splice(i, 1);
             }
-
-            const limitedImages = nextImages.slice(0, 50);
-            const limitedData = syncSchemas(limitedImages, nextData).slice(0, 50);
-
-            base = {
-              ...base,
-              schemaImages: limitedImages,
-              schemaDataList: limitedData,
-            };
+            const inserted = syncSchemas(incomingImages, incomingData);
+            nextData.splice(at, 0, ...inserted);
+            nextImages.splice(at, 0, ...inserted.map((schema, i) => incomingImages[i] || schema.imageData || ""));
+            base = { ...base, schemaImages: nextImages, schemaDataList: nextData };
           }
 
+          await setPlaquetteTransfer(draftKey, base);
+          drawingSessionStorage.removeItem(`${draftKey}_sync`);
           await removePlaquetteTransfer(RESULT_KEY);
-          localStorage.removeItem(EDIT_INDEX_KEY);
+          drawingSessionStorage.removeItem(EDIT_INDEX_KEY);
           await removePlaquetteTransfer(LOAD_KEY);
-          localStorage.removeItem(RETURN_KEY);
-          localStorage.removeItem(EDIT_SYSTEM_ID_KEY);
-          localStorage.removeItem(CURRENT_SYSTEM_ID_KEY);
-          localStorage.removeItem(EDIT_SCHEMA_GROUP_KEY);
+          drawingSessionStorage.removeItem(RETURN_KEY);
+          drawingSessionStorage.removeItem(EDIT_SYSTEM_ID_KEY);
+          drawingSessionStorage.removeItem(CURRENT_SYSTEM_ID_KEY);
+          drawingSessionStorage.removeItem(EDIT_SCHEMA_GROUP_KEY);
           localStorage.removeItem('mybasket_drawing_source_system_meta');
 
           flash(sourceMeta ? "Informations de l’original reprises ✅" : "Schéma ajouté au système ✅");
@@ -451,8 +438,9 @@ export default function SystemesClient() {
         phaseImages: images,
       }));
 
-      const nextImages = [...current.schemaImages, ...images].slice(0, 50);
-      const nextData = [...current.schemaDataList, ...data].slice(0, 50);
+      const existing = syncSchemas(current.schemaImages, current.schemaDataList);
+      const nextImages = [...existing.map((schema, i) => current.schemaImages[i] || schema.imageData || ""), ...images];
+      const nextData = [...existing, ...data];
 
       return {
         ...current,
@@ -465,62 +453,55 @@ export default function SystemesClient() {
     flash(`Import Vision terminé — ${count} phase${count > 1 ? "s" : ""} reconstruite${count > 1 ? "s" : ""}.`);
   };
 
-  const drawingPreviews = syncSchemas(systeme.schemaImages, systeme.schemaDataList)
+  const systemSchemas = syncSchemas(systeme.schemaImages, systeme.schemaDataList);
+  const drawingPreviews = systemSchemas
     .map((schema: any, index: number) => ({
       index,
       src: systeme.schemaImages[index] || schema?.imageData || schema?.phaseImages?.[schema?.current ?? 0] || schema?.phaseImages?.[0] || "",
     }))
-    .filter((item) => !!item.src);
+    .filter((item) => !!item.src || !!systemSchemas[item.index]?.phases?.length);
 
-  const openDraw = (index?: number) => {
-    // MODE INSERTION : ouvrir DESSIN ne crée JAMAIS une fiche système.
-    // La fiche n'existera en base qu'au clic sur « Enregistrer » dans ce formulaire.
-    const storageKey = `${draftKey}_storage_id`;
-    const targetStorageId =
-      editId || systemStorageId || localStorage.getItem(storageKey) || crypto.randomUUID();
-
-    localStorage.setItem(storageKey, targetStorageId);
-    setSystemStorageId(targetStorageId);
-    localStorage.setItem('mybasket_drawing_flow', 'insert-system-draft');
-    localStorage.setItem(RETURN_KEY, editId ? `/systemes/creer?id=${editId}` : '/systemes/creer');
-    localStorage.setItem(CURRENT_SYSTEM_ID_KEY, targetStorageId);
-    if (editId) localStorage.setItem(EDIT_SYSTEM_ID_KEY, editId);
-    else localStorage.removeItem(EDIT_SYSTEM_ID_KEY);
-
-    const cleanDataList = syncSchemas(systeme.schemaImages, systeme.schemaDataList);
-    // Contrat DESSIN v2 : le clic ne dépend d'aucun accès IndexedDB/Supabase.
-    // On garde une copie synchrone du formulaire pour pouvoir le restaurer au retour.
+  const openDraw = async (index?: number) => {
+    if (drawingPending.current) return;
+    drawingPending.current = true;
+    setDrawingOpening(true);
+    setDrawingOpenError("");
     try {
-      localStorage.setItem(`${draftKey}_sync`, JSON.stringify({ ...systeme, schemaDataList: cleanDataList }));
+      const storageKey = `${draftKey}_storage_id`;
+      const targetStorageId = editId || systemStorageId || drawingSessionStorage.getItem(storageKey) || crypto.randomUUID();
+      const data = syncSchemas(systeme.schemaImages, systeme.schemaDataList);
+      const context: Record<string, string | null> = {
+        [storageKey]: targetStorageId,
+        mybasket_drawing_flow: "insert-system-draft",
+        mybasket_system_schema_room: String(Math.max(0, 50 - data.length)),
+        [RETURN_KEY]: editId ? `/systemes/creer?id=${encodeURIComponent(editId)}` : "/systemes/creer",
+        [CURRENT_SYSTEM_ID_KEY]: targetStorageId,
+        [EDIT_SYSTEM_ID_KEY]: editId,
+        [EDIT_INDEX_KEY]: null,
+        [EDIT_SCHEMA_GROUP_KEY]: null,
+        mybasket_current_exercise_id: null,
+        mybasket_edit_exercise_id: null,
+        mybasket_edit_systeme_id: null,
+      };
+      const schema = typeof index === "number" ? data[index] : null;
+      const extra: Record<string, unknown> = { [LOAD_KEY]: null };
+      if (schema && typeof index === "number") {
+        const replaced = data.filter(item => item.schemaGroupId === schema.schemaGroupId).length;
+        context[EDIT_INDEX_KEY] = String(index);
+        context[EDIT_SCHEMA_GROUP_KEY] = schema.schemaGroupId;
+        context.mybasket_system_schema_room = String(Math.max(0, 50 - data.length + replaced));
+        extra[LOAD_KEY] = { ...schema, editIndex: index };
+      }
+      await preparePlaquetteNavigation(draftKey, { ...systeme, schemaDataList: data }, context, extra);
+      setSystemStorageId(targetStorageId);
+      window.location.assign(`/plaquette?mode=${schema ? "edit" : "insert"}&return=systeme`);
     } catch (error) {
-      console.warn('Copie locale du brouillon système impossible :', error);
+      console.error("Ouverture du dessin impossible", error);
+      setDrawingOpenError("Le dessin n’a pas pu s’ouvrir. Tes informations restent dans le formulaire. Réessaie.");
+    } finally {
+      drawingPending.current = false;
+      setDrawingOpening(false);
     }
-
-    if (typeof index !== 'number') {
-      localStorage.removeItem(EDIT_INDEX_KEY);
-      localStorage.removeItem(EDIT_SCHEMA_GROUP_KEY);
-      window.location.assign('/plaquette?mode=insert&return=systeme');
-      return;
-    }
-
-    const schemaData = cleanDataList[index];
-    const schemaImage = systeme.schemaImages[index];
-    const schemaGroupId = schemaData?.schemaGroupId || crypto.randomUUID();
-    localStorage.setItem(EDIT_INDEX_KEY, String(index));
-    localStorage.setItem(EDIT_SCHEMA_GROUP_KEY, schemaGroupId);
-
-    const loadPayload = {
-      title: schemaData?.title || `Schéma ${index + 1}`, editIndex: index, schemaGroupId,
-      courtType: schemaData?.courtType || 'half',
-      phases: Array.isArray(schemaData?.phases) ? schemaData.phases : [],
-      sheet: schemaData?.sheet ?? null,
-      current: typeof schemaData?.current === 'number' ? schemaData.current : 0,
-      imageData: schemaData?.imageData || schemaImage || '',
-      phaseImages: Array.isArray(schemaData?.phaseImages) ? schemaData.phaseImages : (schemaImage ? [schemaImage] : []),
-    };
-    void setPlaquetteTransfer(LOAD_KEY, loadPayload)
-      .then(() => router.push('/plaquette?mode=edit&return=systeme'))
-      .catch((error) => { console.error(error); flash('Impossible de charger ce schéma'); });
   };
 
   const removeSchema = (index: number) => {
@@ -536,24 +517,14 @@ export default function SystemesClient() {
     });
   };
 
-  const onImages = (event: React.ChangeEvent<HTMLInputElement>) => {
+  const [attachmentMessage, setAttachmentMessage] = useState("");
+  const onImages = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const files = Array.from(event.target.files || []);
-    const room = 5 - systeme.images.length;
-
-    files.slice(0, room).forEach((file) => {
-      const reader = new FileReader();
-
-      reader.onload = () => {
-        setSysteme((prev) => ({
-          ...prev,
-          images: [...prev.images, reader.result as string].slice(0, 5),
-        }));
-      };
-
-      reader.readAsDataURL(file);
-    });
-
     event.target.value = "";
+    if (!files.length) return;
+    const { attached, warnings } = await readAttachedImages(files, 5 - systeme.images.length);
+    setSysteme(current => ({ ...current, images: [...current.images, ...attached].slice(0, 5) }));
+    setAttachmentMessage(warnings.join(" "));
   };
 
   const removeImage = (index: number) => {
@@ -581,14 +552,15 @@ export default function SystemesClient() {
     const res = await fetch(base64);
     const blob = await res.blob();
 
+    const extension = blob.type === "image/jpeg" ? "jpg" : blob.type.split("/")[1] || "png";
     const fileName = `${user.id}/${folder}/${Date.now()}-${Math.random()
       .toString(36)
-      .slice(2)}.png`;
+      .slice(2)}.${extension}`;
 
     const { error } = await supabase.storage
       .from("exercise-schemas")
       .upload(fileName, blob, {
-        contentType: "image/png",
+        contentType: blob.type || "image/png",
         upsert: false,
       });
 
@@ -772,15 +744,15 @@ export default function SystemesClient() {
         }
       }
 
-      localStorage.removeItem(RETURN_KEY);
+      drawingSessionStorage.removeItem(RETURN_KEY);
       await removePlaquetteTransfer(LOAD_KEY);
       await removePlaquetteTransfer(RESULT_KEY);
       await removePlaquetteTransfer(draftKey);
-      localStorage.removeItem(`${draftKey}_sync`);
-      localStorage.removeItem(EDIT_INDEX_KEY);
-      localStorage.removeItem(EDIT_SCHEMA_GROUP_KEY);
-      localStorage.removeItem(EDIT_SYSTEM_ID_KEY);
-      localStorage.removeItem(CURRENT_SYSTEM_ID_KEY);
+      drawingSessionStorage.removeItem(`${draftKey}_sync`);
+      drawingSessionStorage.removeItem(EDIT_INDEX_KEY);
+      drawingSessionStorage.removeItem(EDIT_SCHEMA_GROUP_KEY);
+      drawingSessionStorage.removeItem(EDIT_SYSTEM_ID_KEY);
+      drawingSessionStorage.removeItem(CURRENT_SYSTEM_ID_KEY);
 
       flash(editId ? "Système mis à jour ✅" : "Système enregistré ✅");
 
@@ -877,16 +849,17 @@ export default function SystemesClient() {
           </label>
 
           <div className="cs-vision-import">
-            <ExercisePhotoImport onImported={applyVisionImport} />
+            <ExercisePhotoImport onImported={applyVisionImport} phaseRoom={Math.max(0, 50 - systemSchemas.length)} />
           </div>
 
+          {drawingOpenError && <p role="alert">{drawingOpenError}</p>}
           <div className="cs-schemas">
             {drawingPreviews.map(({ src, index }) => (
               <div className="cs-schema" key={`${src}-${index}`}>
-                <img src={src} alt={`Schéma ${index + 1}`} />
+                {src ? <img src={src} alt={`Schéma ${index + 1}`} /> : <p>Phase {index + 1}</p>}
 
                 <div className="cs-schema-actions">
-                  <button type="button" onClick={() => openDraw(index)}>
+                  <button type="button" disabled={drawingOpening || !draftReady} onClick={() => void openDraw(index)}>
                     ✏️ Modifier
                   </button>
                   <button
@@ -900,11 +873,11 @@ export default function SystemesClient() {
               </div>
             ))}
 
-            {drawingPreviews.length < 50 && (
-              <button type="button" className="cs-draw" onClick={() => openDraw()}>
+            {systemSchemas.length < 50 && (
+              <button type="button" className="cs-draw" disabled={drawingOpening || !draftReady} onClick={() => void openDraw()}>
                 <span>✏️</span>
-                <b>Ajouter un schéma</b>
-                <small>{systeme.schemaImages.length}/50 phases ajoutées</small>
+                <b>{drawingOpening ? "Ouverture du dessin…" : "Ajouter un schéma"}</b>
+                <small>{systemSchemas.length}/50 phases ajoutées</small>
               </button>
             )}
           </div>
@@ -934,9 +907,11 @@ export default function SystemesClient() {
           </div>
 
           <label className="cs-lab">
-            Images / Documents <span className="cs-soft">(5 max)</span>
+            Photos et dessins sur papier <span className="cs-soft">(5 max)</span>
           </label>
 
+          <p>Ajoute plusieurs photos telles quelles. Pour obtenir des phases éditables, utilise « Scanner des schémas ».</p>
+          {attachmentMessage && <p role="status">{attachmentMessage}</p>}
           <div className="cs-imgs">
             {systeme.images.map((src, index) => (
               <div className="cs-thumb" key={`${src}-${index}`}>
@@ -953,14 +928,14 @@ export default function SystemesClient() {
                 className="cs-add-img"
                 onClick={() => imgInput.current?.click()}
               >
-                📷 Ajouter une image
+                📷 Joindre des images
               </button>
             )}
 
             <input
               ref={imgInput}
               type="file"
-              accept="image/*"
+              accept="image/jpeg,image/png,image/webp,image/gif,image/avif"
               multiple
               hidden
               onChange={onImages}

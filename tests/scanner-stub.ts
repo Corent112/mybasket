@@ -8,10 +8,10 @@
 
 import type { AiExerciseImport } from "@/lib/import/types";
 
-let queued: AiExerciseImport | null = null;
+let queued: AiExerciseImport | AiExerciseImport[] | null = null;
 let error: string | null = null;
 
-export function setScanResult(result: AiExerciseImport | null, failure?: string) {
+export function setScanResult(result: AiExerciseImport | AiExerciseImport[] | null, failure?: string) {
   queued = result;
   error = failure ?? null;
 }
@@ -22,6 +22,7 @@ export async function scanExerciseLocally(
 ): Promise<AiExerciseImport> {
   onStatus?.("Analyse…");
   if (error) throw new Error(error);
-  if (!queued) throw new Error("Aucun résultat préparé");
-  return queued;
+  const result = Array.isArray(queued) ? queued.shift() : queued;
+  if (!result) throw new Error("Aucun résultat préparé");
+  return result;
 }

@@ -577,9 +577,10 @@ useEffect(() => {
     try {
       const params = new URLSearchParams(window.location.search);
       const explicitExerciseReturn=params.get("return")==="exercise";
-      setExoInsertMode(explicitExerciseReturn||!!drawingSessionStorage.getItem(RETURN_KEY));
-      setShootingGridPending(!explicitExerciseReturn&&!!drawingSessionStorage.getItem("mybasket_shooting_grid_pending"));
-      setScoutingPending(!explicitExerciseReturn&&!!drawingSessionStorage.getItem("mybasket_scouting_pending"));
+      const explicitSystemReturn=params.get("return")==="systeme";
+      setExoInsertMode(explicitExerciseReturn||explicitSystemReturn||!!drawingSessionStorage.getItem(RETURN_KEY));
+      setShootingGridPending(!explicitExerciseReturn&&!explicitSystemReturn&&!!drawingSessionStorage.getItem("mybasket_shooting_grid_pending"));
+      setScoutingPending(!explicitExerciseReturn&&!explicitSystemReturn&&!!drawingSessionStorage.getItem("mybasket_scouting_pending"));
 
       const plaquetteType = params.get("type") || "exercise";
 
@@ -3944,14 +3945,14 @@ const markManagementGamePlanReturn = () => {
 const isScoutingReturnContext = () => {
   if (typeof window === "undefined") return false;
   const params = new URLSearchParams(window.location.search);
-  if(params.get("return")==="exercise")return false;
+  if (["exercise", "systeme"].includes(params.get("return") || "")) return false;
   return params.get("scouting") === "1" || !!drawingSessionStorage.getItem("mybasket_scouting_pending");
 };
 
 const isGamePlanReturnContext = () => {
   if (typeof window === "undefined") return false;
   const params = new URLSearchParams(window.location.search);
-  if(params.get("return")==="exercise")return false;
+  if (["exercise", "systeme"].includes(params.get("return") || "")) return false;
   return (
     params.get("return") === "game-plan" ||
     params.get("target") === "gameplan" ||
@@ -3965,6 +3966,7 @@ useEffect(() => {
   const loadFromTransfer = async () => {
     const params = new URLSearchParams(window.location.search);
     const explicitExerciseReturn = params.get("return") === "exercise";
+    const explicitSystemReturn = params.get("return") === "systeme";
     const hasReturnPath = !!drawingSessionStorage.getItem(RETURN_KEY);
     const hasExerciseTarget =
       !!drawingSessionStorage.getItem("mybasket_current_exercise_id") ||
@@ -3972,9 +3974,9 @@ useEffect(() => {
 
     // Le bouton Insérer dépend du contexte de retour, jamais de la réussite
     // du chargement d'un ancien payload de schéma.
-    if (alive) setExoInsertMode(hasReturnPath || explicitExerciseReturn || hasExerciseTarget);
-    if (alive) setShootingGridPending(!explicitExerciseReturn&&!!drawingSessionStorage.getItem("mybasket_shooting_grid_pending"));
-    if (alive) setScoutingPending(!explicitExerciseReturn&&!!drawingSessionStorage.getItem("mybasket_scouting_pending"));
+    if (alive) setExoInsertMode(hasReturnPath || explicitExerciseReturn || explicitSystemReturn || hasExerciseTarget);
+    if (alive) setShootingGridPending(!explicitExerciseReturn&&!explicitSystemReturn&&!!drawingSessionStorage.getItem("mybasket_shooting_grid_pending"));
+    if (alive) setScoutingPending(!explicitExerciseReturn&&!explicitSystemReturn&&!!drawingSessionStorage.getItem("mybasket_scouting_pending"));
 
     try {
       const data = await getPlaquetteTransfer<any>(LOAD_KEY);
@@ -4060,9 +4062,9 @@ const buildPlaquetteResult = async (opts: {
   const uploadedUrls: string[] = [];
   // La fiche exercice sait déjà envoyer ses images au clic Sauvegarder.
   // Insérer reste donc un transfert local, sans attendre le réseau/Supabase.
-  const localExerciseInsert = !isSysteme && new URLSearchParams(window.location.search).get("return") === "exercise";
+  const localFormInsert = ["exercise", "systeme"].includes(new URLSearchParams(window.location.search).get("return") || "");
   for (let i = 0; i < phaseImagesBase64.length; i += 1) {
-    if (localExerciseInsert) { uploadedUrls.push(phaseImagesBase64[i]); continue; }
+    if (localFormInsert) { uploadedUrls.push(phaseImagesBase64[i]); continue; }
     const url = await uploadSchemaImage(
       phaseImagesBase64[i],
       folder,
@@ -4154,17 +4156,18 @@ const saveAndInsertToExo = async () => {
   // Laisser le navigateur afficher le retour visuel avant la capture synchrone.
   await new Promise(resolve => window.setTimeout(resolve, 0));
   try {
-    const explicitExercise = new URLSearchParams(window.location.search).get("return") === "exercise";
-    const roomRaw = drawingSessionStorage.getItem("mybasket_exercise_schema_room");
+    const explicitForm = new URLSearchParams(window.location.search).get("return");
+    const roomRaw = drawingSessionStorage.getItem(explicitForm === "systeme"
+      ? "mybasket_system_schema_room" : "mybasket_exercise_schema_room");
     const room = roomRaw === null ? 50 : Number(roomRaw);
-    if (explicitExercise && Number.isFinite(room) && phasesRef.current.length > room) {
+    if ((explicitForm === "exercise" || explicitForm === "systeme") && Number.isFinite(room) && phasesRef.current.length > room) {
       throw new Error(`La fiche peut encore recevoir ${room} phases (50 maximum). Tes ${phasesRef.current.length} phases sont conservées ici ; aucune insertion partielle n’a été faite.`);
     }
     const returnPath = drawingSessionStorage.getItem(RETURN_KEY) || "";
     const fromGamePlan = isGamePlanReturnContext();
     const fromScouting = isScoutingReturnContext();
 
-    const isSysteme = new URLSearchParams(window.location.search).get("return")!=="exercise" && (
+    const isSysteme = explicitForm !== "exercise" && (explicitForm === "systeme" ||
       fromGamePlan || fromScouting ||
       returnPath.includes("/systemes") ||
       !!drawingSessionStorage.getItem("mybasket_current_system_id") ||
@@ -4894,34 +4897,6 @@ const exportJson = () => {
   const actionIcon = (a: string) => (a === 'pass' ? '→' : a === 'dribble' ? '~' : a === 'cut' ? '↗' : a === 'screen' ? '⊥' : a === 'shoot' ? '◎' : '•');
   const actionName = (a: string) => (a === 'pass' ? 'Passe' : a === 'dribble' ? 'Dribble' : a === 'cut' ? 'Cut' : a === 'screen' ? 'Écran' : a === 'shoot' ? 'Tir' : a);
   const actionWho = (l: Line) => (l.action === 'pass' ? `${playerLabelById(l.sourcePlayerId || l.sourceMachineId)}→${playerLabelById(l.targetPlayerId || l.targetMachineId)}` : playerLabelById(l.sourcePlayerId));
-  const selectedTimingAction = selection.length === 1 && selection[0].type === 'line'
-    ? acts.find(action => action.id === selection[0].id) : undefined;
-  const editActionLink = (line: Line, change: 'source' | 'target' | 'mode', value: string) => {
-    if (!ph) return;
-    stopAnim();
-    pushHistory();
-    const shownTarget = resolveTo(line);
-    updatePhase(phase => ({
-      ...phase,
-      lines: phase.lines.map(item => {
-        if (item.id !== line.id) return item;
-        if (change === 'source') return {
-          ...item, from: resolveFrom(line), points: undefined, sourcePlayerId: value || undefined,
-          sourceMachineId: undefined,
-          ...(item.targetPlayerId === value ? { targetPlayerId: undefined, targetMode: undefined, createdTargetPoint: undefined, to: shownTarget } : {}),
-        };
-        if (change === 'target') return {
-          ...item, targetPlayerId: value || undefined, targetMachineId: undefined, points: undefined,
-          to: shownTarget, targetMode: value ? 'playerCurrentPoint' : undefined, createdTargetPoint: undefined,
-        };
-        return {
-          ...item, points: undefined, to: shownTarget,
-          targetMode: value === 'playerCurrentPoint' ? 'playerCurrentPoint' : 'player',
-          createdTargetPoint: value === 'playerCurrentPoint' ? undefined : shownTarget,
-        };
-      }),
-    }));
-  };
   const toggleActionWith = (lineId: string) => { pushHistory(); updatePhase((p) => ({ ...p, lines: p.lines.map((l) => (l.id === lineId ? { ...l, startMode: l.startMode === 'withPrevious' ? 'afterPrevious' : 'withPrevious' } : l)) })); };
 
   // Réordonne les actions de la phase sans toucher aux autres éléments du terrain.
@@ -5338,42 +5313,6 @@ const exportJson = () => {
                         );
                       })}
                     </div>
-                    {selectedTimingAction && ph && (
-                      <div style={{ display: 'grid', gap: 6, marginTop: 8, fontSize: '.75rem' }}>
-                        {!selectedTimingAction.sourceMachineId && (
-                          <label>Joueur au départ
-                            <select className="form-select" value={selectedTimingAction.sourcePlayerId || ''}
-                              onChange={event => editActionLink(selectedTimingAction, 'source', event.target.value)}>
-                              <option value="">Point libre</option>
-                              {ph.players.filter(player => player.id !== selectedTimingAction.targetPlayerId).map(player =>
-                                <option key={player.id} value={player.id}>{player.label}</option>)}
-                            </select>
-                          </label>
-                        )}
-                        {selectedTimingAction.action === 'pass' && !selectedTimingAction.targetMachineId && (
-                          <>
-                            <label>Destinataire
-                              <select className="form-select" value={selectedTimingAction.targetPlayerId || ''}
-                                onChange={event => editActionLink(selectedTimingAction, 'target', event.target.value)}>
-                                <option value="">Point libre</option>
-                                {ph.players.filter(player => player.id !== selectedTimingAction.sourcePlayerId).map(player =>
-                                  <option key={player.id} value={player.id}>{player.label}</option>)}
-                              </select>
-                            </label>
-                            {selectedTimingAction.targetPlayerId && (
-                              <label>Point d’arrivée
-                                <select className="form-select" value={selectedTimingAction.targetMode || 'player'}
-                                  onChange={event => editActionLink(selectedTimingAction, 'mode', event.target.value)}>
-                                  <option value="playerCurrentPoint">Position du joueur à la réception</option>
-                                  <option value="player">Point fixe sur le terrain</option>
-                                </select>
-                              </label>
-                            )}
-                            <div>Glisse la pointe de la passe pour fixer un autre point d’arrivée.</div>
-                          </>
-                        )}
-                      </div>
-                    )}
                   </div>
                 </div>
 

@@ -100,6 +100,30 @@ function dribbleControls(points: AiPoint[], courtType: "half" | "full"): AiPoint
   return bins.filter(bin => bin.count).map(bin => clampPoint({ x: bin.x / bin.count, y: bin.y / bin.count }, courtType));
 }
 
+/** Fit native handles to the centre of the stroke, skipping pen hooks and zigzags. */
+function landmarkControls(points: AiPoint[], from: AiPoint, to: AiPoint, courtType: "half" | "full"): AiPoint[] {
+  const sy = courtType === "half" ? 2 : 1;
+  const dx = to.x - from.x, dy = (to.y - from.y) * sy, length = Math.hypot(dx, dy);
+  if (length < .035) return [];
+  const ux = dx / length, uy = dy / length;
+  const bins: number[][] = [[], [], []];
+  for (const point of points) {
+    const x = point.x - from.x, y = (point.y - from.y) * sy;
+    const t = (x * ux + y * uy) / length;
+    if (t >= .12 && t <= .88) bins[Math.floor(t * 3)].push(y * ux - x * uy);
+  }
+  const shifts = bins.map(bin => {
+    if (bin.length < 3) return 0;
+    bin.sort((a,b) => a-b);
+    return Math.max(-length*.34, Math.min(length*.34, bin[Math.floor(bin.length/2)]));
+  });
+  if (Math.max(...shifts.map(Math.abs)) < Math.max(.012, length*.047)) return [];
+  return shifts.map((shift, index) => {
+    const t = (index+.5)/shifts.length;
+    return clampPoint({ x: from.x+t*dx-shift*uy, y: from.y+(t*dy+shift*ux)/sy }, courtType);
+  });
+}
+
 /** Un diagramme détecté → une Phase Plaquette native. */
 function diagramToPhase(diagram: AiExerciseDiagram, courtType: "half" | "full"): PlaquettePhase {
   const idByKey = new Map<string, string>();
@@ -185,7 +209,9 @@ function diagramToPhase(diagram: AiExerciseDiagram, courtType: "half" | "full"):
       // `points` garde le chemin Vision complet, même pour cut/pass/dribble.
       // La Plaquette V15 sait rendre ce chemin directement. Les `ctrls` restent
       // présents comme repli natif si l'utilisateur édite ensuite la trajectoire.
-      ...(nativeDribble && action.points?.length
+      ...(diagram.landmarkAligned && action.points?.length && (nativeDribble || action.action === "cut")
+        ? { ctrls: landmarkControls(action.points, from, to, courtType) }
+        : nativeDribble && action.points?.length
         ? { ctrls: dribbleControls(action.points, courtType) }
         : action.points?.length && !linkedPass
         ? {

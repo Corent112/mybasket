@@ -44,6 +44,7 @@ type Props = {
   /** Vision 2 : ne détecte que les joueurs + leurs numéros/positions. */
   playersOnly?: boolean;
   drawingOnly?: boolean;
+  phaseRoom?: number;
 };
 
 /** Étapes de l'écran : rien → analyse → résumé → correction. */
@@ -54,7 +55,7 @@ const rect = (r: { x0: number; y0: number; x1: number; y1: number }) =>
 
 const plural = (count: number, one: string, many: string) => (count > 1 ? many : one);
 
-export default function ExercisePhotoImport({ onImported, playersOnly = false, drawingOnly = false }: Props) {
+export default function ExercisePhotoImport({ onImported, playersOnly = false, drawingOnly = false, phaseRoom = 50 }: Props) {
   const inputRef = useRef<HTMLInputElement | null>(null);
   const [step, setStep] = useState<Step>("idle");
   const [busy, setBusy] = useState(false);
@@ -69,6 +70,7 @@ export default function ExercisePhotoImport({ onImported, playersOnly = false, d
   /** Photo d'origine, uniquement pour la comparaison visuelle. */
   const [sourceImage, setSourceImage] = useState<string>("");
   const [compare, setCompare] = useState(false);
+  const [batch, setBatch] = useState(false);
   const [dragging, setDragging] = useState(false);
   /** Garde-fou anti double injection (double clic, double soumission). */
   const injecting = useRef(false);
@@ -83,6 +85,7 @@ export default function ExercisePhotoImport({ onImported, playersOnly = false, d
 
   const resetAll = useCallback(() => {
     setPending(null);
+    setBatch(false);
     setCompare(false);
     setStep("idle");
     setStatus("");
@@ -99,41 +102,64 @@ export default function ExercisePhotoImport({ onImported, playersOnly = false, d
     return scanPlayersFree(file, setStatus);
   };
 
-  const analyze = async (file: File) => {
-    const isImage = file.type.startsWith("image/");
-    const isVideo = file.type.startsWith("video/");
-    if (!isImage && (!isVideo || drawingOnly)) {
-      setError("Choisis une photo ou une vidéo.");
+  const analyze = async (files: File[]) => {
+    if (!files.length || busy || injecting.current) return;
+    const multiple = files.length > 1;
+    if (files.length > 50 || (multiple && files.some(file => !file.type.startsWith("image/")))) {
+      setError("Sélectionne jusqu’à 50 photos à la fois. Les vidéos s’analysent séparément.");
       return;
     }
-    if (file.size > 120 * 1024 * 1024) {
-      setError("Le fichier est trop lourd (120 Mo maximum).");
+    if (files.some(file => (!file.type.startsWith("image/") && (drawingOnly || !file.type.startsWith("video/")))
+      || file.size > 120 * 1024 * 1024)) {
+      setError("Choisis des fichiers compatibles (120 Mo maximum par fichier).");
       return;
     }
-
-    // Un nouvel import repart de zéro : le précédent résultat en attente est
-    // abandonné (il n'a jamais été injecté, donc il n'y a rien à défaire).
     resetAll();
+    setBatch(multiple);
     setBusy(true);
     setStep("scanning");
     setDebug(null);
     setStatus("Préparation…");
 
     try {
-      const exercise = playersOnly && isImage
-        ? await scanPlayersOnly(file)
-        : refineImportedExercise(await scanExerciseLocally(file, setStatus, { drawingOnly }));
-
+      const photos: AiExerciseImport[] = [];
+      const batchWarnings: string[] = [];
+      for (const [index, file] of files.entries()) {
+        const report = (message: string) => setStatus(multiple ? `Photo ${index + 1}/${files.length} · ${message}` : message);
+        report("Préparation…");
+        try {
+          const result = playersOnly && file.type.startsWith("image/")
+            ? await scanPlayersOnly(file)
+            : refineImportedExercise(await scanExerciseLocally(file, report, { drawingOnly }));
+          if (!multiple || diagramsOf(result).length || result.referenceFallback) photos.push(result);
+          else batchWarnings.push(`Photo ${index + 1} (${file.name}) : aucun terrain retrouvé. Tu peux la joindre comme image.`);
+        } catch (cause) {
+          if (!multiple) throw cause;
+          batchWarnings.push(`Photo ${index + 1} (${file.name}) : lecture impossible. Tu peux la sélectionner de nouveau séparément.`);
+        }
+      }
+      const first = photos[0];
+      if (!first) throw new Error("Aucun terrain retrouvé. Essaie une photo nette par phase ou joins les photos comme images.");
+      const diagrams = photos.flatMap(result => {
+        const detected = diagramsOf(result);
+        return detected.length ? detected : result.referenceFallback ? [result.referenceFallback] : [];
+      });
+      const exercise: AiExerciseImport = multiple ? {
+        ...first, title: "", organisation: "", deroulement: [], consignes: [], variantes: [],
+        plots: null, ballons: null, paniers: null, joueurs: null, categorie: "— Choisir —", temps: null, themes: [],
+        diagrams, diagram: diagrams[0], referenceFallback: undefined, rectifiedImage: undefined,
+        warnings: batchWarnings,
+      } : first;
       setPending(exercise);
       setWarnings(exercise.warnings);
-      if (IMPORT_DEBUG_ENABLED) setDebug(exercise.debug ?? null);
-      if (isImage) setSourceImage(URL.createObjectURL(file));
+      if (IMPORT_DEBUG_ENABLED && !multiple) setDebug(exercise.debug ?? null);
+      if (!multiple && files[0].type.startsWith("image/")) setSourceImage(URL.createObjectURL(files[0]));
       setStatus("");
-      setStep(drawingOnly && (diagramsOf(exercise).length || exercise.referenceFallback) ? "review" : "summary");
-    } catch (e) {
+      setStep(multiple || (drawingOnly && (diagramsOf(exercise).length || exercise.referenceFallback)) ? "review" : "summary");
+    } catch (cause) {
       setStatus("");
       setStep("idle");
-      setError(e instanceof Error ? e.message : "L'import n'a pas pu être analysé.");
+      setError(cause instanceof Error ? cause.message : "L’import n’a pas pu être analysé.");
     } finally {
       setBusy(false);
       if (inputRef.current) inputRef.current.value = "";
@@ -146,9 +172,17 @@ export default function ExercisePhotoImport({ onImported, playersOnly = false, d
    */
   const validate = async (corrected: AiExerciseImport) => {
     if (injecting.current) return;
-    injecting.current = true;
-
     const count = diagramsOf(corrected).length;
+    if (count > phaseRoom) {
+      setError(`Il reste ${phaseRoom} place(s) pour des phases. Retire des phases avant de valider : rien n’a été ajouté.`);
+      return;
+    }
+    if (batch && !count) {
+      setError("Aucune phase exploitable. Tu peux reprendre le tracé sur le calque ou joindre les photos comme images.");
+      return;
+    }
+    injecting.current = true;
+    setError("");
     setStep("idle");
     setCompare(false);
     setBusy(true);
@@ -167,7 +201,7 @@ export default function ExercisePhotoImport({ onImported, playersOnly = false, d
                 "reconstruits"
               )} dans Plaquette`
             : ""
-        }. Vérifie, modifie si besoin, puis clique sur « Sauvegarder l’exercice ».`
+        }.`
       );
     } catch (e) {
       setStatus("");
@@ -197,15 +231,14 @@ export default function ExercisePhotoImport({ onImported, playersOnly = false, d
       onDrop={(event) => {
         event.preventDefault();
         setDragging(false);
-        const file = event.dataTransfer.files?.[0];
-        if (file && !busy) void analyze(file);
+        if (!busy) void analyze(Array.from(event.dataTransfer.files));
       }}
       style={dragging ? { outline: "2px dashed #8F1D35", outlineOffset: 8, borderRadius: 12 } : undefined}
     >
       <div className="ce-ai-copy">
         <span className="ce-ai-badge">NUMÉRISATION GRATUITE</span>
         <div>
-          <b>{drawingOnly ? "Importe une photo ou une capture d’écran" : "Exercice sur papier, capture d’écran ou vidéo ?"}</b>
+          <b>{drawingOnly ? "Importe une ou plusieurs photos de schémas" : "Schémas sur papier, captures d’écran ou vidéo ?"}</b>
           <p>
             MyBasket détecte le terrain, redresse la perspective, isole joueurs et tracés puis reconstruit chaque dessin
             avec les objets natifs de Plaquette. Tu peux aussi glisser-déposer une image ici. Rien n’est enregistré tant que tu n’as pas validé.
@@ -214,17 +247,17 @@ export default function ExercisePhotoImport({ onImported, playersOnly = false, d
       </div>
 
       <button type="button" className="ce-ai-btn" disabled={busy} onClick={() => inputRef.current?.click()}>
-        {busy ? "Numérisation en cours…" : "📸 Scanner un schéma"}
+        {busy ? "Numérisation en cours…" : "📸 Scanner des schémas"}
       </button>
 
       <input
         ref={inputRef}
         hidden
         type="file"
+        multiple
         accept={drawingOnly ? "image/*" : "image/jpeg,image/png,image/webp,video/mp4,video/quicktime,video/webm"}
         onChange={(event) => {
-          const file = event.target.files?.[0];
-          if (file) void analyze(file);
+          void analyze(Array.from(event.target.files || []));
         }}
       />
 
@@ -331,15 +364,16 @@ export default function ExercisePhotoImport({ onImported, playersOnly = false, d
         <div style={summaryStyles.reviewHost}>
           <ImportReview
             result={pending}
-            cancelLabel="Retour"
+            batchMode={batch}
+            cancelLabel={batch ? "Annuler" : "Retour"}
             validateLabel="Valider l’import"
-            onCancel={() => setStep("summary")}
+            onCancel={batch ? resetAll : () => setStep("summary")}
             onValidate={(corrected) => void validate(corrected)}
           />
         </div>
       )}
 
-      {step !== "summary" && !error && warnings.length > 0 && (
+      {step !== "summary" && step !== "review" && warnings.length > 0 && (
         <ul className="ce-ai-warn">
           {warnings.map((warning) => (
             <li key={warning}>{warning}</li>

@@ -51,6 +51,7 @@ import {
 } from "./court-geometry";
 import { registerMarkedCourt } from "./marked-court";
 import { traceLandmarkArrows } from "./landmark-arrows";
+import { readLandmarkPlayers } from "./landmark-players";
 import { isolateLandmarkInk, locateFilledLandmarkCourt, registerLandmarkCourt } from "./landmark-court";
 import { recoverReferenceInk } from "./reference-ink";
 import { recoverRedArrows } from "./reference-arrows";
@@ -1146,19 +1147,21 @@ export async function scanExerciseLocally(
               rect: play, play, playDetected: true, kind: "half", orientation: "identity",
               confidence: .65, reasons: ["Repères de raquette et de ligne à trois points"],
             };
-            const analysis = await debug.time("vision-reperes-terrain", () =>
-              analyseGraphic(isolateLandmarkInk(marked?.analysisCanvas ?? aligned), geometry, "reperes")).catch(error => {
-                debug.note(`Tracés non analysés après calage : ${error instanceof Error ? error.message : String(error)}`);
-                return null;
-              });
-            const players = (analysis?.players ?? []).filter(player => player.label && player.labelConfident !== false
-              && !landmarks.some(point => Math.hypot(point.x-player.x, point.y-player.y) < .055));
+            const clean = marked?.analysisCanvas ?? aligned;
+            const ink = isolateLandmarkInk(clean);
+            const traced = traceLandmarkArrows(source, registered.toCourt, painted);
+            const analysis = !marked && !traced.length
+              ? await debug.time("vision-reperes-terrain", () => analyseGraphic(ink, geometry, "reperes")).catch(() => null)
+              : null;
+            const numbered = await debug.time("numeros-sur-photo", () => readLandmarkPlayers(clean, ink, landmarks, traced));
+            const players = [...numbered, ...(analysis?.players ?? []).filter(player => player.label && player.labelConfident !== false
+              && !landmarks.some(point => Math.hypot(point.x-player.x, point.y-player.y) < .055)
+              && !numbered.some(point => Math.hypot(point.x-player.x, point.y-player.y) < .05))];
             const keys = new Set(players.map(player => player.key));
             const keyTop = courtToCanonical({ x: 5.05 / 15, y: 0 }, "half");
             const keyEnd = courtToCanonical({ x: 9.95 / 15, y: 5.8 / 14 }, "half");
             const inPaint = (point: AiPoint) => point.x > keyTop.x - .015 && point.x < keyEnd.x + .015
               && point.y < keyEnd.y + .02;
-            const traced = traceLandmarkArrows(source, registered.toCourt, painted);
             const fallbackActions = (analysis?.actions ?? []).filter(action => action.action !== "screen"
               && (action.confidence ?? 0) >= .65
               // On the printed key, inner lane lines can survive the outer
@@ -1171,10 +1174,10 @@ export async function scanExerciseLocally(
               }));
             const nearby = (point: AiPoint, exclude?: string) => {
               const matches = players.filter(player => player.key !== exclude)
-                .map(player => ({ player, distance: Math.hypot(player.x-point.x, player.y-point.y) }))
+                .map(player => ({ player, distance: Math.hypot(player.x-point.x, 1.6*(player.y-point.y)) }))
                 .sort((a,b) => a.distance-b.distance);
               const first = matches[0];
-              return first && first.distance < .05 && (!matches[1] || matches[1].distance-first.distance > .022)
+              return first && first.distance < .065 && (!matches[1] || matches[1].distance-first.distance > .024)
                 ? first.player.key : undefined;
             };
             const actions = traced.length ? traced.map((action, index) => {

@@ -8,6 +8,7 @@ import {drawingSessionStorage as localStorage} from "@/lib/drawing-session-stora
 import { useEffect, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { saveExercise, updateExercise, getExercise } from "@/lib/exercises";
+import { readAttachedImages } from "@/lib/import/attached-images";
 import ExercisePhotoImport from "@/components/ai/ExercisePhotoImport";
 import type { AiExerciseImport } from "@/lib/import/types";
 import { importToPlaquetteSchema, renderSchemaPreviews } from "@/lib/import/plaquette-converter";
@@ -255,8 +256,9 @@ export default function CreerExerciceClient() {
           phaseImages: images,
         }));
 
-        const nextImages = [...current.schemaImages, ...images].slice(0, 50);
-        const nextData = [...current.schemaDataList, ...dataList].slice(0, 50);
+        const existing = syncSchemas(current.schemaImages, current.schemaDataList);
+        const nextImages = [...existing.map((schema, i) => current.schemaImages[i] || schema.imageData || ""), ...images];
+        const nextData = [...existing, ...dataList];
 
         next.schemaImages = nextImages;
         next.schemaDataList = syncSchemas(nextImages, nextData);
@@ -589,25 +591,14 @@ export default function CreerExerciceClient() {
       };
     });
 
-  const onImages = (event: React.ChangeEvent<HTMLInputElement>) => {
+  const [attachmentMessage, setAttachmentMessage] = useState("");
+  const onImages = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const files = Array.from(event.target.files || []);
-    if (!files.length) return;
-
-    const room = 5 - ex.images.length;
-
-    files.slice(0, room).forEach((file) => {
-      const reader = new FileReader();
-
-      reader.onload = () =>
-        setEx((current) => ({
-          ...current,
-          images: [...current.images, reader.result as string].slice(0, 5),
-        }));
-
-      reader.readAsDataURL(file);
-    });
-
     event.target.value = "";
+    if (!files.length) return;
+    const { attached, warnings } = await readAttachedImages(files, 5 - ex.images.length);
+    setEx(current => ({ ...current, images: [...current.images, ...attached].slice(0, 5) }));
+    setAttachmentMessage(warnings.join(" "));
   };
 
   const removeImage = (index: number) =>
@@ -660,14 +651,15 @@ export default function CreerExerciceClient() {
     const res = await fetch(base64);
     const blob = await res.blob();
 
+    const extension = blob.type === "image/jpeg" ? "jpg" : blob.type.split("/")[1] || "png";
     const fileName = `${user.id}/${folder}/${Date.now()}-${Math.random()
       .toString(36)
-      .slice(2)}.png`;
+      .slice(2)}.${extension}`;
 
     const { error } = await supabase.storage
       .from("exercise-schemas")
       .upload(fileName, blob, {
-        contentType: "image/png",
+        contentType: blob.type || "image/png",
         upsert: false,
       });
 
@@ -901,7 +893,7 @@ export default function CreerExerciceClient() {
         tant que tu ne le proposes pas au CEO.
       </p>
 
-      <ExercisePhotoImport onImported={applyAIImport} />
+      <ExercisePhotoImport onImported={applyAIImport} phaseRoom={Math.max(0, 50 - Math.max(ex.schemaImages.length, ex.schemaDataList.length))} />
 
       <div className="ce-grid">
         <div className="ce-card">
@@ -1031,9 +1023,11 @@ export default function CreerExerciceClient() {
           </div>
 
           <label className="ce-lab">
-            Images / Schémas <span className="ce-lab-soft">(5 max)</span>
+            Photos et dessins sur papier <span className="ce-lab-soft">(5 max)</span>
           </label>
 
+          <p>Ajoute plusieurs photos telles quelles. Pour obtenir des phases éditables, utilise « Scanner des schémas ».</p>
+          {attachmentMessage && <p role="status">{attachmentMessage}</p>}
           <div className="ce-imgs">
             {ex.images.map((src, index) => (
               <div key={`${src}-${index}`} className="ce-thumb">
@@ -1051,14 +1045,14 @@ export default function CreerExerciceClient() {
                 className="ce-addimg"
                 onClick={() => imgInput.current?.click()}
               >
-                📷 Ajouter une image
+                📷 Joindre des images
               </button>
             )}
 
             <input
               ref={imgInput}
               type="file"
-              accept="image/*"
+              accept="image/jpeg,image/png,image/webp,image/gif,image/avif"
               multiple
               hidden
               onChange={onImages}

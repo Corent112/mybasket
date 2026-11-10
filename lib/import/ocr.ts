@@ -442,3 +442,17 @@ export async function ocrToken(
     return null;
   }
 }
+
+/** Read an isolated diagram digit without masking the edges of its glyph. */
+export async function ocrLandmarkGlyph(canvas: HTMLCanvasElement, singleCharacter: boolean): Promise<{ text: string; confidence: number } | null> {
+  try {
+    const worker = await getDigitWorker();
+    const result = await worker.recognize(canvas, {
+      tessedit_pageseg_mode: singleCharacter ? "10" : "8", tessedit_char_whitelist: "12345",
+    }, { text: true });
+    const text = String(result?.data?.text ?? "").trim();
+    return /^[1-5]$/.test(text) ? { text, confidence: Number(result.data.confidence ?? 0) / 100 } : null;
+  } catch {
+    return null;
+  }
+}
