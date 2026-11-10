@@ -1051,7 +1051,7 @@ export async function collectFromRegion(
 
   if (rectified) {
     const flat = flatCourtReference(canvas, rectified);
-    if (flat && flat.kind === candidate.courtType) supplementReferenceSymbols(candidate, flat);
+    if (flat && flat.kind === candidate.courtType) await supplementReferenceSymbols(candidate, flat);
   }
   const content = diagramContentSignature(candidate);
   if (state.contentSignatures.has(content)) {
@@ -1285,7 +1285,7 @@ export async function scanExerciseLocally(
         });
         referenceFallback.actions = [...recovered.actions, ...colored]
           .map((action, index) => ({ ...action, order: index + 1 }));
-        supplementReferenceSymbols(referenceFallback, state.flatReference);
+        await supplementReferenceSymbols(referenceFallback, state.flatReference);
       } catch (error) {
         debug.note(`Reconnaissance des tracés noirs indisponible : ${error instanceof Error ? error.message : String(error)}`);
       }

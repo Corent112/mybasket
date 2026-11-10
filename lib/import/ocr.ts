@@ -444,14 +444,14 @@ export async function ocrToken(
 }
 
 /** Read an isolated diagram digit without masking the edges of its glyph. */
-export async function ocrLandmarkGlyph(canvas: HTMLCanvasElement, singleCharacter: boolean): Promise<{ text: string; confidence: number } | null> {
+export async function ocrLandmarkGlyph(canvas: HTMLCanvasElement, singleCharacter: boolean, shirtNumber = false): Promise<{ text: string; confidence: number } | null> {
   try {
     const worker = await getDigitWorker();
     const result = await worker.recognize(canvas, {
-      tessedit_pageseg_mode: singleCharacter ? "10" : "8", tessedit_char_whitelist: "12345",
+      tessedit_pageseg_mode: singleCharacter ? "10" : "8", tessedit_char_whitelist: shirtNumber ? "0123456789" : "12345",
     }, { text: true });
     const text = String(result?.data?.text ?? "").trim();
-    return /^[1-5]$/.test(text) ? { text, confidence: Number(result.data.confidence ?? 0) / 100 } : null;
+    return (shirtNumber ? /^\d{1,2}$/ : /^[1-5]$/).test(text) ? { text, confidence: Number(result.data.confidence ?? 0) / 100 } : null;
   } catch {
     return null;
   }
