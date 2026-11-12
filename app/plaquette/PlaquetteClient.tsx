@@ -1,4 +1,5 @@
 'use client';
+import { resolveSystemDrawingPreview } from "@/lib/system-drawing-preview";
 import {drawingSessionStorage} from '@/lib/drawing-session-storage';
 
 /**
@@ -606,27 +607,15 @@ useEffect(() => {
         if (systemeId) {
           const systeme = previewSystem ?? await getSystem(systemeId);
           if (loadToken !== drawingLoadTokenRef.current) return;
-          const schemaDataList = Array.isArray((systeme as any)?.schemaDataList)
-            ? (systeme as any).schemaDataList
-            : [];
-
-          // Un clic depuis la Bibliothèque n'a volontairement pas d'EDIT_INDEX_KEY.
-          // Dans ce cas on ouvre le système complet depuis sa première fiche de schéma
-          // (chaque fiche contient déjà toutes les phases) et on démarre à la phase 1.
-          const sourceIndex = previewSystemId
-            ? 0
-            : editIndex !== null
-              ? editIndex
-              : 0;
-
-          schemaData = schemaDataList[sourceIndex] || schemaDataList[0] || systeme?.schemaData || null;
-          if (previewSystemId && (!Array.isArray(schemaData?.phases) || !schemaData.phases.length)) {
-            const image = systeme?.schemaImage || systeme?.schemaImages?.[0];
-            if (image) {
+          const sourceIndex = previewSystemId ? 0 : editIndex ?? 0;
+          const preview = systeme ? resolveSystemDrawingPreview(systeme, sourceIndex) : null;
+          schemaData = preview?.schema ?? null;
+          if (!schemaData && previewSystemId) {
+            if (preview?.image) {
               setTitle(systeme?.title || "Système");
-              setLibrarySchemaImage(image);
+              setLibrarySchemaImage(preview.image);
             } else {
-              showHint('Ce système ne contient aucun schéma modifiable.');
+              showHint('Ce système ne contient aucun schéma.');
             }
             return;
           }
@@ -635,6 +624,11 @@ useEffect(() => {
             // Depuis la bibliothèque, on charge le système dans l’éditeur courant
             // sans navigation vers la fiche /systemes/creer.
             // On conserve son id afin de pouvoir enregistrer directement les modifications.
+            stopAnim();
+            activeOptionRef.current = null;
+            setActiveOptionId(null);
+            setOptionFormOpen(false);
+            setEditorMode('draw');
             if (!playbookOnly) setOpenedLibrarySystemId(systemeId);
             schemaData = {
               ...schemaData,
@@ -700,9 +694,9 @@ useEffect(() => {
         courtRef.current = schemaData.courtType;
       }
 
-      window.setTimeout(() => {
-        render();
-      }, 80);
+      window.requestAnimationFrame(() => {
+        if (loadToken === drawingLoadTokenRef.current) render();
+      });
     } catch (error) {
       console.error("Erreur chargement schéma :", error);
       if (previewSystemId) showHint('Impossible de charger ce système.');
@@ -3986,8 +3980,9 @@ useEffect(() => {
     if (alive) setScoutingPending(!explicitExerciseReturn&&!explicitSystemReturn&&!!drawingSessionStorage.getItem("mybasket_scouting_pending"));
 
     try {
+      const loadToken = drawingLoadTokenRef.current;
       const data = await getPlaquetteTransfer<any>(LOAD_KEY);
-      if (!data || !alive) return;
+      if (!data || !alive || loadToken !== drawingLoadTokenRef.current) return;
 
       const loadedPhases = Array.isArray(data.phases) ? data.phases : [];
       const loadedCurrent =

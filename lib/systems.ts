@@ -221,7 +221,7 @@ export function rowToSystem(row: any): SystemItem {
     schemaImage: schemaImages[0] ?? "",
     schemaImages,
     schemaVideo: row.schema_video ?? "",
-    schemaData: schemaDataList[0] ?? null,
+    schemaData: row.schema_data ?? schemaDataList[0] ?? null,
     schemaDataList,
     playIds,
     play_ids: playIds,
