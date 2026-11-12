@@ -445,7 +445,7 @@ export default function ImportReview({
       ctx.font = `700 ${String(player.label).length > 1 ? 14 : 16}px system-ui, sans-serif`;
       ctx.textAlign = "center";
       ctx.textBaseline = "middle";
-      ctx.fillText(type === "unknown" ? "?" : String(player.label ?? ""), 0, 1);
+      ctx.fillText(String(player.label || (type === "unknown" ? "?" : "")), 0, 1);
       ctx.restore();
     });
   }, [diagram, courtType, overlay, overlayReady, selection, nativeCourtReady, tracePreview, inkColor]);

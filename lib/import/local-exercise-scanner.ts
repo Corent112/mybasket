@@ -49,6 +49,7 @@ import {
   regionSignature,
   signatureDistance,
 } from "./court-geometry";
+import { readColoredCourtDiagram } from "./colored-court-diagram";
 import { registerMarkedCourt } from "./marked-court";
 import { traceLandmarkArrows } from "./landmark-arrows";
 import { readLandmarkPlayers } from "./landmark-players";
@@ -1132,6 +1133,14 @@ export async function scanExerciseLocally(
       // looking for strokes. Keep these proposals in the review rather than
       // allowing a high stroke count to promote a false court.
       if (!isVideo && !labelled.length) {
+        const digital = await debug.time("schéma-couleur", () => readColoredCourtDiagram(canvas)).catch(() => null);
+        if (digital) {
+          const courtReference = makeCourtReference(digital.canvas, digital.play);
+          state.rectifiedImage = courtReference?.url;
+          state.referenceFallback = { detected: true, courtType: "half", players: digital.players,
+            objects: [], actions: digital.actions, notes: "", courtReference };
+          continue;
+        }
         const marked = registerMarkedCourt(canvas);
         const direct = marked ? null : registerLandmarkCourt(canvas);
         const cropped = !marked && (!direct?.anchors.painted || !direct.anchors.corners)
