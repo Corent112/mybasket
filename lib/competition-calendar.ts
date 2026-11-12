@@ -1,8 +1,9 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { calendarAgeGroup } from "./calendar-fixtures";
 
 export type OfficialCalendarMatch = {
   sourceKey: string; date: string; time: string; homeAway: string;
-  opponent: string; ourScore?: number | null; opponentScore?: number | null;
+  opponent: string; competition?: string | null; ourScore?: number | null; opponentScore?: number | null;
 };
 
 async function officialEventId(name: string): Promise<string> {
@@ -20,12 +21,15 @@ async function officialEventId(name: string): Promise<string> {
 /** Only existing calendar columns are used. Official identity lives in description. */
 export async function syncCompetitionCalendar(
   supabase: SupabaseClient, teamId: string, userId: string,
-  source: "ffbb" | "lnb", matches: OfficialCalendarMatch[],
+  source: "ffbb" | "lnb", matches: OfficialCalendarMatch[], teamCategory?: string,
 ): Promise<number> {
   const today = new Date().toLocaleDateString("sv-SE", { timeZone: "Europe/Paris" });
   let saved = 0;
   const seen = new Set<string>();
+  const teamAge = calendarAgeGroup(teamCategory);
   for (const match of matches) {
+    const competitionAge = calendarAgeGroup(match.competition);
+    if (teamAge && competitionAge && teamAge !== competitionAge) continue;
     if (!match.sourceKey || seen.has(match.sourceKey)) continue;
     seen.add(match.sourceKey);
     if (!/^\d{4}-\d{2}-\d{2}$/.test(match.date) || match.date < today || match.ourScore != null) continue;
@@ -50,7 +54,7 @@ export async function syncCompetitionCalendar(
       id: eventId,
       user_id: userId, owner_id: userId, team_id: teamId,
       title: `Match ${match.homeAway === "away" ? "@" : "vs"} ${match.opponent}`,
-      description: `Synchronisé ${source.toUpperCase()} · ${marker}`,
+      description: [`Synchronisé ${source.toUpperCase()}`, match.competition ? `Compétition : ${match.competition}` : "", marker].filter(Boolean).join(" · "),
       event_date: match.date, start_time: /^\d{2}:\d{2}/.test(match.time || "") ? match.time.slice(0, 5) : null,
       end_time: null, location: match.homeAway === "away" ? "Extérieur" : "Domicile",
       event_type: "game", session_id: null, visibility: "private", updated_at: new Date().toISOString(),

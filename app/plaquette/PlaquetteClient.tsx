@@ -295,7 +295,10 @@ const resetPlaquette = () => {
   drawingSessionStorage.removeItem("mybasket_scouting_pending");
 
   setActiveOptionId(null); activeOptionRef.current = null; setOptionFormOpen(false);
+  ++drawingLoadTokenRef.current;
   setOpenedLibraryExercise(null);
+  setOpenedLibrarySystemId(null);
+  setLibrarySchemaImage(null);
   setTitle("Nouveau play");
   setPhases([emptyPhase()]);
   setCurrent(0);
@@ -572,7 +575,7 @@ const resetPlaquette = () => {
 
 
 useEffect(() => {
-  const loadFromSource = async (previewSystemId?: string) => {
+  const loadFromSource = async (previewSystemId?: string, previewSystem?: Awaited<ReturnType<typeof getSystem>>, playbookOnly=false) => {
     const loadToken = ++drawingLoadTokenRef.current;
     try {
       const params = new URLSearchParams(window.location.search);
@@ -601,7 +604,7 @@ useEffect(() => {
           previewSystemId || drawingSessionStorage.getItem("mybasket_edit_systeme_id");
 
         if (systemeId) {
-          const systeme = await getSystem(systemeId);
+          const systeme = previewSystem ?? await getSystem(systemeId);
           if (loadToken !== drawingLoadTokenRef.current) return;
           const schemaDataList = Array.isArray((systeme as any)?.schemaDataList)
             ? (systeme as any).schemaDataList
@@ -616,13 +619,23 @@ useEffect(() => {
               ? editIndex
               : 0;
 
-          schemaData = schemaDataList[sourceIndex] || schemaDataList[0] || null;
+          schemaData = schemaDataList[sourceIndex] || schemaDataList[0] || systeme?.schemaData || null;
+          if (previewSystemId && (!Array.isArray(schemaData?.phases) || !schemaData.phases.length)) {
+            const image = systeme?.schemaImage || systeme?.schemaImages?.[0];
+            if (image) {
+              setTitle(systeme?.title || "Système");
+              setLibrarySchemaImage(image);
+            } else {
+              showHint('Ce système ne contient aucun schéma modifiable.');
+            }
+            return;
+          }
 
           if (schemaData && previewSystemId) {
             // Depuis la bibliothèque, on charge le système dans l’éditeur courant
             // sans navigation vers la fiche /systemes/creer.
             // On conserve son id afin de pouvoir enregistrer directement les modifications.
-            setOpenedLibrarySystemId(systemeId);
+            if (!playbookOnly) setOpenedLibrarySystemId(systemeId);
             schemaData = {
               ...schemaData,
               title: (systeme as any)?.title || schemaData.title,
@@ -692,19 +705,18 @@ useEffect(() => {
       }, 80);
     } catch (error) {
       console.error("Erreur chargement schéma :", error);
-      // Ne pas masquer le bouton Insérer : le contexte de retour reste prioritaire.
+      if (previewSystemId) showHint('Impossible de charger ce système.');
     }
   };
 
   void loadFromSource();
   const handlePreviewSystem=(event:Event)=>{
     setOpenedLibraryExercise(null);
-    const systemId=(event as CustomEvent<{systemId?:string}>).detail?.systemId;
-    if(systemId){
-      // L'ID est mémorisé immédiatement au clic Bibliothèque, avant même le chargement Supabase.
-      // Le bouton "Enregistrer les modifications" ne dépend donc plus du succès/du timing du chargement.
-      setOpenedLibrarySystemId(systemId);
-      void loadFromSource(systemId);
+    const detail=(event as CustomEvent<{systemId?:string;system?:Awaited<ReturnType<typeof getSystem>>;playbookOnly?:boolean}>).detail;
+    if(detail?.systemId){
+      setOpenedLibrarySystemId(null);
+      setLibrarySchemaImage(null);
+      void loadFromSource(detail.systemId, detail.system, detail.playbookOnly);
     }
   };
   window.addEventListener('mybasket:preview-system',handlePreviewSystem);
@@ -741,6 +753,7 @@ useEffect(() => {
   // Système actuellement ouvert directement depuis la Bibliothèque.
   // Cet id permet à "Enregistrer" de mettre à jour ce même système sans créer de copie.
   const [openedLibrarySystemId, setOpenedLibrarySystemId] = useState<string | null>(null);
+  const [librarySchemaImage, setLibrarySchemaImage] = useState<string | null>(null);
   const [openedLibraryExercise, setOpenedLibraryExercise] = useState<{id:string; index:number; groupId?:string} | null>(null);
   useEffect(() => {
     const renamed = (event: Event) => {
@@ -752,14 +765,8 @@ useEffect(() => {
   }, [openedLibraryExercise?.id]);
 
 
-  // ContentNavigator mémorise l'id du système choisi dans localStorage.
-  // On le relit au moment exact où l'utilisateur clique sur Enregistrer :
-  // ainsi le bouton de mise à jour apparaît aussi via la Bibliothèque intégrée.
   const openSaveModal = () => {
-    // Le bouton principal ouvre toujours la modale.
-    // Si un système de la Bibliothèque est ouvert, la modale propose
-    // "Enregistrer les modifications" sans court-circuiter les autres flux.
-    setSaveOpen(true);
+    if (!librarySchemaImage) setSaveOpen(true);
   };
   const [terrainPanelOpen, setTerrainPanelOpen] = useState(true);
   const [selectionPanelOpen, setSelectionPanelOpen] = useState(true);
@@ -4391,7 +4398,6 @@ const saveOpenedLibrarySystem = async (resolvedSystemId?: string | null) => {
       const { error: syncError } = await supabase
         .from("playbook_systems")
         .update({
-          title: savedTitle,
           schema_images: uploadedUrls,
           schema_data_list: schemaDataList,
           schema_video: existingSystem.schemaVideo || "",
@@ -4413,7 +4419,7 @@ const saveOpenedLibrarySystem = async (resolvedSystemId?: string | null) => {
 
     // Le système reste désormais en mode édition directe, jamais en mode copie.
     try {
-      localStorage.setItem('mybasket_edit_systeme_id', targetSystemId);
+      drawingSessionStorage.setItem('mybasket_edit_systeme_id', targetSystemId);
       localStorage.setItem('mybasket_edit_system_id', targetSystemId);
       localStorage.setItem('mybasket_current_system_id', targetSystemId);
       localStorage.setItem('mybasket_drawing_source_system_id', targetSystemId);
@@ -4824,7 +4830,7 @@ const exportJson = () => {
     drawingLoadTokenRef.current++;
     const data = exerciseDrawingEntries(exercise)[index];
     if (!Array.isArray(data?.phases) || !data.phases.length) { showHint('Ce schéma est une image seule, sans données modifiables.'); return; }
-    stopAnim(); setOpenedLibrarySystemId(null);
+    stopAnim(); setOpenedLibrarySystemId(null); setLibrarySchemaImage(null);
     setOpenedLibraryExercise({id:exercise.id,index,groupId:data.schemaGroupId});
     for (const key of ['mybasket_drawing_source_system_id','mybasket_current_system_id','mybasket_edit_systeme_id','mybasket_edit_system_id']) localStorage.removeItem(key);
     drawingSessionStorage.setItem(EDIT_EXERCISE_ID_KEY, exercise.id);
@@ -5121,23 +5127,13 @@ const exportJson = () => {
           onSaveExercise={saveOpenedLibraryExercise}
           onPreviewSystem={(system) => {
             setOpenedLibraryExercise(null);
-            // Liaison directe Bibliothèque -> Dessin : l'ID édité reste connu
-            // sans dépendre d'un CustomEvent ou du localStorage.
-            setOpenedLibrarySystemId(system.id);
-            try {
-              localStorage.setItem('mybasket_drawing_source_system_id', system.id);
-              localStorage.setItem('mybasket_current_system_id', system.id);
-              localStorage.setItem('mybasket_edit_systeme_id', system.id);
-              localStorage.setItem('mybasket_edit_system_id', system.id);
-              localStorage.setItem('mybasket_drawing_flow', 'library-system-edit');
-            } catch {}
             window.dispatchEvent(new CustomEvent('mybasket:preview-system', {
-              detail: { systemId: system.id, system }
+              detail: { systemId: system.id, system, playbookOnly: system.playbookOnly }
             }));
           }}
           onSaveSystem={(system) => {
             if (openedLibraryExercise) { showHint('Ouvre ce système avant de sauvegarder ses modifications.'); return; }
-            setOpenedLibrarySystemId(system.id);
+            if (openedLibrarySystemId !== system.id) { showHint('Ouvre ce système avant de sauvegarder ses modifications.'); return; }
             void saveOpenedLibrarySystem(system.id);
           }}
         />
@@ -5333,7 +5329,14 @@ const exportJson = () => {
               {hint && (
                 <div style={{ position: 'absolute', top: 10, left: '50%', transform: 'translateX(-50%)', zIndex: 5, background: 'rgba(15,15,18,0.92)', color: '#fff', padding: '.5rem .85rem', borderRadius: 8, fontSize: '.82rem', fontWeight: 600, pointerEvents: 'none', whiteSpace: 'nowrap' }}>{hint}</div>
               )}
+              {librarySchemaImage && (
+                <figure style={{ margin: 0, width: '100%', textAlign: 'center' }}>
+                  <img src={librarySchemaImage} alt={title} style={{ maxWidth: '100%', maxHeight: '65vh', objectFit: 'contain' }} />
+                  <figcaption>Schéma en lecture seule</figcaption>
+                </figure>
+              )}
               <canvas
+                hidden={!!librarySchemaImage}
                 id="playCanvas"
                 ref={canvasRef}
                 width={cw}
@@ -5345,11 +5348,11 @@ const exportJson = () => {
                 onPointerLeave={onPointerUp}
                 onDoubleClick={onDoubleClick}
               ></canvas>
-              <div className="drawing-option-reader">
+              {!librarySchemaImage && <div className="drawing-option-reader">
                 <button type="button" onClick={readSelectedOption}>{isPlaying && playbackModeRef.current === 'option' ? 'Ⅱ Pause' : `▶ Lire ${selectedOption ? 'cette option' : 'le système'}`}</button>
                 <button type="button" onClick={stopAnim}>■ Arrêter</button>
-              </div>
-              {options.length > 0 && <details className="drawing-option-overview">
+              </div>}
+              {!librarySchemaImage && options.length > 0 && <details className="drawing-option-overview">
                 <summary>Vue des options · {options.length} lectures</summary>
                 <div className="option-tree-common">Début commun · {drawingPath(phases).length} phases</div>
                 {options.map(option => <div key={option.id} className="option-tree-row">
@@ -5541,34 +5544,16 @@ const exportJson = () => {
               </div>
 
               <div style={{ display: 'flex', flexDirection: 'column', gap: '.55rem' }}>
-                <button
+                {(openedLibrarySystemId || openedLibraryExercise) && <button
                   disabled={!!saving}
                   onClick={async () => {
                     if (openedLibraryExercise) { await saveOpenedLibraryExercise(); return; }
-                    let systemId = openedLibrarySystemId;
-                    try {
-                      systemId =
-                        systemId ||
-                        localStorage.getItem('mybasket_drawing_source_system_id') ||
-                        localStorage.getItem('mybasket_current_system_id') ||
-                        localStorage.getItem('mybasket_edit_systeme_id') ||
-                        localStorage.getItem('mybasket_edit_system_id');
-                    } catch {}
-
-                    if (!systemId) {
-                      alert("Ouvre d’abord un système depuis la Bibliothèque avant d’enregistrer ses modifications.");
-                      return;
-                    }
-
-                    if (systemId !== openedLibrarySystemId) {
-                      setOpenedLibrarySystemId(systemId);
-                    }
-                    await saveOpenedLibrarySystem(systemId);
+                    if (openedLibrarySystemId) await saveOpenedLibrarySystem(openedLibrarySystemId);
                   }}
                   style={{ padding: '.75rem', borderRadius: 9, border: 'none', background: 'var(--or, #D4A24C)', color: '#0F0F12', fontWeight: 900, fontSize: '.9rem', cursor: saving ? 'wait' : 'pointer' }}
                 >
                   {saving === 'library-system' || saving === 'library-exercise' ? 'Enregistrement…' : openedLibraryExercise ? '💾 Enregistrer les modifications de l’exercice' : '💾 Enregistrer les modifications'}
-                </button>
+                </button>}
 
                 {exoInsertMode && (
                   <button

@@ -105,16 +105,18 @@ async function getUserId(): Promise<string> {
   }
 }
 
-export async function listPlaybooks(): Promise<Playbook[]> {
+export async function listPlaybooks(teamId?: string): Promise<Playbook[]> {
   const supabase = createClient();
   const userId = await getUserId();
 
-  const { data, error } = await supabase
+  const query = supabase
     .from("playbooks")
     .select("*")
     .eq("owner_id", userId)
     .order("updated_at", { ascending: false, nullsFirst: false })
     .order("created_at", { ascending: false });
+
+  const { data, error } = await (teamId ? query.eq("team_id", teamId) : query);
 
   if (error) throw describeError(error, "Erreur Playbook");
 
