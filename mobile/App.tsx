@@ -2,9 +2,11 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import Feather from '@expo/vector-icons/Feather';
 import { StatusBar } from 'expo-status-bar';
 import { useEffect, useState } from 'react';
-import { Alert, BackHandler, Image, Linking, Pressable, ScrollView, StyleSheet, Text, TextInput, View, useWindowDimensions } from 'react-native';
-import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
+import { Alert, BackHandler, Image, KeyboardAvoidingView, Linking, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View, useWindowDimensions } from 'react-native';
+import { SafeAreaProvider, SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { accountMenu, launchEntries, mainMenu, type Entry, type Icon } from './navigation';
+
+import { RecentMatches, SignIn, useAccount } from './Account';
 
 const site = 'https://mybasket.vercel.app';
 const colors = { wine: '#6B1A2C', gold: '#F5CD7E', cream: '#FFF8EF', tile: '#FFFDFC', ink: '#311520', line: '#EBDAD6' };
@@ -14,12 +16,18 @@ type Shortcut = { target: string; label: string; icon: Icon };
 const defaultShortcut: Shortcut = { target: 'live', label: 'LiveStats', icon: 'activity' };
 
 function AppScreen() {
+  const { session, loading } = useAccount();
   const [stack, setStack] = useState<Entry[]>([mainMenu]);
   const [editing, setEditing] = useState(false);
   const [shortcut, setShortcut] = useState<Shortcut>(defaultShortcut);
   const [draft, setDraft] = useState<Shortcut>(defaultShortcut);
-  const { width } = useWindowDimensions();
-  const columns = width >= 680 ? 4 : 3;
+  const { width, fontScale } = useWindowDimensions();
+  const insets = useSafeAreaInsets();
+  const gridWidth = Math.max(0, Math.min(740, width - insets.left - insets.right) - 32);
+  const minTileWidth = 88 * Math.max(1, fontScale);
+  const columns = Math.max(1, Math.min(gridWidth >= 600 ? 4 : 3, Math.floor((gridWidth + 7) / (minTileWidth + 7))));
+  const tileWidth = Math.floor((gridWidth - 7 * (columns - 1)) / columns);
+  const compactHeader = width - insets.left - insets.right < 286 * fontScale;
   const current = stack[stack.length - 1];
   const account = stack[0].id === accountMenu.id;
   const target = launchEntries.find((entry) => entry.id === shortcut.target) ?? launchEntries[3];
@@ -73,7 +81,7 @@ function AppScreen() {
     return <Pressable key={entry.id} accessibilityRole="button"
       accessibilityHint={entry.route ? 'Ouvre le site MyBasket dans le navigateur' : 'Ouvre le sous-menu'}
       onPress={() => go(entry)}
-      style={({ pressed }) => [styles.tile, { width: columns === 4 ? '23.5%' : '31.5%' }, pressed && styles.pressed]}>
+      style={({ pressed }) => [styles.tile, { width: tileWidth, minHeight: Math.max(tileWidth, 90 * fontScale) }, pressed && styles.pressed]}>
       <View style={styles.icon}><Feather name={icon} size={22} color={colors.gold} /></View>
       <Text style={styles.tileLabel}>{label}</Text>
     </Pressable>;
@@ -81,7 +89,7 @@ function AppScreen() {
 
   return <SafeAreaView style={styles.safe}>
     <StatusBar style="light" />
-    <View style={styles.header}>
+    <View style={[styles.header, compactHeader && styles.headerCompact]}>
       <Pressable accessibilityRole="button" accessibilityState={{ selected: !account }} onPress={() => root(mainMenu)} style={[styles.headerButton, !account && styles.headerActive]}>
         <Text style={!account ? styles.activeText : styles.headerText}>Menu</Text>
       </Pressable>
@@ -90,6 +98,7 @@ function AppScreen() {
         <Text style={account ? styles.activeText : styles.headerText}>Mon compte</Text>
       </Pressable>
     </View>
+    <KeyboardAvoidingView style={styles.body} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
     <ScrollView key={editing ? 'edit' : current.id} keyboardShouldPersistTaps="handled" style={styles.body} contentContainerStyle={styles.scroll}>
       {(stack.length > 1 || editing) && <Pressable accessibilityRole="button" onPress={back} style={styles.back}>
         <Feather name="arrow-left" size={16} color={colors.wine} /><Text style={styles.backText}>{editing ? 'Annuler' : stack[stack.length - 2].label}</Text>
@@ -98,6 +107,9 @@ function AppScreen() {
         <Text style={styles.kicker}>{account ? 'ESPACE PERSONNEL' : 'MYBASKET'}</Text>
         <Text accessibilityRole="header" style={styles.title}>{editing ? 'Mon raccourci' : current.label}</Text>
       </View>
+      {account && current.id === accountMenu.id && !editing && (
+        session ? <RecentMatches key={session.user.id} session={session} /> : <SignIn loading={loading} />
+      )}
       {editing ? <View style={styles.editor}>
         <Text style={styles.sectionTitle}>Nom du bouton</Text>
         <TextInput accessibilityLabel="Nom du bouton" style={styles.input} placeholder="Ex. Jour de match" maxLength={26} value={draft.label} onChangeText={(label) => setDraft((old) => ({ ...old, label }))} />
@@ -115,13 +127,14 @@ function AppScreen() {
           <Text accessibilityRole="header" style={styles.sectionTitle}>Mon raccourci</Text>
           <View style={styles.grid}>
             {tile(target, shortcut.label || target.label, shortcut.icon)}
-            <Pressable accessibilityRole="button" style={[styles.tile, { width: columns === 4 ? '23.5%' : '31.5%' }]} onPress={() => { setDraft(shortcut); setEditing(true); }}>
+            <Pressable accessibilityRole="button" style={[styles.tile, { width: tileWidth, minHeight: Math.max(tileWidth, 90 * fontScale) }]} onPress={() => { setDraft(shortcut); setEditing(true); }}>
               <View style={styles.icon}><Feather name="sliders" size={22} color={colors.gold} /></View><Text style={styles.tileLabel}>Personnaliser</Text>
             </Pressable>
           </View>
         </View>}
       </>}
     </ScrollView>
+    </KeyboardAvoidingView>
   </SafeAreaView>;
 }
 
@@ -130,7 +143,8 @@ export default function App() { return <SafeAreaProvider><AppScreen /></SafeArea
 const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: colors.wine },
   header: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', padding: 12, gap: 6, width: '100%', maxWidth: 740, alignSelf: 'center' },
-  headerButton: { minHeight: 44, justifyContent: 'center', alignItems: 'center', minWidth: 92, paddingHorizontal: 8, borderRadius: 10 },
+  headerCompact: { flexWrap: 'wrap', justifyContent: 'center' },
+  headerButton: { maxWidth: '100%', minHeight: 44, justifyContent: 'center', alignItems: 'center', minWidth: 92, paddingHorizontal: 8, borderRadius: 10 },
   headerActive: { backgroundColor: colors.gold },
   headerText: { fontWeight: '700', color: '#FFF' },
   activeText: { fontWeight: '800', color: colors.ink },
@@ -144,10 +158,10 @@ const styles = StyleSheet.create({
   title: { color: '#FFF', fontSize: 33, fontWeight: '900', letterSpacing: -1, marginTop: 4 },
   sectionTitle: { color: colors.wine, fontSize: 13, fontWeight: '800', marginTop: 18, marginBottom: 8 },
   grid: { flexDirection: 'row', flexWrap: 'wrap', gap: 7 },
-  tile: { minHeight: 100, aspectRatio: 1, backgroundColor: colors.tile, borderWidth: 1, borderColor: colors.line, borderRadius: 15, padding: 5, alignItems: 'center', justifyContent: 'center', gap: 6 },
+  tile: { minHeight: 90, backgroundColor: colors.tile, borderWidth: 1, borderColor: colors.line, borderRadius: 15, padding: 5, alignItems: 'center', justifyContent: 'center', gap: 6 },
   pressed: { backgroundColor: '#FFF0D7', borderColor: colors.gold },
   icon: { width: 41, height: 41, borderRadius: 11, backgroundColor: colors.wine, alignItems: 'center', justifyContent: 'center' },
-  tileLabel: { color: colors.ink, textAlign: 'center', fontSize: 12, fontWeight: '700', flexShrink: 1 },
+  tileLabel: { color: colors.ink, textAlign: 'center', fontSize: 13, fontWeight: '700', maxWidth: '100%' },
   editor: { paddingBottom: 10 },
   input: { backgroundColor: colors.tile, borderColor: colors.line, borderWidth: 1, borderRadius: 9, paddingHorizontal: 12, minHeight: 48, fontSize: 16, color: colors.ink },
   choice: { minHeight: 44, minWidth: 44, justifyContent: 'center', alignItems: 'center', borderRadius: 9, borderWidth: 1, borderColor: colors.line, backgroundColor: colors.tile, padding: 9 },
