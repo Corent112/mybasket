@@ -1,74 +1,64 @@
-// app/api/contact/route.ts
 import { NextResponse } from "next/server";
-
-type ContactPayload = {
-  nom?: string;
-  prenom?: string;
-  email?: string;
-  phone?: string;
-  sujet?: string;
-  message?: string;
-};
+import { createAdminClient } from "@/lib/supabase/admin-server";
+import { notifyAdmin } from "@/lib/server-notifications";
+import { isSameOriginMutation } from "@/lib/security/request-origin";
+import { getClientIp, rateLimit } from "@/lib/security/rate-limit";
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
-export async function POST(req: Request) {
-  let data: ContactPayload;
+export async function POST(request: Request) {
+  if (!isSameOriginMutation(request)) {
+    return NextResponse.json({ error: "Requête refusée." }, { status: 403 });
+  }
+  if (!rateLimit(`contact:${getClientIp(request.headers)}`, 5, 600_000).allowed) {
+    return NextResponse.json({ error: "Trop de demandes. Réessaie dans quelques minutes." }, { status: 429 });
+  }
+
+  const data = await request.json().catch(() => null);
+  const field = (key: string, max: number) =>
+    typeof data?.[key] === "string" ? data[key].trim().slice(0, max) : "";
+  const nom = field("nom", 120);
+  const prenom = field("prenom", 120);
+  const email = field("email", 254);
+  const sujet = field("sujet", 120).replace(/[\r\n]+/g, " ");
+  const message = field("message", 5000);
+  if (!nom || !prenom || !EMAIL_RE.test(email) || !sujet || !message) {
+    return NextResponse.json({ error: "Vérifie les champs obligatoires et ton adresse email." }, { status: 400 });
+  }
+
+  const db = createAdminClient();
+  const phone = field("phone", 40) || null;
+  const organization = field("organization", 160) || null;
+  if (["Demande d’accès Club", "Demande d’accès Institution"].includes(sujet) && !organization) {
+    return NextResponse.json({ error: "Renseigne le nom de la structure." }, { status: 400 });
+  }
+  const saved = await db?.from("contact_requests").insert({
+    first_name: prenom, last_name: nom, email, phone, organization, subject: sujet, message,
+  }).select("id").single();
+
+  if (!db || !saved?.data || saved.error) {
+    console.error("Enregistrement de la demande indisponible", saved?.error?.code);
+    return NextResponse.json({
+      error: "Envoi indisponible. Tu peux écrire directement à contact@mybasket.fr.",
+    }, { status: 503 });
+  }
+
   try {
-    data = await req.json();
-  } catch {
-    return NextResponse.json({ error: "Requête invalide." }, { status: 400 });
+    const result = await notifyAdmin({
+      subject: `[MyBasket] ${sujet}`,
+      title: sujet,
+      fields: [["Nom", `${prenom} ${nom}`], ["Structure", organization], ["Email", email], ["Téléphone", phone]],
+      message,
+      replyTo: email,
+    });
+    if (result.sent) {
+      const { error } = await db.from("contact_requests")
+        .update({ notified_at: new Date().toISOString() }).eq("id", saved.data.id);
+      if (error) console.error("Suivi de notification indisponible", error.code);
+    }
+  } catch (error) {
+    console.error("Échec de la notification d’une demande de contact", error);
   }
-
-  const nom = data.nom?.trim();
-  const prenom = data.prenom?.trim();
-  const email = data.email?.trim();
-  const message = data.message?.trim();
-
-  // Validation des champs obligatoires
-  if (!nom || !prenom || !email || !message) {
-    return NextResponse.json(
-      { error: "Merci de remplir tous les champs obligatoires (*)." },
-      { status: 400 }
-    );
-  }
-  if (!EMAIL_RE.test(email)) {
-    return NextResponse.json({ error: "Adresse email invalide." }, { status: 400 });
-  }
-
-  // ───────────────────────────────────────────────────────────
-  // TODO : envoi réel du message.
-  // Exemples possibles selon ton stack :
-  //   • Email transactionnel : Resend, Nodemailer, SendGrid…
-  //   • Enregistrement en base : Supabase, Prisma…
-  //   • Notification : Slack, Discord webhook…
-  //
-  // Exemple avec Resend (npm i resend) :
-  //   import { Resend } from "resend";
-  //   const resend = new Resend(process.env.RESEND_API_KEY);
-  //   await resend.emails.send({
-  //     from: "MyBasket <contact@mybasket.fr>",
-  //     to: "contact@mybasket.fr",
-  //     replyTo: email,
-  //     subject: `[Contact] ${data.sujet ?? "Nouveau message"} — ${prenom} ${nom}`,
-  //     text: `${prenom} ${nom} (${email}, ${data.phone ?? "—"})\n\n${message}`,
-  //   });
-  // ───────────────────────────────────────────────────────────
-
-  // Pour l'instant on logge côté serveur (visible dans la console / les logs).
-  console.log("[contact] nouveau message :", {
-    nom,
-    prenom,
-    email,
-    phone: data.phone ?? "",
-    sujet: data.sujet ?? "",
-    message,
-  });
 
   return NextResponse.json({ ok: true });
-}
-
-// Optionnel : refuser proprement les autres méthodes
-export function GET() {
-  return NextResponse.json({ error: "Méthode non autorisée." }, { status: 405 });
 }

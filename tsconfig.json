@@ -39,6 +39,7 @@
   "exclude": [
     "node_modules",
     "zone2_work",
+    "mobile",
     "**/__MACOSX/**"
   ]
 }

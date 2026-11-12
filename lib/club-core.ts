@@ -131,59 +131,21 @@ function normalizeError(error: any) {
   );
 }
 
-async function assertClientClubLimit(
-  clubId: string,
-  kind: "players" | "coaches",
-): Promise<void> {
-  const supabase = sb();
-  const { data: { user }, error: userError } = await supabase.auth.getUser();
-  if (userError || !user) throw new Error("Non connecté.");
+async function assertClubPlayerLimit(clubId: string): Promise<void> {
+  const response = await fetch("/api/club/create", { cache: "no-store" });
+  if (!response.ok) throw new Error("Impossible de vérifier ton accès Club.");
+  const access = await response.json();
+  if (!access.allowed) throw new Error("Un accès Club est nécessaire.");
 
-  const { data: profile } = await supabase
-    .from("profiles")
-    .select("platform_role")
-    .eq("id", user.id)
-    .maybeSingle();
+  const limit = access.maxPlayers;
+  if (limit === null || !Number.isFinite(limit) || limit < 0) return;
 
-  if (["ceo", "superadmin", "admin"].includes(String(profile?.platform_role ?? ""))) return;
-
-  const { data: subscription } = await supabase
-    .from("subscriptions")
-    .select("plan_id")
-    .eq("user_id", user.id)
-    .eq("status", "active")
-    .order("created_at", { ascending: false })
-    .limit(1)
-    .maybeSingle();
-
-  if (!subscription?.plan_id) throw new Error("Aucun abonnement actif.");
-
-  const limitColumn = kind === "players" ? "max_players" : "max_coaches";
-  const { data: plan, error: planError } = await supabase
-    .from("subscription_plans")
-    .select(`id,${limitColumn}`)
-    .eq("id", subscription.plan_id)
-    .maybeSingle();
-  if (planError) throw normalizeError(planError);
-
-  const rawLimit = (plan as Record<string, unknown> | null)?.[limitColumn];
-  const limit = rawLimit === null || rawLimit === undefined ? null : Number(rawLimit);
-  if (limit === null || !Number.isFinite(limit)) return;
-
-  const table = kind === "players" ? "club_players" : "club_coaches";
-  const { count, error: countError } = await supabase
-    .from(table)
+  const { count, error } = await sb()
+    .from("club_players")
     .select("*", { count: "exact", head: true })
     .eq("club_id", clubId);
-  if (countError) throw normalizeError(countError);
-
-  if ((count ?? 0) >= limit) {
-    throw new Error(
-      kind === "players"
-        ? `Limite de ${limit} joueur(s) atteinte pour votre abonnement.`
-        : `Limite de ${limit} entraîneur(s) atteinte pour votre abonnement.`,
-    );
-  }
+  if (error) throw normalizeError(error);
+  if ((count ?? 0) >= limit) throw new Error(`Limite de ${limit} joueur(s) atteinte.`);
 }
 
 function isMissingColumn(error: any) {
@@ -442,7 +404,7 @@ export async function listClubPlayers(
 }
 
 export async function createClubPlayer(clubId: string, input: Partial<ClubPlayer>): Promise<ClubPlayer> {
-  await assertClientClubLimit(clubId, "players");
+  await assertClubPlayerLimit(clubId);
   const supabase = sb();
   const { data: userData } = await supabase.auth.getUser();
 

@@ -82,11 +82,11 @@ function normalizePlayIds(source: any): string[] {
 }
 
 function normalizeSchemaImages(source: any): string[] {
-  if (Array.isArray(source?.schemaImages)) {
+  if (Array.isArray(source?.schemaImages) && source.schemaImages.length) {
     return cleanStringArray(source.schemaImages);
   }
 
-  if (Array.isArray(source?.schema_images)) {
+  if (Array.isArray(source?.schema_images) && source.schema_images.length) {
     return cleanStringArray(source.schema_images);
   }
 
@@ -101,11 +101,11 @@ function normalizeSchemaImages(source: any): string[] {
 }
 
 function normalizeSchemaDataList(source: any): unknown[] {
-  if (Array.isArray(source?.schemaDataList)) {
+  if (Array.isArray(source?.schemaDataList) && source.schemaDataList.length) {
     return cleanUnknownArray(source.schemaDataList);
   }
 
-  if (Array.isArray(source?.schema_data_list)) {
+  if (Array.isArray(source?.schema_data_list) && source.schema_data_list.length) {
     return cleanUnknownArray(source.schema_data_list);
   }
 

@@ -1,7 +1,9 @@
 import Link from "next/link";
-import { revalidatePath } from "next/cache";
 import styles from "./page.module.css";
 import { requireAdmin } from "@/lib/admin/guard";
+import { createAdminClient } from "@/lib/supabase/admin-server";
+import { deleteSlide } from "./actions";
+import { SliderForm } from "./SliderForm";
 
 type SliderItem = {
   id: string;
@@ -17,105 +19,22 @@ type SliderItem = {
 };
 
 function statusLabel(status: string | null) {
-  return status === "inactive" ? "Brouillon" : "Publié";
+  return status === "active" ? "Publié" : "Brouillon";
 }
 
 function statusClass(status: string | null) {
-  return status === "inactive" ? styles.inactive : styles.active;
+  return status === "active" ? styles.active : styles.inactive;
 }
 
-async function uploadSliderImage(supabase: any, file: FormDataEntryValue | null) {
-  if (!(file instanceof File) || file.size === 0) return null;
-
-  const extension = file.name.split(".").pop()?.toLowerCase() || "jpg";
-  const path = `home/${crypto.randomUUID()}.${extension}`;
-  const { error } = await supabase.storage
-    .from("slider-images")
-    .upload(path, file, { contentType: file.type || "image/jpeg", upsert: false });
-
-  if (error) throw new Error(error.message);
-  return supabase.storage.from("slider-images").getPublicUrl(path).data.publicUrl;
-}
-
-async function createSlideAction(formData: FormData) {
-  "use server";
-  const { supabase } = await requireAdmin();
-
-  const title = String(formData.get("title") || "").trim();
-  if (!title) return;
-
-  const uploadedUrl = await uploadSliderImage(supabase, formData.get("image_file"));
-  const imageUrl = uploadedUrl || String(formData.get("image_url") || "").trim() || null;
-
-  const { error } = await supabase.from("admin_slider").insert({
-    title,
-    subtitle: String(formData.get("subtitle") || "").trim() || null,
-    image_url: imageUrl,
-    button_label: String(formData.get("button_label") || "").trim() || null,
-    button_href: String(formData.get("button_href") || "").trim() || null,
-    placement: "home",
-    status: formData.get("publish_now") === "on" ? "active" : "inactive",
-    sort_order: Number(formData.get("sort_order") || 0),
-    created_at: new Date().toISOString(),
-    updated_at: new Date().toISOString(),
-  });
-
-  if (error) throw new Error(`Création slide impossible : ${error.message}`);
-  revalidatePath("/admin/slider");
-  revalidatePath("/");
-}
-
-async function updateSlideAction(formData: FormData) {
-  "use server";
-  const { supabase } = await requireAdmin();
-  const id = String(formData.get("id") || "");
-  if (!id) return;
-
-  const uploadedUrl = await uploadSliderImage(supabase, formData.get("image_file"));
-  const existingUrl = String(formData.get("existing_image_url") || "").trim() || null;
-  const typedUrl = String(formData.get("image_url") || "").trim() || null;
-
-  const { error } = await supabase
-    .from("admin_slider")
-    .update({
-      title: String(formData.get("title") || "").trim(),
-      subtitle: String(formData.get("subtitle") || "").trim() || null,
-      image_url: uploadedUrl || typedUrl || existingUrl,
-      button_label: String(formData.get("button_label") || "").trim() || null,
-      button_href: String(formData.get("button_href") || "").trim() || null,
-      sort_order: Number(formData.get("sort_order") || 0),
-      status: formData.get("published") === "on" ? "active" : "inactive",
-      updated_at: new Date().toISOString(),
-    })
-    .eq("id", id);
-
-  if (error) throw new Error(`Modification slide impossible : ${error.message}`);
-  revalidatePath("/admin/slider");
-  revalidatePath("/");
-}
-
-async function deleteSlideAction(formData: FormData) {
-  "use server";
-  const { supabase } = await requireAdmin();
-  const id = String(formData.get("id") || "");
-  if (!id) return;
-  const { error } = await supabase.from("admin_slider").delete().eq("id", id);
-  if (error) throw new Error(`Suppression slide impossible : ${error.message}`);
-  revalidatePath("/admin/slider");
-  revalidatePath("/");
-}
-
-export default async function AdminSliderPage() {
-  const { supabase } = await requireAdmin();
-  const { data, error } = await supabase
-    .from("admin_slider")
-    .select("*")
-    .eq("placement", "home")
-    .order("sort_order", { ascending: true })
-    .order("created_at", { ascending: false });
+export default async function AdminSliderPage({ searchParams }: { searchParams: Promise<{error?:string;saved?:string}> }) {
+  await requireAdmin();
+  const status = await searchParams;
+  const db = createAdminClient();
+  const { data, error } = await db?.from("admin_slider").select("*")
+    .in("placement", ["home", "global"]).order("sort_order").order("created_at") ?? {};
 
   const slides = error ? [] : ((data || []) as SliderItem[]);
-  const active = slides.filter((slide) => slide.status !== "inactive").length;
+  const active = slides.filter((slide) => slide.status === "active").length;
 
   return (
     <main className={styles.adminSlider}>
@@ -142,17 +61,9 @@ export default async function AdminSliderPage() {
             <h2>Créer une slide</h2>
             <span>L’image peut être téléversée ou fournie par URL.</span>
           </div>
-          <form action={createSlideAction} className={styles.form} encType="multipart/form-data">
-            <input name="title" placeholder="Titre" required />
-            <input name="subtitle" placeholder="Texte / sous-titre" />
-            <input name="image_url" placeholder="URL de l’image (facultatif)" />
-            <input name="image_file" type="file" accept="image/png,image/jpeg,image/webp" />
-            <input name="button_label" placeholder="Texte du bouton" />
-            <input name="button_href" placeholder="Lien : /abonnements" />
-            <input name="sort_order" type="number" defaultValue={0} placeholder="Ordre" />
-            <label><input name="publish_now" type="checkbox" defaultChecked /> Publier immédiatement</label>
-            <button type="submit">Créer la slide</button>
-          </form>
+          {status.saved && <p role="status">Slide enregistrée.</p>}
+          {(!db || error || status.error) && <p role="alert">Impossible de lire ou d’enregistrer la slide. Vérifie les champs, le lien HTTPS et le format de l’image.</p>}
+          <SliderForm />
         </section>
 
         <section className={styles.slidesGrid}>
@@ -163,20 +74,9 @@ export default async function AdminSliderPage() {
                 <span className={`${styles.statusBadge} ${statusClass(slide.status)}`}>{statusLabel(slide.status)}</span>
               </div>
               <div className={styles.slideBody}>
-                <form action={updateSlideAction} className={styles.form} encType="multipart/form-data">
-                  <input type="hidden" name="id" value={slide.id} />
-                  <input type="hidden" name="existing_image_url" value={slide.image_url || ""} />
-                  <input name="title" defaultValue={slide.title || ""} placeholder="Titre" required />
-                  <input name="subtitle" defaultValue={slide.subtitle || ""} placeholder="Texte" />
-                  <input name="image_url" placeholder="Nouvelle URL image" />
-                  <input name="image_file" type="file" accept="image/png,image/jpeg,image/webp" />
-                  <input name="button_label" defaultValue={slide.button_label || ""} placeholder="Texte bouton" />
-                  <input name="button_href" defaultValue={slide.button_href || ""} placeholder="Lien" />
-                  <input name="sort_order" type="number" defaultValue={slide.sort_order ?? 0} />
-                  <label><input name="published" type="checkbox" defaultChecked={slide.status !== "inactive"} /> Publiée</label>
-                  <button type="submit">Enregistrer</button>
-                </form>
-                <form action={deleteSlideAction} className={styles.actions}>
+                <h3>{slide.title}</h3>
+                <Link href={`/admin/slider/${slide.id}`}>Modifier l’image, le texte ou le bouton</Link>
+                <form action={deleteSlide} className={styles.actions}>
                   <input type="hidden" name="id" value={slide.id} />
                   <button type="submit" className={styles.dangerBtn}>Supprimer</button>
                 </form>

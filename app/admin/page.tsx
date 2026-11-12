@@ -18,6 +18,7 @@ const menu = [
   ["Formation", "/admin/formation", "🎓"],
   ["Accompagnement", "/admin/accompagnement", "🤝"],
   ["Scouting vidéo", "/admin/scouting-video", "🎬"],
+  ["Demandes de contact", "/admin/demandes-contact", "✉️"],
   ["Slider", "/admin/slider", "🖼️"],
   ["Statistiques", "/admin/statistiques", "📊"],
   ["Paramètres", "/admin/settings", "⚙️"],

@@ -4,7 +4,9 @@ import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/client";
 
-type Target = "individual" | "club";
+import { getContactAccessType } from "@/lib/contact-access-plan";
+
+type Target = "individual" | "club" | "institution";
 type Billing = "monthly" | "yearly";
 
 type Plan = {
@@ -146,7 +148,7 @@ export default function AbonnementsPage() {
   }, []);
 
   const individualPlans = useMemo(
-    () => plans.filter((plan) => plan.target === "individual"),
+    () => plans.filter((plan) => plan.target !== "club"),
     [plans]
   );
 
@@ -191,6 +193,17 @@ export default function AbonnementsPage() {
         </div>
       </section>
 
+      <section className="access-contact" aria-label="Accès Club et Institution">
+        <div>
+          <h2>Club</h2>
+          <Link href="/contact?acces=club">Prendre contact pour un club</Link>
+        </div>
+        <div>
+          <h2>Institution</h2>
+          <Link href="/contact?acces=institution">Prendre contact pour une institution</Link>
+        </div>
+      </section>
+
       {loading ? (
         <div className="loading">Chargement des offres...</div>
       ) : (
@@ -229,6 +242,10 @@ export default function AbonnementsPage() {
       </section>
 
       <style jsx>{`
+        .access-contact { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 270px), 1fr)); gap: 16px; width: min(calc(100% - 32px), 1120px); margin: 24px auto; }
+        .access-contact div { padding: 24px; border-radius: 20px; background: #fff; border: 1px solid #ead7da; }
+        .access-contact h2 { margin: 0 0 14px; color: #6b1a2c; }
+        .access-contact :global(a) { display: flex; align-items: center; justify-content: center; min-height: 56px; padding: 12px 16px; border-radius: 12px; background: #6b1a2c; color: #fff; font-weight: 800; text-align: center; text-decoration: none; }
         .page {
           min-height: 100vh;
           background:
@@ -526,6 +543,7 @@ function PlanCard({ plan, billing }: { plan: Plan; billing: Billing }) {
   const priceCents = getPriceCents(plan, billing);
   const saving = getSaving(plan);
   const isClub = plan.target === "club";
+  const contactType = getContactAccessType(plan);
 
   const addToCart = async () => {
     const supabase = createClient();
@@ -614,14 +632,14 @@ function PlanCard({ plan, billing }: { plan: Plan; billing: Billing }) {
 
       {plan.description && <p className="desc">{plan.description}</p>}
 
-      <div className="price">
+      {contactType ? <div className="price">Sur demande</div> : <div className="price">
         {formatPrice(priceCents)}
         {priceCents !== 0 && (
           <span>{billing === "yearly" ? "/ an" : "/ mois"}</span>
         )}
-      </div>
+      </div>}
 
-      {billing === "yearly" && saving > 0 && (
+      {!contactType && billing === "yearly" && saving > 0 && (
         <div className="saving">Économisez {formatPrice(saving)}</div>
       )}
 
@@ -637,10 +655,12 @@ function PlanCard({ plan, billing }: { plan: Plan; billing: Billing }) {
         )}
       </ul>
 
-      <button type="button" className="cta" onClick={addToCart}>
+      {contactType ? (
+        <Link className="cta" href={`/contact?acces=${contactType}`}>Demander un accès</Link>
+      ) : <button type="button" className="cta" onClick={addToCart}>
         <span className="cart-icon">🛒</span>
         Ajouter au panier
-      </button>
+      </button>}
 
       <style jsx>{`
         .card {
@@ -775,7 +795,8 @@ function PlanCard({ plan, billing }: { plan: Plan; billing: Billing }) {
           font-weight: 1000;
         }
 
-        .cta {
+        .cta, :global(a.cta) {
+          text-decoration: none;
           margin-top: auto;
           width: 100%;
           border: none;

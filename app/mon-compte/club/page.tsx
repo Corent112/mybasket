@@ -9,6 +9,7 @@ export default function ClubPage() {
   const [club, setClub] = useState<MyClub | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [canCreate, setCanCreate] = useState(false);
 
   useEffect(() => {
     async function load() {
@@ -16,6 +17,10 @@ export default function ClubPage() {
         setLoading(true);
         const data = await getMyClub();
         setClub(data);
+        if (!data) {
+          const response = await fetch("/api/club/create", { cache: "no-store" });
+          if (response.ok) setCanCreate((await response.json()).allowed === true);
+        }
       } catch (e: any) {
         setError(e?.message || "Impossible de charger le club.");
       } finally {
@@ -49,8 +54,8 @@ export default function ClubPage() {
             <p style={{ color: "#766860" }}>
               {error || "Comme pour l’espace Institutionnel, commence par créer ta structure. Ton compte sera automatiquement enregistré comme propriétaire du club."}
             </p>
-            <Link href="/mon-compte/club/creation" style={{ display: "inline-flex", marginTop: 8, background: "#6b1a2c", color: "#fff", padding: "11px 16px", borderRadius: 10, fontWeight: 950, textDecoration: "none" }}>
-              + Créer mon club
+            <Link href={canCreate ? "/mon-compte/club/creation" : "/contact?acces=club"} style={{ display: "inline-flex", marginTop: 8, background: "#6b1a2c", color: "#fff", padding: "11px 16px", borderRadius: 10, fontWeight: 950, textDecoration: "none" }}>
+              {canCreate ? "+ Créer mon club" : "Demander un accès Club"}
             </Link>
           </section>
         </div>
