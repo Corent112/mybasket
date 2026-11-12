@@ -5669,7 +5669,7 @@ export default function PriseStatsProPage() {
             </div>
           )}
         </div>
-        {!(codingMode === 'live-individual' || codingMode === 'live') && <div className="h-c compactScore">
+        <div className={`h-c compactScore ${codingMode === 'live-individual' || codingMode === 'live' ? 'compactOnly' : ''}`}>
           <div className="team"><div className="logo">{teamName.slice(0, 2)}</div><span>{teamName}</span></div>
           <div className="score us">{scoreUs}</div>
           <div className="clockbox">
@@ -5682,7 +5682,7 @@ export default function PriseStatsProPage() {
           </div>
           <div className="score them"><button className="mini" onClick={() => themBtn(-1)}>–</button><span>{scoreThem}</span><button className="mini" onClick={() => themBtn(1)}>+</button></div>
           <div className="team"><span>{opponent || 'ADVERSAIRE'}</span><div className="logo">{(opponent || 'AD').slice(0, 2).toUpperCase()}</div></div>
-        </div>}
+        </div>
         <div className="h-r">
           <button
             className={`ghost ${showHistoryPanel ? 'on' : ''}`}
@@ -5750,6 +5750,15 @@ export default function PriseStatsProPage() {
       ) : (
         <>
           <VideoReselectBanner />
+          <nav className="liveCompactNav" aria-label="Zones de travail LiveStats">
+            <button type="button" aria-pressed={workTab === 'coding'} onClick={() => { setVideoMaximized(false); setWorkTab('coding'); }}>Codage</button>
+            {(codingMode !== 'match-review' || matchReviewLayout.showVideo) && (
+              <button type="button" aria-pressed={workTab === 'center'} onClick={() => setWorkTab('center')}>Vidéo / match</button>
+            )}
+            {codingMode !== 'match-review' && (
+              <button type="button" aria-pressed={workTab === 'analysis'} onClick={() => { setVideoMaximized(false); setWorkTab('analysis'); }}>Terrain / joueurs</button>
+            )}
+          </nav>
           <div
             ref={liveWorkspaceRef}
             className={`live3 ${videoMaximized ? 'videoMaximized' : 'resizableLive3'} ${showVideoPanel ? '' : 'videoPanelHidden'}`}
@@ -5979,7 +5988,7 @@ export default function PriseStatsProPage() {
 
             {/* ============ DROITE · SHOT CHART + JOUEURS / BANC ============ */}
             {codingMode !== 'match-review' && (
-            <aside className={`lc lc-right ${workTab === 'analysis' || liveCourt ? 'mshow' : ''}`}>
+            <aside className={`lc lc-right ${workTab === 'analysis' || (liveCourt && workTab === 'coding') ? 'mshow' : ''} ${liveCourt && workTab === 'coding' ? 'courtPickFirst' : ''}`}>
               {/* Shot chart PAR ZONES pro — pick à l'étape zone, analyse sinon */}
               <div className="scZone">
                 {liveCourt ? (
@@ -11358,6 +11367,60 @@ function Style() {
           .technicalQuickChoices { grid-template-columns:1fr; }
           .technicalQuickChoices button:last-child { grid-column:auto; }
         }
+        .liveCompactNav, .h-c.compactScore.compactOnly { display: none; }
+        @media (max-width: 1024px) {
+          .ps-root > .h {
+            display: flex;
+            flex: 0 0 auto;
+            flex-wrap: wrap;
+            min-height: 0;
+          }
+          .ps-root > .h .h-l, .ps-root > .h .h-r { flex-wrap: wrap; }
+          .ps-root > .h .h-l { flex: 1 1 180px; }
+          .ps-root > .h .h-c.compactScore {
+            min-width: 0;
+            flex: 1 0 100%;
+            order: 1;
+            grid-template-columns: minmax(0, 1fr) auto auto auto minmax(0, 1fr);
+            gap: 4px;
+          }
+          .ps-root > .h .h-c.compactScore.compactOnly { display: grid; }
+          .compactScore .team { min-width: 0; }
+          .compactScore .team span { overflow-wrap: anywhere; white-space: normal; font-size: 10px; }
+          .compactScore .team .logo { display: none; }
+          .compactScore .score { min-width: 30px; font-size: 18px; }
+          .compactScore .clockbox { min-width: 94px; padding-inline: 3px; }
+          .ps-root > .qstrip { flex: 0 0 auto; height: auto; flex-wrap: wrap; gap: 4px; }
+          .ps-root > .qstrip .foulbox::after { display: none; }
+          .liveCompactNav { display: flex; flex: 0 0 auto; gap: 6px; padding: 5px 10px; }
+          .liveCompactNav button {
+            flex: 1 1 0;
+            min-width: 0;
+            min-height: 44px;
+            padding: 4px;
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            background: var(--panel);
+            color: var(--txt);
+            font-size: 12px;
+            font-weight: 800;
+          }
+          .liveCompactNav button[aria-pressed="true"] { background: var(--bordeaux); border-color: var(--gold); color: #fff; }
+          .ps-root > .live3 {
+            display: flex;
+            flex-direction: column;
+            overflow: auto;
+            padding-top: 3px;
+          }
+          .live3 > .panelResizeHandle, .live3 > .lc:not(.mshow) { display: none; }
+          .live3 > .lc.mshow { display: flex; flex: 0 0 auto; min-width: 0; overflow: visible; }
+          .live3 > .lc.courtPickFirst { order: -1; }
+          .live3 .lc-body { overflow: visible; }
+          .live3 .vmcTop { grid-template-columns: minmax(0, 1fr) minmax(80px, 35%) minmax(0, 1fr); gap: 5px; }
+          .live3 .vmcTeam b { overflow-wrap: anywhere; }
+          .live3 .videoSlot.big { min-height: 0; height: auto; aspect-ratio: 16 / 9; max-height: 56dvh; }
+        }
+
     `}
 </style>
   );
