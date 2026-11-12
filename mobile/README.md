@@ -21,7 +21,7 @@ npx expo export --platform ios --platform android
 
 ## Périmètre actuel
 
-Les tuiles de consultation ouvrent les pages du site dans l’app. Le navigateur reste proposé en haut de chaque page. Dessin, Montage, le codage LiveStats et les parcours de paiement s’ouvrent dans le navigateur pour garder le fonctionnement web existant. L’utilisateur s’y identifie avec son compte MyBasket si nécessaire ; le navigateur applique les droits existants. La connexion native utilise le même compte Supabase ; les sessions native et navigateur sont distinctes. La bibliothèque, le dessin et la saisie LiveStats restent disponibles sur le site. La navigation native et le raccourci local fonctionnent hors connexion ; les pages du site dépendent de leur propre fonctionnement.
+Les tuiles de consultation ouvrent les pages du site dans l’app. Le navigateur reste proposé en haut de chaque page. Dessin, Montage et le codage LiveStats s’ouvrent dans le navigateur pour garder le fonctionnement web existant. L’utilisateur s’y identifie avec son compte MyBasket si nécessaire ; le navigateur applique les droits existants. La connexion native utilise le même compte Supabase ; les sessions native et navigateur sont distinctes. La bibliothèque, le dessin et la saisie LiveStats restent disponibles sur le site. La navigation native et le raccourci local fonctionnent hors connexion ; les pages du site dépendent de leur propre fonctionnement.
 
 Le catalogue est défini dans `navigation.ts`. Pour le prochain lot, étendre la consultation aux équipes et matchs partagés, puis intégrer le flux d’écriture LiveStats décrit dans [le plan mobile](../docs/application-mobile.md). L’app n’est pas publiée sur les stores.
 
@@ -65,3 +65,27 @@ La page `/installer` du site permet d’ajouter mybasket.fr à l’écran d’ac
 Pour partager la préversion native sur Android, depuis `mobile/` et après `npx eas-cli@latest init`, lancer `npx eas-cli@latest build --platform android --profile preview`, puis copier le lien d’installation de l’APK dans le tableau de bord Expo. Sur iOS, utiliser TestFlight pour partager un lien de test ou une distribution interne EAS avec les appareils enregistrés.
 
 Avant de mettre en ligne le formulaire et le slider, appliquer la migration Supabase `20261112200000_contact_requests_and_slider.sql`. Les demandes sont consultables dans **Administration → Demandes de contact**. Elles y sont enregistrées même si Resend est temporairement indisponible.
+
+## Bêta iPhone et iPad avant publication
+
+MyBasket mobile utilise le compte existant. Le menu de la bêta ne propose aucun achat et bloque les parcours commerciaux connus dans ses vues web intégrées. Dessin, Montage et le codage LiveStats s’ouvrent dans le navigateur. Tester les droits sur chaque module, y compris les écrans de refus d’accès et les redirections, avant toute soumission publique.
+
+Pour installer une bêta privée avec TestFlight, rattacher le projet EAS au compte Expo et signer avec le compte Apple Developer du propriétaire. Depuis `mobile/` :
+
+```sh
+npm ci
+npx eas-cli@latest login
+npx eas-cli@latest init
+npx eas-cli@latest build --platform ios --profile beta-ios
+npx eas-cli@latest submit --platform ios --profile beta-ios
+```
+
+Dans App Store Connect, choisir le build iOS dans TestFlight et l’affecter à un groupe interne. Installer le build sur iPhone et iPad depuis TestFlight. Réserver la soumission à App Review pour la version publique validée.
+
+À tester sur iPhone et iPad :
+
+- Connexion avec un compte sans abonnement, puis avec un compte déjà habilité. Vérifier les droits sur les modules et les accès Club / Institution.
+- Bibliothèque, Playbooks, équipes, Dessin, Montage et LiveStats. Vérifier les passages vers les modules web et le retour à l’application.
+- Rotation de l’iPad, textes agrandis, déconnexion, mode avion, puis reconnexion. Vérifier les données déjà mises en cache et leur actualisation.
+- Vérifier qu’aucun lien d’achat ne ressort depuis la navigation native ni depuis les modules intégrés. Revoir le modèle d’accès et les règles Apple avant la publication publique.
+- Relever appareil, version iOS, module et étapes de reproduction pour chaque problème. Tester le prochain build avant de valider la publication.

@@ -11,9 +11,17 @@
       "ios": {
         "image": "macos-sequoia-15.6-xcode-26.0"
       }
+    },
+    "beta-ios": {
+      "distribution": "store",
+      "autoIncrement": true,
+      "ios": {
+        "image": "macos-sequoia-15.6-xcode-26.0"
+      }
     }
   },
   "submit": {
-    "production": {}
+    "production": {},
+    "beta-ios": {}
   }
 }
