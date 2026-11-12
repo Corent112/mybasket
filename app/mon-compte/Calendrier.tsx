@@ -1,8 +1,9 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { getTeams } from "@/lib/equipes-store";
+import { calendarCompetitionAge, calendarOpponent, calendarTeamAge, reconcileCalendarFixtures } from "@/lib/calendar-fixtures";
 
 /* =====================================================================
  * MonCalendrier — transposition fidèle du calendrier de mybasket-app_24.html
@@ -57,6 +58,7 @@ function normalizeTeamForCalendar(team: any): Team {
   return {
     id: String(team.id ?? ""),
     name: String(team.nom || team.name || team.teamName || "Équipe"),
+    category: team.category || team.cat,
     players: (team.players || team.joueurs || team.effectif || team.roster || []).map((p: any) => ({
       id: String(p.id ?? p.playerId ?? uid()),
       firstName:
@@ -105,7 +107,7 @@ function normalizeCalendarRow(row: any): CalEvent {
     participantStatuses: row.participant_statuses && typeof row.participant_statuses === "object" ? row.participant_statuses : {},
     opponent:
       dbTypeToCalendarType(row.event_type) === "match"
-        ? String(row.title ?? "").replace(/^Match\s+(?:vs\s+)?/i, "").trim() || undefined
+        ? calendarOpponent(String(row.title ?? "")) || undefined
         : undefined,
     venue:
       dbTypeToCalendarType(row.event_type) === "match"
@@ -153,7 +155,7 @@ function calendarEventLabel(ev: CalEvent, teams: Team[]): string {
   if (ev.type !== "match") return ev.title;
 
   const team = teams.find((item) => item.id === ev.teamId);
-  const category = String(team?.category || "").trim();
+  const category = calendarCompetitionAge(ev.notes) ?? calendarTeamAge(team) ?? String(team?.category || "").trim();
   const opponent = String(
     ev.opponent ||
     ev.title.replace(/^Match\s+(?:vs\s+|@\s*)?/i, "")
@@ -193,11 +195,12 @@ export default function MonCalendrier() {
   const today = new Date();
   const [year, setYear] = useState(today.getFullYear());
   const [month, setMonth] = useState(today.getMonth()); // 0..11
-  const [events, setEvents] = useState<CalEvent[]>([]);
+  const [rows, setRows] = useState<Parameters<typeof reconcileCalendarFixtures>[0]>([]);
   const [loading, setLoading] = useState(true);
 
   // Équipes réelles (« Mes équipes »)
   const [teams, setTeams] = useState<Team[]>([]);
+  const events = useMemo(() => reconcileCalendarFixtures(rows, teams).map(normalizeCalendarRow), [rows, teams]);
 
   // Modale événement (créer / éditer)
   const [open, setOpen] = useState(false);
@@ -261,7 +264,7 @@ export default function MonCalendrier() {
     } = await supabase.auth.getUser();
 
     if (userError || !user) {
-      setEvents([]);
+      setRows([]);
       setLoading(false);
       return;
     }
@@ -280,12 +283,12 @@ export default function MonCalendrier() {
         details: error.details,
         hint: error.hint,
       });
-      setEvents([]);
+      setRows([]);
       setLoading(false);
       return;
     }
 
-    setEvents((data ?? []).map(normalizeCalendarRow));
+    setRows(data ?? []);
     setLoading(false);
   }
 

@@ -1,5 +1,6 @@
 "use client";
 
+import { reconcileCalendarFixtures } from "@/lib/calendar-fixtures";
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/client";
@@ -7,7 +8,7 @@ import { createClient } from "@/lib/supabase/client";
 type CalendarEventType = "training" | "game" | "meeting" | "formation" | "other";
 type RecurrenceType = "none" | "weekly" | "monthly" | "yearly";
 
-type Team = { id: string; name: string };
+type Team = { id: string; name: string; category?: string | null };
 
 type CalendarEvent = {
   id: string;
@@ -372,7 +373,7 @@ export default function MonCalendrier() {
 
     const { data: teamData, error: teamError } = await supabase
       .from("teams")
-      .select("id,name")
+      .select("id,name,category")
       .order("name");
 
     if (teamError) console.error("Erreur chargement équipes calendrier:", teamError);
@@ -408,7 +409,7 @@ export default function MonCalendrier() {
       return;
     }
 
-    const realEvents = sortEvents((data ?? []) as CalendarEvent[]);
+    const realEvents = sortEvents(reconcileCalendarFixtures((data ?? []) as CalendarEvent[], (teamData ?? []) as Team[]));
 
     // Historique intelligent = événements existants + modèles récurrents + localStorage.
     const local = readLocalHistory();

@@ -177,16 +177,16 @@ export default function PlaybookDetailPage() {
   }
 
   async function renameSystem(system: PlaybookSystem) {
-    const title = window.prompt("Nouveau nom du système ?", system.title);
+    const title = window.prompt("Nom du système dans ce playbook ?", system.title);
     if (!title?.trim()) return;
 
-    const updated = await updatePlaybookSystem(system.id, {
-      title: title.trim(),
-    });
-
-    setSystems((prev) =>
-      prev.map((item) => (item.id === updated.id ? updated : item))
-    );
+    try {
+      const updated = await updatePlaybookSystem(system.id, { title: title.trim() });
+      setSystems((prev) => prev.map((item) => (item.id === updated.id ? updated : item)));
+    } catch (error) {
+      console.error("Erreur de renommage dans le playbook :", error);
+      alert("Impossible d’enregistrer ce nom dans le playbook.");
+    }
   }
 
   async function removeSystem(system: PlaybookSystem) {

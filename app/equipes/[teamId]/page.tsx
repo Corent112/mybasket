@@ -25,6 +25,8 @@ import TeamStaffManager from "@/components/equipes/TeamStaffManager";
 import TeamAdvancedStats from "@/components/equipes/TeamAdvancedStats";
 import TeamShootingGrids from "@/components/equipes/TeamShootingGrids";
 import TeamAvailabilityLoad from "@/components/equipes/TeamAvailabilityLoad";
+import { calendarAgeGroup, calendarCompetitionAge, reconcileCalendarFixtures } from "@/lib/calendar-fixtures";
+import TeamPlaybooksPanel from "@/components/equipes/TeamPlaybooksPanel";
 import TeamResourcesPanel from "@/components/equipes/TeamResourcesPanel";
 import TeamActivityPanel from "@/components/equipes/TeamActivityPanel";
 import { syncCompetitionCalendar } from "@/lib/competition-calendar";
@@ -93,6 +95,7 @@ type TeamMainTab =
   | "self-evaluations"
   | "shooting"
   | "load"
+  | "playbooks"
   | "resources"
   | "activity"
   | "stats"
@@ -901,13 +904,16 @@ export default function EquipeDetailPage({
       const unique = new Map<string, any>();
       [...directRows, ...sessionRows].forEach((row: any) => {
         const description = String(row.description || "");
+        const officialAge = calendarCompetitionAge(description);
+        const teamAge = calendarAgeGroup(team.cat) ?? calendarAgeGroup(team.name);
+        if (officialAge && teamAge && officialAge !== teamAge && /^(?:Match|Synchronisé) (?:FFBB|LNB)/i.test(description)) return;
         if (team.competitionSource === "lnb" && /^(Match FFBB|Synchronisé FFBB)/.test(description)) return;
         if (team.competitionSource !== "lnb" && /^(Match LNB|Synchronisé LNB)/.test(description)) return;
         if (row?.id) unique.set(String(row.id), row);
       });
 
       setNextCalendarEvents(
-        Array.from(unique.values())
+        reconcileCalendarFixtures(Array.from(unique.values()), [{ id: teamId, name: team.name, cat: team.cat }])
           .sort((a: any, b: any) =>
             `${a.event_date || ""}T${a.start_time || "00:00:00"}`.localeCompare(
               `${b.event_date || ""}T${b.start_time || "00:00:00"}`
@@ -966,9 +972,9 @@ export default function EquipeDetailPage({
           if (!response.ok) continue;
 
           const parsed = await response.json();
-          const matches = Array.isArray(parsed?.matches) ? parsed.matches : [];
+          const matches = Array.isArray(parsed?.matches) ? parsed.matches.map((match: any) => ({ ...match, competition: parsed.competition || connection.competition_name })) : [];
 
-          await syncCompetitionCalendar(supabase, teamId, user.id, currentTeam.competitionSource || "ffbb", matches);
+          await syncCompetitionCalendar(supabase, teamId, user.id, currentTeam.competitionSource || "ffbb", matches, currentTeam.cat || currentTeam.name);
 
         }
       } catch (error) {
@@ -1420,6 +1426,15 @@ export default function EquipeDetailPage({
 
           <button
             type="button"
+            className={activeTab === "playbooks" ? "active" : ""}
+            onClick={() => setActiveTab("playbooks")}
+          >
+            <Ic d={ICONS.info} size={16} />
+            Mon playbook
+          </button>
+
+          <button
+            type="button"
             className={activeTab === "resources" ? "active" : ""}
             onClick={() => setActiveTab("resources")}
           >
@@ -1640,7 +1655,7 @@ export default function EquipeDetailPage({
               </div>
             </section>
 
-            <TeamFfbbCompetition key={`${teamId}:${team.competitionSource || "ffbb"}`} teamId={teamId} source={team.competitionSource || "ffbb"} niveau={team.niveau} onSourceChange={isOwner ? async source => { const supabase = createClient(); const { data: { user } } = await supabase.auth.getUser(); if (!user) throw new Error("Connexion requise."); const existing = await supabase.from("teams").select("metadata").eq("id", teamId).eq("user_id", user.id).single(); if (existing.error) throw existing.error; const saved = await supabase.from("teams").update({ metadata: { ...existing.data.metadata, competitionSource: source } }).eq("id", teamId).eq("user_id", user.id).select("id"); if (saved.error) throw saved.error; if (!saved.data?.length) throw new Error("Source non enregistrée."); await reload(); setCompetitionRevision(value => value + 1); } : undefined} onConnected={() => { void reload(); setCompetitionRevision(value => value + 1); }} />
+            <TeamFfbbCompetition key={`${teamId}:${team.competitionSource || "ffbb"}`} teamId={teamId} source={team.competitionSource || "ffbb"} niveau={team.niveau} category={team.cat || team.name} onSourceChange={isOwner ? async source => { const supabase = createClient(); const { data: { user } } = await supabase.auth.getUser(); if (!user) throw new Error("Connexion requise."); const existing = await supabase.from("teams").select("metadata").eq("id", teamId).eq("user_id", user.id).single(); if (existing.error) throw existing.error; const saved = await supabase.from("teams").update({ metadata: { ...existing.data.metadata, competitionSource: source } }).eq("id", teamId).eq("user_id", user.id).select("id"); if (saved.error) throw saved.error; if (!saved.data?.length) throw new Error("Source non enregistrée."); await reload(); setCompetitionRevision(value => value + 1); } : undefined} onConnected={() => { void reload(); setCompetitionRevision(value => value + 1); }} />
 
                         {/* ---------- STAFF ---------- */}
             <TeamStaffManager
@@ -1692,6 +1707,12 @@ export default function EquipeDetailPage({
               canManageTarget={canManageRpeTarget}
               canManageQuestionnaires={canManageRpeQuestionnaires}
             />
+          </div>
+        )}
+
+        {activeTab === "playbooks" && (
+          <div className="team-tab-panel">
+            <TeamPlaybooksPanel key={team.id} teamId={team.id} />
           </div>
         )}
 
