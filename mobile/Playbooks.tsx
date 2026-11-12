@@ -58,6 +58,10 @@ export function Playbooks({ userId, openWeb }: { userId: string; openWeb: (id: s
       setOffline(!connected);
       if (connected) void refresh();
     });
+    const channel = client.channel('mobile-playbooks-' + userId)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'playbooks', filter: 'owner_id=eq.' + userId }, () => void refresh())
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'playbook_systems', filter: 'owner_id=eq.' + userId }, () => void refresh())
+      .subscribe();
     const appState = AppState.addEventListener('change', (state) => {
       if (state === 'active') void refresh();
     });
@@ -69,6 +73,7 @@ export function Playbooks({ userId, openWeb }: { userId: string; openWeb: (id: s
       unsubscribe();
       appState.remove();
       clearInterval(timer);
+      void client.removeChannel(channel);
     };
   }, [userId]);
 

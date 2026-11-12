@@ -34,15 +34,17 @@ export async function loadDrawingSystems():Promise<{systems:DrawingSystem[];play
  const s=createClient(),uid=await userId();
  const [systems,playbooks]=await Promise.all([listMySystems(),listPlaybooks()]);
  const seriesArrays=await Promise.all(playbooks.map(p=>listPlaybookSeries(p.id)));const series=seriesArrays.flat();
- const {data:pbSystems,error}=await s.from('playbook_systems').select('id,playbook_id,system_id,tags,title,description,schema_images,schema_data_list,schema_video').eq('owner_id',uid);if(error)throw error;
+ const {data:pbSystems,error}=await s.from('playbook_systems').select('id,playbook_id,system_id,tags,title,description,schema_images,schema_data_list,schema_video').eq('owner_id',uid).order('created_at',{ascending:true});if(error)throw error;
  const memberships=await Promise.all(playbooks.map(async p=>({p,m:await listSeriesMembership(p.id)})));
  const seriesByPbSystem=new Map<string,string>();memberships.forEach(({m})=>Object.entries(m).forEach(([pbSystemId,seriesId])=>seriesByPbSystem.set(pbSystemId,seriesId)));
  const seriesById=new Map(series.map(sr=>[sr.id,sr]));
  const map=new Map<string,{playbookIds:string[];seriesIds:string[];tags:string[];playbookSystemIds:Record<string,string>;playbookTitles:Record<string,string>}>();
- const ownedIds=new Set(systems.map(system=>system.id));
+ const ownedSystems=new Map(systems.map(system=>[system.id,system]));
  const snapshots:DrawingSystem[]=[];
  for(const row of pbSystems||[]){
-   const systemId=ownedIds.has(row.system_id)?row.system_id:row.id;
+   const owned=ownedSystems.get(row.system_id);
+   const alreadyLinked=map.get(row.system_id)?.playbookSystemIds[row.playbook_id];
+   const systemId=owned&&!alreadyLinked?row.system_id:row.id;
    const v=map.get(systemId)||{playbookIds:[],seriesIds:[],tags:[],playbookSystemIds:{},playbookTitles:{}};
    if(row.playbook_id&&!v.playbookIds.includes(row.playbook_id))v.playbookIds.push(row.playbook_id);
    if(row.playbook_id){
@@ -56,7 +58,10 @@ export async function loadDrawingSystems():Promise<{systems:DrawingSystem[];play
    map.set(systemId,v);
    if(systemId===row.id){
      snapshots.push({
-       ...rowToSystem({...row,id:systemId,deroulement:row.description}),
+       ...rowToSystem({
+         ...row,id:systemId,deroulement:row.description,
+         schema_image:owned?.schemaImage,schema_data:owned?.schemaData,
+       }),
        playbookOnly:true,playbookTitles:v.playbookTitles,playbookIds:v.playbookIds,
        seriesIds:v.seriesIds,inheritedTags:v.tags,playbookSystemIds:v.playbookSystemIds,
      });
