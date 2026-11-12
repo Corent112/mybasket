@@ -58,6 +58,7 @@ export default function ContactPage() {
     prenom: formData.get("prenom"),
     email: formData.get("email"),
     phone: formData.get("phone"),
+    organization: formData.get("organization"),
     sujet: formData.get("sujet"),
     message: formData.get("message"),
   }),
@@ -162,6 +163,13 @@ export default function ContactPage() {
                     />
                   </label>
                 </div>
+
+                {(subject === "Demande d’accès Club" || subject === "Demande d’accès Institution") && (
+                  <label style={styles.label}>
+                    NOM DE LA STRUCTURE *
+                    <input style={styles.input} name="organization" required maxLength={160} />
+                  </label>
+                )}
 
                 <label style={styles.label}>
                   SUJET *

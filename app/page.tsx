@@ -1,5 +1,6 @@
 "use client";
 
+import { safeSliderUrl } from "@/lib/home-slider-url";
 import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { TESTIMONIALS } from "@/lib/mockData";
@@ -94,9 +95,9 @@ useEffect(() => {
         id: String(slide.id),
         title: String(slide.title || "MYBASKET"),
         subtitle: String(slide.subtitle || ""),
-        imageUrl: slide.image_url ? String(slide.image_url) : null,
+        imageUrl: safeSliderUrl(slide.image_url),
         buttonLabel: slide.button_label ? String(slide.button_label) : null,
-        buttonHref: slide.button_href ? String(slide.button_href) : null,
+        buttonHref: safeSliderUrl(slide.button_href),
       })));
       setCurrent(0);
     });

@@ -731,10 +731,10 @@ setLoading(false);
   const [checkoutBusy,setCheckoutBusy]=useState(false);
   const [checkoutError,setCheckoutError]=useState("");
   const checkoutLock=useRef(false);
-  async function createCheckout(provider:"stripe"|"paypal"|"apple_pay"){
+  async function createCheckout(){
     if(checkoutLock.current)return;checkoutLock.current=true;setCheckoutBusy(true);setCheckoutError("");
     try{
-      const response=await fetch("/api/checkout/stripe",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({preferredMethod:provider==="stripe"?"card":provider})});
+      const response=await fetch("/api/checkout/stripe",{method:"POST",headers:{"Content-Type":"application/json"}});
       const data=await response.json();if(!response.ok)throw Error(data.error||"Paiement momentanément indisponible.");
       const destination=new URL(data.url);if(destination.protocol!=="https:"||destination.hostname!=="checkout.stripe.com")throw Error("Adresse de paiement invalide.");
       window.location.assign(destination.href);
@@ -2273,18 +2273,10 @@ setLoading(false);
 
         {checkoutError&&<p role="alert" style={{color:"#a3283d"}}>{checkoutError}</p>}
         {checkoutBusy&&<p role="status">Ouverture de la page de paiement sécurisée…</p>}
-        <p style={{fontSize:12,color:"#766b70"}}>Paiement sécurisé sur Stripe. Apple Pay et PayPal sont proposés selon leur disponibilité.</p>
+        <p style={{fontSize:12,color:"#766b70"}}>Paiement sécurisé sur Stripe. Les moyens disponibles pour ta commande s’affichent sur la page de paiement.</p>
         <div className="payBox">
-          <button type="button" disabled={checkoutBusy} onClick={() => createCheckout("stripe")}>
-            💳 Carte bancaire
-          </button>
-
-          <button type="button" disabled={checkoutBusy} onClick={() => createCheckout("paypal")}>
-            PayPal
-          </button>
-
-          <button type="button" disabled={checkoutBusy} onClick={() => createCheckout("apple_pay")}>
-             Pay
+          <button type="button" disabled={checkoutBusy} onClick={() => void createCheckout()}>
+            Payer sur Stripe
           </button>
         </div>
       </section>

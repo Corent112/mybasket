@@ -193,6 +193,17 @@ export default function AbonnementsPage() {
         </div>
       </section>
 
+      <section className="access-contact" aria-label="Accès Club et Institution">
+        <div>
+          <h2>Club</h2>
+          <Link href="/contact?acces=club">Prendre contact pour un club</Link>
+        </div>
+        <div>
+          <h2>Institution</h2>
+          <Link href="/contact?acces=institution">Prendre contact pour une institution</Link>
+        </div>
+      </section>
+
       {loading ? (
         <div className="loading">Chargement des offres...</div>
       ) : (
@@ -231,6 +242,10 @@ export default function AbonnementsPage() {
       </section>
 
       <style jsx>{`
+        .access-contact { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 270px), 1fr)); gap: 16px; width: min(calc(100% - 32px), 1120px); margin: 24px auto; }
+        .access-contact div { padding: 24px; border-radius: 20px; background: #fff; border: 1px solid #ead7da; }
+        .access-contact h2 { margin: 0 0 14px; color: #6b1a2c; }
+        .access-contact :global(a) { display: flex; align-items: center; justify-content: center; min-height: 56px; padding: 12px 16px; border-radius: 12px; background: #6b1a2c; color: #fff; font-weight: 800; text-align: center; text-decoration: none; }
         .page {
           min-height: 100vh;
           background:

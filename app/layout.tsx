@@ -24,6 +24,7 @@ const alfa = Alfa_Slab_One({
 
 export const metadata: Metadata = {
   title: "MyBasket",
+  icons: { apple: "/app-icons/mybasket-180.png" },
   description: "L'application des coachs de basket",
 };
 

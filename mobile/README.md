@@ -56,3 +56,12 @@ La dernière liste des matchs personnels chargée reste lisible hors ligne aprè
 Le bouton de demande préremplit le formulaire de contact. Le site envoie la demande à `MYBASKET_ADMIN_EMAIL` ou, par défaut, à `contact@mybasket.fr` via `RESEND_API_KEY` et `RESEND_FROM`.
 
 Pour traiter la demande, ouvrir **Admin → Paiements → Offrir un accès gratuit**, renseigner l’adresse du compte MyBasket, choisir Institution ou la formule Club, puis saisir la durée. Le bénéficiaire pourra créer sa structure depuis l’espace correspondant. Le parcours existant d’invitation permet ensuite d’ajouter les membres. Une demande seule n’active aucun droit.
+
+
+## Installer mybasket.fr par lien
+
+La page `/installer` du site permet d’ajouter mybasket.fr à l’écran d’accueil sur iPhone, iPad et Android. La version web installée ouvre le site et ses fonctionnalités. Elle suit les mises à jour de Vercel et dépend du réseau pour les fonctionnalités en ligne.
+
+Pour partager la préversion native sur Android, depuis `mobile/` et après `npx eas-cli@latest init`, lancer `npx eas-cli@latest build --platform android --profile preview`, puis copier le lien d’installation de l’APK dans le tableau de bord Expo. Sur iOS, utiliser TestFlight pour partager un lien de test ou une distribution interne EAS avec les appareils enregistrés.
+
+Avant de mettre en ligne le formulaire et le slider, appliquer la migration Supabase `20261112200000_contact_requests_and_slider.sql`. Les demandes sont consultables dans **Administration → Demandes de contact**. Elles y sont enregistrées même si Resend est temporairement indisponible.
