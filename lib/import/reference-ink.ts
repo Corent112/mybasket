@@ -102,7 +102,7 @@ export async function recoverReferenceInk(
     const key = `ink-p${players.length+1}`;
     players.push({ key, label: defender && label ? `X${label}` : label, ...canonical(marker),
       team:defender?"def":"att", type:defender?"defender":"attacker", shape:"circle",
-      confidence:.65, typeConfidence:.48, labelConfident:!!label && (read?.confidence??0)>.5, source:"Numéro et tracé détectés sur la photo" });
+      confidence:.65, typeConfidence:!defender && marker !== glyph && !!label ? .82 : .48, labelConfident:!!label && (read?.confidence??0)>.5, source:"Numéro et tracé détectés sur la photo" });
     return key;
   };
   const vector = (from: AiPoint, to: AiPoint) => {

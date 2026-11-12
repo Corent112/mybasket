@@ -671,13 +671,19 @@ async function main() {
   console.log("\n12. Tracé non confirmé");
   await mount();
   await runImport(importResult({ diagrams: [diagram({
-    actions: [{action:"cut",from:point(.2,.15),to:point(.7,.4),confidence:.3}],
+    players: [{ ...player("1", .14, .19), key:"p1" }, { ...player("2", .40, .23), key:"p2" }],
+    actions: [
+      {action:"cut",from:point(.14,.19),to:point(.14,.46),fromPlayer:"p1",confidence:.95},
+      {action:"cut",from:point(.25,.15),to:point(.7,.4),confidence:.95},
+      {action:"cut",from:point(.40,.23),to:point(.56,.32),fromPlayer:"p2",confidence:.85},
+    ],
   })] }));
   await click("Vérifier les joueurs");
   await click("Vérifier les actions");
   await click("Valider l’import");
-  check("les joueurs sont importés sans le tracé douteux", injections.length === 1
-    && lastImported.diagrams[0].players.length > 0 && lastImported.diagrams[0].actions.length === 0);
+  check("la ligne de touche et le tracé sans origine sont écartés, le déplacement confirmé reste",
+    injections.length === 1 && lastImported.diagrams[0].players.length === 2
+    && lastImported.diagrams[0].actions.length === 1 && lastImported.diagrams[0].actions[0].fromPlayer === "p2");
   await unmount();
 
   /* --------------------------------------------------------------- bilan */

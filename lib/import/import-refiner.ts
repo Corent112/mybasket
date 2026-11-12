@@ -6,6 +6,7 @@
  * Il relie seulement les extrémités déjà détectées aux joueurs proches, remet
  * l'ordre des actions au propre et signale les ambiguïtés.
  */
+import { courtToCanonical } from "./court-geometry";
 import type {
   AiDiagramAction,
   AiDiagramPlayer,
@@ -44,6 +45,18 @@ function refineDiagram(diagram: AiExerciseDiagram): { diagram: AiExerciseDiagram
     if (!finite(from) || !finite(action.to)) return false;
     return dist(from, action.to) >= .006 || points.some(p => dist(from,p) >= .018);
   });
+  const topLeft = courtToCanonical({ x:0, y:0 }, diagram.courtType);
+  const bottomRight = courtToCanonical({ x:1, y:1 }, diagram.courtType);
+  const runsAlongCourtEdge = (from: AiPoint, to: AiPoint, trace?: AiPoint[]) => {
+    if (dist(from,to)<.16) return false;
+    const points = [from,...(trace ?? []),to];
+    const nearLine = (axis: "x" | "y", value: number) =>
+      points.every(p => Math.abs(p[axis]-value)<.022);
+    const outside = points.every(p=>p.x<topLeft.x-.012) || points.every(p=>p.x>bottomRight.x+.012)
+      || points.every(p=>p.y<topLeft.y-.012) || points.every(p=>p.y>bottomRight.y+.012);
+    return outside || nearLine("x",topLeft.x) || nearLine("x",bottomRight.x)
+      || nearLine("y",topLeft.y) || nearLine("y",bottomRight.y);
+  };
   const actions = candidates.map((original, index) => {
     const action: AiDiagramAction = { ...original, points: original.points?.filter(finite) };
     const ends = actionEndpoints(action);
@@ -71,6 +84,13 @@ function refineDiagram(diagram: AiExerciseDiagram): { diagram: AiExerciseDiagram
       } else if ((action.confidence ?? 1) < 0.72) {
         warnings.push(`Passe ${index + 1} : destinataire à confirmer.`);
       }
+    }
+
+    // An automatically detected line needs a plausible departure. Court
+    // boundaries can be mistaken for paths even when a player stands nearby.
+    if (!action.fromPlayer || action.action === "freedraw" ||
+      (ends.from && runsAlongCourtEdge(ends.from, ends.to, action.points))) {
+      action.confidence = Math.min(action.confidence ?? 1, .49);
     }
 
     action.order = index + 1;

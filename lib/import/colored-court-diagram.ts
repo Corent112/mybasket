@@ -66,6 +66,12 @@ export async function readColoredCourtDiagram(source: HTMLCanvasElement) {
     if(bw<unit*.044||bw>unit*.105||bh/bw<.78||bh/bw>1.23||b.pixels.length/(bw*bh)>.42
       ||b.x0<x0||b.x1>x1||b.y0<y0||b.y1>y1)return false;
     const p=center(b),radius=(bw+bh)/4;
+    const arcs=new Set<number>();
+    for (const i of b.pixels) {
+      const dx=i%w-p.x, dy=Math.floor(i/w)-p.y, r=Math.hypot(dx,dy);
+      if (r>=radius*.74 && r<=radius*1.15) arcs.add(Math.floor((Math.atan2(dy,dx)+Math.PI)*6/Math.PI)%12);
+    }
+    if (arcs.size<9) return false;
     let white=0,total=0;
     for(let y=Math.ceil(p.y-radius*.56);y<=p.y+radius*.56;y++)for(let x=Math.ceil(p.x-radius*.56);x<=p.x+radius*.56;x++){
       const i=(y*w+x)*4;
@@ -74,7 +80,9 @@ export async function readColoredCourtDiagram(source: HTMLCanvasElement) {
     }
     return white>total*.40;
   });
-  if(tokens.length<2||tokens.length>20)return null;
+  // The court is already proven. If some rings are unreadable, keep this
+  // crop for review rather than asking the generic scanner to invent players.
+  if(tokens.length>20)return {canvas,play,players:[],actions:[]};
 
   // First pass: place the player at the centre of the ring, independently
   // of arrow tips, arrow crossings or the printed number's ink centroid.
@@ -110,11 +118,12 @@ export async function readColoredCourtDiagram(source: HTMLCanvasElement) {
       if(bw/bh<.49&&columns.some(count=>count>bh*.82)) read={text:"1",confidence:.80};
     }
     const n=roster.length+1;
+    const numbered=!!read&&read.confidence>=.5;
     roster.push({center:p,radius,player:{key:`ring-${n}`,label:read&&read.confidence>=.45?read.text:"",...canonical(p),team:"att",
-      type:"unknown",typeConfidence:.35,labelConfident:!!read&&read.confidence>=.5,confidence:.94,
+      type:numbered?"attacker":"unknown",typeConfidence:numbered ? .94 : .35,labelConfident:numbered,confidence:.94,
       hasBall:balls.some(b=>distance(b,p)<radius*1.52),source:"Centre du cercle numéroté détecté"}});
   }
-  if(roster.length<2)return null;
+  if(!roster.length)return {canvas,play,players:[],actions:[]};
   // Second pass: remove marker ink before analysing continuous, dashed and
   // T-ended lines, so a player cannot be mistaken for a point on a trajectory.
   for(let y=0;y<h;y++)for(let x=0;x<w;x++){
