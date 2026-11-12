@@ -2,12 +2,27 @@ import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin-server";
 
+import { getClubSubscriptionAccess } from "@/lib/access";
+import { isSameOriginMutation } from "@/lib/security/request-origin";
+
+export async function GET() {
+  const access = await getClubSubscriptionAccess();
+  if (!access.userId) return NextResponse.json({ error: "Non authentifié." }, { status: 401 });
+  return NextResponse.json({ allowed: access.hasClubSubscription, maxPlayers: access.limits.maxPlayers });
+}
+
 export async function POST(req: Request) {
   try {
+    if (!isSameOriginMutation(req)) return NextResponse.json({ error: "Requête refusée." }, { status: 403 });
     const supabase = await createClient();
     const { data: { user }, error: userError } = await supabase.auth.getUser();
     if (userError || !user) {
       return NextResponse.json({ error: "Non authentifié." }, { status: 401 });
+    }
+
+    const access = await getClubSubscriptionAccess();
+    if (!access.hasClubSubscription) {
+      return NextResponse.json({ error: "Demande un accès Club pour créer ton espace." }, { status: 403 });
     }
 
     const admin = createAdminClient();

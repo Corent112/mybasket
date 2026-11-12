@@ -4,6 +4,7 @@ import {
   getEffectiveSubscriptionForUser,
   isTotalAccessPlan,
 } from "@/lib/effective-subscription";
+import { getContactAccessType } from "@/lib/contact-access-plan";
 import { userHasSubscriptionAccess } from "@/lib/subscription-entitlements";
 
 type AccessResult = { userId: string | null; allowed: boolean };
@@ -156,7 +157,7 @@ export async function getClubSubscriptionAccess(): Promise<ClubSubscriptionAcces
     limits: { maxCoaches: 0, maxTeams: 0, maxPlayers: 0, maxDocuments: 0, storageGb: 0 } };
 
   const isAdmin = isAdminRole(profile?.platform_role);
-  const isClub = isAdmin || plan?.target === "club" || String(plan?.slug ?? "").startsWith("club-");
+  const isClub = isAdmin || (plan && getContactAccessType(plan) === "club") || /^club[-_]/i.test(String(plan?.slug ?? ""));
   return {
     userId: user.id, planId: subscription?.plan_id ?? plan?.id ?? null,
     planName: isAdmin ? "Accès total CEO" : plan?.name ?? null,

@@ -1,0 +1,25 @@
+{
+  "expo": {
+    "name": "MyBasket",
+    "slug": "mybasket-mobile",
+    "version": "0.1.0",
+    "orientation": "default",
+    "userInterfaceStyle": "light",
+    "plugins": [
+      "expo-secure-store"
+    ],
+    "icon": "./assets/icon.png",
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "fr.mybasket.app"
+    },
+    "android": {
+      "edgeToEdgeEnabled": true,
+      "package": "fr.mybasket.app"
+    },
+    "platforms": [
+      "ios",
+      "android"
+    ]
+  }
+}

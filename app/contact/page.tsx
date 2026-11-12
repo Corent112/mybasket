@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, type FormEvent } from "react";
+import { useEffect, useState, type FormEvent } from "react";
 
 const CONTACT_ITEMS = [
   { icon: "✉️", label: "EMAIL", value: "contact@mybasket.fr" },
@@ -31,6 +31,13 @@ const REASSURANCE = [
 export default function ContactPage() {
   const [sent, setSent] = useState(false);
   const [sending, setSending] = useState(false);
+  const [subject, setSubject] = useState("");
+
+  useEffect(() => {
+    const access = new URLSearchParams(window.location.search).get("acces");
+    if (access === "club") setSubject("Demande d’accès Club");
+    if (access === "institution") setSubject("Demande d’accès Institution");
+  }, []);
 
   async function handleSubmit(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
@@ -57,12 +64,14 @@ export default function ContactPage() {
 });
 
       if (!res.ok) {
-        alert("Erreur lors de l'envoi du message.");
+        const result = await res.json().catch(() => null);
+        alert(result?.error || "Erreur lors de l’envoi du message.");
         return;
       }
 
       setSent(true);
       form.reset();
+      setSubject("");
     } catch (error) {
       alert("Erreur lors de l'envoi du message.");
     } finally {
@@ -156,7 +165,7 @@ export default function ContactPage() {
 
                 <label style={styles.label}>
                   SUJET *
-                  <select style={styles.input} name="sujet" required defaultValue="">
+                  <select style={styles.input} name="sujet" required value={subject} onChange={(event) => setSubject(event.target.value)}>
                     <option value="" disabled>
                       Sélectionnez le sujet
                     </option>
@@ -165,6 +174,8 @@ export default function ContactPage() {
                     <option>Scouting vidéo</option>
                     <option>Accompagnement joueur</option>
                     <option>Consulting club</option>
+                    <option>Demande d’accès Club</option>
+                    <option>Demande d’accès Institution</option>
                     <option>Autre demande</option>
                   </select>
                 </label>

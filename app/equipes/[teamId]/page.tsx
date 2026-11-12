@@ -25,6 +25,7 @@ import TeamStaffManager from "@/components/equipes/TeamStaffManager";
 import TeamAdvancedStats from "@/components/equipes/TeamAdvancedStats";
 import TeamShootingGrids from "@/components/equipes/TeamShootingGrids";
 import TeamAvailabilityLoad from "@/components/equipes/TeamAvailabilityLoad";
+import TeamPlaybooksPanel from "@/components/equipes/TeamPlaybooksPanel";
 import TeamResourcesPanel from "@/components/equipes/TeamResourcesPanel";
 import TeamActivityPanel from "@/components/equipes/TeamActivityPanel";
 import { syncCompetitionCalendar } from "@/lib/competition-calendar";
@@ -93,6 +94,7 @@ type TeamMainTab =
   | "self-evaluations"
   | "shooting"
   | "load"
+  | "playbooks"
   | "resources"
   | "activity"
   | "stats"
@@ -1420,6 +1422,15 @@ export default function EquipeDetailPage({
 
           <button
             type="button"
+            className={activeTab === "playbooks" ? "active" : ""}
+            onClick={() => setActiveTab("playbooks")}
+          >
+            <Ic d={ICONS.info} size={16} />
+            Mon playbook
+          </button>
+
+          <button
+            type="button"
             className={activeTab === "resources" ? "active" : ""}
             onClick={() => setActiveTab("resources")}
           >
@@ -1692,6 +1703,12 @@ export default function EquipeDetailPage({
               canManageTarget={canManageRpeTarget}
               canManageQuestionnaires={canManageRpeQuestionnaires}
             />
+          </div>
+        )}
+
+        {activeTab === "playbooks" && (
+          <div className="team-tab-panel">
+            <TeamPlaybooksPanel key={team.id} teamId={team.id} />
           </div>
         )}
 

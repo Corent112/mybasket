@@ -1,11 +1,14 @@
 import { createClient } from '@/lib/supabase/client';
-import { listMySystems, type SystemItem } from '@/lib/systems';
+import { listMySystems, rowToSystem, type SystemItem } from '@/lib/systems';
 import { addSystemToPlaybook, listPlaybooks, type Playbook, type PlaybookSystem } from '@/lib/playbook';
 import { listPlaybookSeries, listSeriesMembership, updatePlaybookSeries, type PlaybookSeries } from '@/lib/playbook-series';
 
 export type DrawingTeam={id:string;name:string;season:string|null;scouted:boolean};
 export type DrawingSeason={id:string;label:string};
 export type DrawingSystem=SystemItem & {
+  libraryTitle?:string;
+  playbookOnly?:boolean;
+  playbookTitles:Record<string,string>;
   playbookIds:string[];
   seriesIds:string[];
   inheritedTags:string[];
@@ -31,23 +34,35 @@ export async function loadDrawingSystems():Promise<{systems:DrawingSystem[];play
  const s=createClient(),uid=await userId();
  const [systems,playbooks]=await Promise.all([listMySystems(),listPlaybooks()]);
  const seriesArrays=await Promise.all(playbooks.map(p=>listPlaybookSeries(p.id)));const series=seriesArrays.flat();
- const {data:pbSystems,error}=await s.from('playbook_systems').select('id,playbook_id,system_id,tags').eq('owner_id',uid);if(error)throw error;
+ const {data:pbSystems,error}=await s.from('playbook_systems').select('id,playbook_id,system_id,tags,title,description,schema_images,schema_data_list,schema_video').eq('owner_id',uid);if(error)throw error;
  const memberships=await Promise.all(playbooks.map(async p=>({p,m:await listSeriesMembership(p.id)})));
  const seriesByPbSystem=new Map<string,string>();memberships.forEach(({m})=>Object.entries(m).forEach(([pbSystemId,seriesId])=>seriesByPbSystem.set(pbSystemId,seriesId)));
  const seriesById=new Map(series.map(sr=>[sr.id,sr]));
- const map=new Map<string,{playbookIds:string[];seriesIds:string[];tags:string[];playbookSystemIds:Record<string,string>}>();
+ const map=new Map<string,{playbookIds:string[];seriesIds:string[];tags:string[];playbookSystemIds:Record<string,string>;playbookTitles:Record<string,string>}>();
+ const ownedIds=new Set(systems.map(system=>system.id));
+ const snapshots:DrawingSystem[]=[];
  for(const row of pbSystems||[]){
-   if(!row.system_id)continue;
-   const v=map.get(row.system_id)||{playbookIds:[],seriesIds:[],tags:[],playbookSystemIds:{}};
+   const systemId=ownedIds.has(row.system_id)?row.system_id:row.id;
+   const v=map.get(systemId)||{playbookIds:[],seriesIds:[],tags:[],playbookSystemIds:{},playbookTitles:{}};
    if(row.playbook_id&&!v.playbookIds.includes(row.playbook_id))v.playbookIds.push(row.playbook_id);
-   if(row.playbook_id)v.playbookSystemIds[row.playbook_id]=row.id;
+   if(row.playbook_id){
+     v.playbookSystemIds[row.playbook_id]=row.id;
+     v.playbookTitles[row.playbook_id]=row.title;
+   }
    const sid=seriesByPbSystem.get(row.id);
    if(sid&&!v.seriesIds.includes(sid))v.seriesIds.push(sid);
    const inherited=sid?clean(seriesById.get(sid)?.tags):[];
    v.tags=Array.from(new Set([...v.tags,...clean(row.tags),...inherited]));
-   map.set(row.system_id,v);
+   map.set(systemId,v);
+   if(systemId===row.id){
+     snapshots.push({
+       ...rowToSystem({...row,id:systemId,deroulement:row.description}),
+       playbookOnly:true,playbookTitles:v.playbookTitles,playbookIds:v.playbookIds,
+       seriesIds:v.seriesIds,inheritedTags:v.tags,playbookSystemIds:v.playbookSystemIds,
+     });
+   }
  }
- return {systems:systems.map(x=>{const v=map.get(x.id)||{playbookIds:[],seriesIds:[],tags:[],playbookSystemIds:{}};return {...x,playbookIds:v.playbookIds,seriesIds:v.seriesIds,inheritedTags:v.tags,playbookSystemIds:v.playbookSystemIds}}),playbooks,series};
+ return {systems:[...snapshots,...systems.map(x=>{const v=map.get(x.id)||{playbookIds:[],seriesIds:[],tags:[],playbookSystemIds:{},playbookTitles:{}};return {...x,libraryTitle:x.title,playbookTitles:v.playbookTitles,playbookIds:v.playbookIds,seriesIds:v.seriesIds,inheritedTags:v.tags,playbookSystemIds:v.playbookSystemIds}})],playbooks,series};
 }
 
 export function openPrivateSystemInDrawing(systemId:string){localStorage.setItem('mybasket_edit_systeme_id',systemId);localStorage.setItem('mybasket_edit_system_id',systemId);localStorage.setItem('mybasket_current_system_id',systemId);localStorage.setItem('mybasket_edit_schema_index','0');window.location.href='/plaquette?type=systeme';}
@@ -84,19 +99,58 @@ export async function deletePrivateSystem(system:DrawingSystem){
  const del=await s.from('systems').delete().eq('id',system.id).eq('user_id',uid);if(del.error)throw del.error;
 }
 
-export async function duplicatePrivateSystem(systemId:string,playbookId?:string|null,seriesId?:string|null):Promise<string>{
- const s=createClient(),uid=await userId();const {data,error}=await s.from('systems').select('*').eq('id',systemId).eq('user_id',uid).single();if(error)throw error;
- const id=crypto.randomUUID();const now=new Date().toISOString();const copy:any={...data,id,title:`${data.title||'Système'} - Copie`,visibility:'private',review_status:'draft',original_system_id:data.id,created_at:now,updated_at:now};delete copy.contributor_name;delete copy.contributor_avatar_url;
- const ins=await s.from('systems').insert(copy).select('*').single();if(ins.error)throw ins.error;
- if(playbookId){const pb=await addSystemToPlaybook({playbook_id:playbookId,title:copy.title,category:'Système demi-terrain',description:copy.deroulement||copy.consignes||'',system_id:id,schema_images:copy.schemaImages||copy.schema_images||[],schema_data_list:copy.schemaDataList||copy.schema_data_list||[],schema_video:copy.schemaVideo??copy.schema_video??null,tags:clean(copy.tags)});if(seriesId)await movePlaybookSystemToSeries(pb.id,seriesId);}
- return id;
+export async function duplicatePrivateSystem(systemId:string,snapshot?:DrawingSystem,playbookId?:string|null,seriesId?:string|null):Promise<DrawingSystem>{
+ const s=createClient();
+ const uid=await userId();
+ const source=snapshot
+   ? {data:{user_id:uid,title:snapshot.title,deroulement:snapshot.deroulement,
+       schema_image:snapshot.schemaImage,schema_images:snapshot.schemaImages,
+       schema_data:snapshot.schemaData,schema_data_list:snapshot.schemaDataList,
+       schema_video:snapshot.schemaVideo,tags:snapshot.tags},error:null}
+   : await s.from('systems').select('*').eq('id',systemId).eq('user_id',uid).single();
+ if(source.error)throw source.error;
+ const data=source.data;
+ const id=crypto.randomUUID();
+ const now=new Date().toISOString();
+ const copy={
+   ...data,id,title:`${data.title||'Système'} - Copie`,visibility:'private',
+   review_status:'draft',original_system_id:snapshot?null:data.id,created_at:now,updated_at:now,
+   play_ids:[],submitted_at:null,reviewed_at:null,reviewed_by:null,rejection_reason:null,
+ };
+ delete copy.contributor_name;
+ delete copy.contributor_avatar_url;
+ const inserted=await s.from('systems').insert(copy).select('*').single();
+ if(inserted.error)throw inserted.error;
+
+ const system:DrawingSystem={
+   ...rowToSystem(inserted.data),playbookIds:[],seriesIds:[],inheritedTags:[],
+   playbookSystemIds:{},playbookTitles:{},
+ };
+ if(playbookId){
+   try{
+     const entry=await attachPrivateSystemToPlaybook(system,playbookId);
+     system.playbookIds.push(playbookId);
+     system.playbookSystemIds[playbookId]=entry.id;
+     system.playbookTitles[playbookId]=entry.title;
+     if(seriesId){
+       await movePlaybookSystemToSeries(entry.id,seriesId);
+       system.seriesIds.push(seriesId);
+     }
+   }catch(error){
+     try{await deletePrivateSystem(system)}catch(cleanupError){
+       console.error('Annulation de la duplication impossible',cleanupError);
+       throw new Error('La copie a été créée dans la bibliothèque, mais son classement a échoué.');
+     }
+     throw error;
+   }
+ }
+ return system;
 }
 
 export async function renamePrivateSystem(systemId:string,title:string){
  const value=title.trim();if(!value)throw new Error('Le nom est obligatoire');
  const s=createClient(),uid=await userId();
  const {error}=await s.from('systems').update({title:value,updated_at:new Date().toISOString()}).eq('id',systemId).eq('user_id',uid);if(error)throw error;
- const pb=await s.from('playbook_systems').update({title:value,updated_at:new Date().toISOString()}).eq('system_id',systemId).eq('owner_id',uid);if(pb.error)throw pb.error;
 }
 export async function setPrivateSystemTags(systemId:string,tags:string[]){
  const s=createClient(),uid=await userId();const values=Array.from(new Set(clean(tags)));

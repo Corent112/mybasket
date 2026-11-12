@@ -5,6 +5,7 @@ import {createAdminClient} from "@/lib/supabase/admin-server";
 import {getSiteUrl} from "@/lib/site-url";
 import {checkoutItemsDigest,safeQuantity} from "@/lib/payments/checkout-integrity";
 import {isSameOriginMutation} from "@/lib/security/request-origin";
+import {getContactAccessType} from "@/lib/contact-access-plan";
 import {rateLimit} from "@/lib/security/rate-limit";
 
 type CartItem = {
@@ -81,12 +82,12 @@ async function resolveSafeItem(supabase: Awaited<ReturnType<typeof createClient>
 
     const { data, error } = await supabase
       .from("subscription_plans")
-      .select("id, name, status, price_monthly_cents, price_yearly_cents, price_cents, price_tax_mode")
+      .select("id, name, slug, target, status, price_monthly_cents, price_yearly_cents, price_cents, price_tax_mode")
       .eq("id", item.item_id)
       .eq("status", "active")
       .maybeSingle();
 
-    if (error || !data) return null;
+    if (error || !data || getContactAccessType(data)) return null;
 
     const plan = data as {
       id: string;
