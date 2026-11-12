@@ -20,16 +20,9 @@ const dist = (a: AiPoint, b: AiPoint) =>
 
 function nearestPlayer(players: AiDiagramPlayer[], point: AiPoint | undefined, max: number) {
   if (!point || !players.length) return undefined;
-  let best: AiDiagramPlayer | undefined;
-  let bestD = max;
-  for (const player of players) {
-    const d = dist(player, point);
-    if (d < bestD) {
-      bestD = d;
-      best = player;
-    }
-  }
-  return best;
+  const ranked = players.map(player => ({ player, gap: dist(player, point) })).sort((a,b) => a.gap-b.gap);
+  const best = ranked[0];
+  return best && best.gap < max && (!ranked[1] || ranked[1].gap-best.gap >= .018) ? best.player : undefined;
 }
 
 function actionEndpoints(action: AiDiagramAction): { from?: AiPoint; to: AiPoint } {
@@ -42,19 +35,26 @@ function actionEndpoints(action: AiDiagramAction): { from?: AiPoint; to: AiPoint
 
 function refineDiagram(diagram: AiExerciseDiagram): { diagram: AiExerciseDiagram; warnings: string[] } {
   const warnings: string[] = [];
-  const liveKeys = new Set(diagram.players.map((p) => p.key));
+  const byKey = new Map(diagram.players.map(player => [player.key,player]));
 
-  const actions = diagram.actions.map((original, index) => {
-    const action: AiDiagramAction = { ...original, points: original.points ? [...original.points] : undefined };
+  const finite = (p: AiPoint | undefined): p is AiPoint => !!p && Number.isFinite(p.x) && Number.isFinite(p.y);
+  const candidates = diagram.actions.filter(action => {
+    const points = action.points?.filter(finite) ?? [];
+    const from = finite(action.from) ? action.from : points[0] ?? byKey.get(action.fromPlayer ?? "");
+    if (!finite(from) || !finite(action.to)) return false;
+    return dist(from, action.to) >= .006 || points.some(p => dist(from,p) >= .018);
+  });
+  const actions = candidates.map((original, index) => {
+    const action: AiDiagramAction = { ...original, points: original.points?.filter(finite) };
     const ends = actionEndpoints(action);
 
-    if (action.fromPlayer && !liveKeys.has(action.fromPlayer)) action.fromPlayer = undefined;
-    if (action.toPlayer && !liveKeys.has(action.toPlayer)) action.toPlayer = undefined;
+    if (action.fromPlayer && !byKey.has(action.fromPlayer)) action.fromPlayer = undefined;
+    if (action.toPlayer && !byKey.has(action.toPlayer)) action.toPlayer = undefined;
 
     // Une trajectoire MyBasket part presque toujours d'un joueur. On ne relie
     // que si l'extrémité est vraiment proche : sinon on conserve le tracé libre.
     if (!action.fromPlayer) {
-      const player = nearestPlayer(diagram.players, ends.from, 0.085);
+      const player = nearestPlayer(diagram.players, ends.from, 0.055);
       if (player) {
         action.fromPlayer = player.key;
         action.source = `${action.source ?? "détection"} · départ relié au joueur ${player.label}`;
@@ -64,7 +64,7 @@ function refineDiagram(diagram: AiExerciseDiagram): { diagram: AiExerciseDiagram
     // Une passe a une cible joueur. Pour les autres actions, la destination
     // reste une position du terrain (sinon on déforme les déplacements).
     if (action.action === "pass" && !action.toPlayer) {
-      const player = nearestPlayer(diagram.players, ends.to, 0.075);
+      const player = nearestPlayer(diagram.players.filter(p => p.key !== action.fromPlayer), ends.to, 0.045);
       if (player && player.key !== action.fromPlayer) {
         action.toPlayer = player.key;
         action.source = `${action.source ?? "détection"} · passe reliée au joueur ${player.label}`;
@@ -96,7 +96,8 @@ export function refineImportedExercise(input: AiExerciseImport): AiExerciseImpor
   const source = input.diagrams?.length ? input.diagrams : [input.diagram];
   const refined = source.map(refineDiagram);
   const diagrams = refined.map((x) => x.diagram);
-  const warnings = [...input.warnings, ...refined.flatMap((x) => x.warnings)];
+  const fallback = input.referenceFallback ? refineDiagram(input.referenceFallback) : undefined;
+  const warnings = [...input.warnings, ...refined.flatMap((x) => x.warnings), ...(fallback?.warnings ?? [])];
 
   // Dédoublonnage des avertissements pour garder l'écran lisible.
   const uniqueWarnings = [...new Set(warnings.filter(Boolean))].slice(0, 16);
@@ -105,6 +106,7 @@ export function refineImportedExercise(input: AiExerciseImport): AiExerciseImpor
     ...input,
     diagram: diagrams[0] ?? input.diagram,
     ...(input.diagrams?.length ? { diagrams } : {}),
+    ...(fallback ? { referenceFallback: fallback.diagram } : {}),
     warnings: uniqueWarnings,
   };
 }

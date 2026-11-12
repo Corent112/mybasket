@@ -143,6 +143,10 @@ function findButton(label) {
 }
 
 async function click(label) {
+  if (/^valider l[’']import/i.test(label)) {
+    if (findButton("Vérifier les joueurs")) await click("Vérifier les joueurs");
+    if (findButton("Vérifier les actions")) await click("Vérifier les actions");
+  }
   const button = findButton(label);
   if (!button) throw new Error(`Bouton introuvable : « ${label} » (présents : ${buttons().map((b) => b.textContent).join(" | ")})`);
   if (button.disabled) throw new Error(`Bouton désactivé : « ${label} »`);
@@ -280,7 +284,7 @@ async function main() {
   check("aucune injection à ce stade", injections.length === 0, `injections=${injections.length}`);
   check("bouton « Corriger » présent", !!findButton("Corriger"));
   check("bouton « Comparer avec la photo » présent", !!findButton("Comparer avec la photo"));
-  check("bouton « Valider l'import » présent", !!findButton("Valider l'import"));
+  check("bouton de vérification présent", !!findButton("Vérifier les joueurs"));
   check("bouton « Annuler » présent", !!findButton("Annuler"));
   await click("Corriger");
   check("ImportReview ouvert", text().includes("Vérifie le schéma importé"));
@@ -390,6 +394,8 @@ async function main() {
   console.log("\n5. Double clic sur « Valider l'import »");
   await mount();
   await runImport(importResult());
+  await click("Vérifier les joueurs");
+  await click("Vérifier les actions");
   const validateButton = findButton("Valider l'import");
   await act(async () => {
     validateButton.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true }));
@@ -442,6 +448,7 @@ async function main() {
     /photo alignée sur le terrain/i.test(text()),
     text().slice(0, 400)
   );
+  await click("Vérifier les actions");
   await click("Retracer un mouvement");
   const canvas = document.querySelector("canvas");
   canvas.setPointerCapture = () => {};
@@ -477,7 +484,9 @@ async function main() {
   }));
   await click("Ouvrir le calque");
   check("la photo est proposée même sans schéma automatique", /photo alignée sur le terrain/i.test(text()));
+  await click("Vérifier les actions");
   check("pas d’insertion d’un calque vide", findButton("Valider l’import").disabled && injections.length === 0);
+  await click("1. Joueurs");
   await click("+ Texte ou numéro");
   const annotation = document.querySelector('[aria-label="Texte ou numéro à placer"]');
   await act(async () => {
@@ -531,6 +540,10 @@ async function main() {
   await runImport(review);
   check("« 3 éléments à vérifier » annoncé", text().includes("3 éléments à vérifier"), text().slice(0, 260));
   await click("Corriger");
+  check("étape joueurs sans actions visibles", !findButton("Tracé pass") && !findButton("Retracer un mouvement"));
+  await click("Vérifier les actions");
+  check("tracé douteux masqué par défaut", !findButton("Tracé pass") && !!findButton("Voir les tracés incertains"));
+  await click("Voir les tracés incertains");
   check(
     "bouton de validation prévient qu'il reste des doutes",
     !!findButton("Valider malgré"),
@@ -653,6 +666,18 @@ async function main() {
   await runImport(photos(), { count: 3 });
   await click("Annuler");
   check("annuler le lot ne modifie pas la fiche", injections.length === 1);
+  await unmount();
+
+  console.log("\n12. Tracé non confirmé");
+  await mount();
+  await runImport(importResult({ diagrams: [diagram({
+    actions: [{action:"cut",from:point(.2,.15),to:point(.7,.4),confidence:.3}],
+  })] }));
+  await click("Vérifier les joueurs");
+  await click("Vérifier les actions");
+  await click("Valider l’import");
+  check("les joueurs sont importés sans le tracé douteux", injections.length === 1
+    && lastImported.diagrams[0].players.length > 0 && lastImported.diagrams[0].actions.length === 0);
   await unmount();
 
   /* --------------------------------------------------------------- bilan */

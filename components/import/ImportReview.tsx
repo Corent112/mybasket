@@ -209,7 +209,13 @@ export default function ImportReview({
   const [diagrams, setDiagrams] = useState<AiExerciseDiagram[]>(initial);
   const [current, setCurrent] = useState(Math.min(initialDiagram, Math.max(0, initial.length - 1)));
   const [selection, setSelection] = useState<Selection>(null);
-  const [overlay, setOverlay] = useState(0.45);
+  const [stage, setStage] = useState<"players" | "actions">("players");
+  const [showUncertain, setShowUncertain] = useState(false);
+  const checkStage = (next: "players" | "actions") => {
+    setStage(next); setSelection(null); setTraceMode(false); setDragging(false);
+    setAddMode(null); setAnnotationMode(false); traceRef.current = null; setTracePreview([]);
+  };
+  const [overlay, setOverlay] = useState(0);
   const [traceMode, setTraceMode] = useState(false);
   const [traceKind, setTraceKind] = useState<AiDiagramActionKind>("freedraw");
   const traceRef = useRef<AiPoint[] | null>(null);
@@ -310,7 +316,8 @@ export default function ImportReview({
     }
 
     // Trajectoires
-    diagram.actions.forEach((action, index) => {
+    if (stage === "actions") diagram.actions.forEach((action, index) => {
+      if (!showUncertain && needsReview(action.confidence)) return;
       const from = toPixel(action.from ?? action.to);
       const to = toPixel(action.to);
       const doubt = needsReview(action.confidence);
@@ -448,7 +455,7 @@ export default function ImportReview({
       ctx.fillText(String(player.label || (type === "unknown" ? "?" : "")), 0, 1);
       ctx.restore();
     });
-  }, [diagram, courtType, overlay, overlayReady, selection, nativeCourtReady, tracePreview, inkColor]);
+  }, [diagram, courtType, overlay, overlayReady, selection, nativeCourtReady, tracePreview, inkColor, stage, showUncertain]);
 
   useEffect(() => {
     draw();
@@ -479,8 +486,10 @@ export default function ImportReview({
       const p = toPixel(diagram.objects[i]);
       if (Math.hypot(p.x - x, p.y - y) <= 16) return { kind: "object", index: i };
     }
+    if (stage !== "actions") return null;
     for (let i = diagram.actions.length - 1; i >= 0; i -= 1) {
       const action = diagram.actions[i];
+      if (!showUncertain && needsReview(action.confidence)) continue;
       const to = toPixel(action.to);
       if (Math.hypot(to.x - x, to.y - y) <= 12) return { kind: "action", index: i, end: "to" };
       const from = toPixel(action.from ?? action.to);
@@ -582,7 +591,21 @@ export default function ImportReview({
             ? { ...player, x: point.x, y: point.y, source: `${player.source ?? ""} · déplacé`.trim() }
             : player
         );
-        return { ...item, players };
+        const original = item.players[selection.index];
+        const dx = point.x-original.x, dy = point.y-original.y;
+        const actions = item.actions.map(line => {
+          const from = line.fromPlayer === original.key, to = line.toPlayer === original.key;
+          if (!from && !to) return line;
+          return { ...line,
+            from: from && line.from ? { x: line.from.x+dx, y: line.from.y+dy } : line.from,
+            to: to ? { x: line.to.x+dx, y: line.to.y+dy } : line.to,
+            points: line.points?.map((p,i,all) => {
+              const t=i/Math.max(1,all.length-1), weight=(from ? 1-t : 0)+(to ? t : 0);
+              return { x:p.x+dx*weight, y:p.y+dy*weight };
+            }),
+          };
+        });
+        return { ...item, players, actions };
       }
       if (selection.kind === "object") {
         const objects = item.objects.map((object, index) =>
@@ -718,8 +741,8 @@ export default function ImportReview({
           return { x: p.x + weight * (point.x - previous.x), y: p.y + weight * (point.y - previous.y) };
         });
         return end === "from"
-          ? { ...line, from: point, fromPlayer: key, points }
-          : { ...line, to: point, toPlayer: key, points };
+          ? { ...line, from: point, fromPlayer: key, points, confidence: 1 }
+          : { ...line, to: point, toPlayer: key, points, confidence: 1 };
       }),
     }));
   };
@@ -775,12 +798,16 @@ export default function ImportReview({
 
   /* ------------------------------------------------------ éléments douteux */
 
-  const doubtful = useMemo(() => reviewItemsOfDiagram(diagram), [diagram]);
-
-  const kept = diagrams.filter(
+  const reviewItems = useMemo(() => reviewItemsOfDiagram(diagram), [diagram]);
+  const uncertain = reviewItems.filter(item => item.selection?.kind === "action");
+  const doubtful = reviewItems.filter(item => stage === "players" ? item.selection?.kind !== "action"
+    : showUncertain || item.selection?.kind !== "action");
+  const omittedCount = diagrams.reduce((n,item) => n+item.actions.filter(action => needsReview(action.confidence)).length,0);
+  const cleanDiagrams = diagrams.map(item => ({ ...item, actions: item.actions.filter(action => !needsReview(action.confidence)) }));
+  const kept = cleanDiagrams.filter(
     (item) => item.players.length > 0 || item.actions.length > 0 || item.objects.length > 0
   );
-  const totalDoubtful = batchMode ? diagrams.reduce((sum, item) => sum + reviewItemsOfDiagram(item).length, 0) : doubtful.length;
+  const totalDoubtful = cleanDiagrams.reduce((sum, item) => sum + reviewItemsOfDiagram(item).length, 0);
   const validate = () => {
     if ((result.referenceFallback || batchMode) && !kept.length) return;
     onValidate({
@@ -878,6 +905,14 @@ export default function ImportReview({
         ) : null}
       </div>
 
+      <div style={styles.row} aria-label="Étapes de vérification">
+        <button type="button" style={stage === "players" ? styles.tabActive : styles.tab} onClick={() => checkStage("players")}>1. Joueurs</button>
+        <button type="button" style={stage === "actions" ? styles.tabActive : styles.tab} onClick={() => checkStage("actions")}>2. Actions</button>
+      </div>
+      <p style={styles.hint}>{stage === "players"
+        ? "Vérifie la position et le rôle des joueurs. Les actions sont masquées à cette étape."
+        : "Vérifie le sens et le départ des actions. Les tracés incertains restent à part tant que tu ne les confirmes pas."}</p>
+
       {result.warnings?.length ? (
         <ul style={styles.warnings}>
           {result.warnings.map((warning, index) => (
@@ -936,7 +971,7 @@ export default function ImportReview({
                 + Plot
               </button>
             </div>
-            <div style={styles.row}>
+            {stage === "actions" && <div style={styles.row}>
               <button type="button" style={traceMode ? styles.buttonPrimary : styles.button}
                 aria-pressed={traceMode} onClick={() => { setTraceMode(!traceMode); setAddMode(null); setAnnotationMode(false); }}>
                 Retracer un mouvement
@@ -947,7 +982,11 @@ export default function ImportReview({
                 <option value="pass">Passe</option><option value="dribble">Dribble</option>
                 <option value="screen">Écran</option><option value="shoot">Tir</option>
               </select>}
-            </div>
+              {uncertain.length > 0 && <button type="button" style={styles.button}
+                aria-pressed={showUncertain} onClick={() => { setShowUncertain(!showUncertain); setSelection(null); }}>
+                {showUncertain ? "Masquer les tracés incertains" : `Voir les tracés incertains (${uncertain.length})`}
+              </button>}
+            </div>}
             <div style={styles.row}>
               <button type="button" style={annotationMode ? styles.buttonPrimary : styles.button}
                 aria-pressed={annotationMode} onClick={() => { setAnnotationMode(!annotationMode); setTraceMode(false); setAddMode(null); }}>
@@ -1120,11 +1159,16 @@ export default function ImportReview({
             {cancelLabel}
           </button>
         ) : null}
+        {stage === "players" ? <button type="button" style={styles.buttonPrimary} onClick={() => checkStage("actions")}>
+          Vérifier les actions
+        </button> : <>
+        {omittedCount > 0 && <span style={styles.hint}>{omittedCount} tracé(s) à confirmer pour les importer.</span>}
         <button type="button" style={styles.buttonPrimary} disabled={Boolean((result.referenceFallback || batchMode) && !kept.length)} onClick={validate}>
           {totalDoubtful
             ? `Valider malgré ${totalDoubtful} élément${totalDoubtful > 1 ? "s" : ""} à confirmer`
             : validateLabel}
         </button>
+        </>}
       </div>
     </div>
   );

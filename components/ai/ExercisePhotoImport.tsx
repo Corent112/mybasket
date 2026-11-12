@@ -352,9 +352,9 @@ export default function ExercisePhotoImport({ onImported, playersOnly = false, d
               type="button"
               style={summaryStyles.buttonPrimary}
               disabled={busy || (drawingOnly && diagramCount === 0)}
-              onClick={() => void validate(pending)}
+              onClick={() => (diagramCount || pending.referenceFallback) ? setStep("review") : void validate(pending)}
             >
-              Valider l’import
+              {diagramCount || pending.referenceFallback ? "Vérifier les joueurs" : "Valider l’import"}
             </button>
           </div>
         </div>
