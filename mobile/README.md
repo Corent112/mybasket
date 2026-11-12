@@ -32,3 +32,5 @@ Copier `.env.example` dans `.env.local` et renseigner l’URL ainsi que la clé 
 L’écran Mon compte affiche les derniers matchs personnels et écoute les changements de la table `match_stats`. Si Realtime n’est pas actif pour cette table, la lecture est renouvelée toutes les 10 secondes lorsque l’app est au premier plan, ainsi qu’à la reconnexion et au retour dans l’app. Aucune migration de production n’est appliquée par cette version. Cette première intégration est en lecture : la saisie de matchs et la synchronisation des autres modules depuis l’app ne sont pas encore intégrées.
 
 La grille adapte ses colonnes à la largeur utile, aux zones de sécurité et à la taille du texte du système. Les tuiles peuvent grandir lorsque les libellés passent sur plusieurs lignes.
+
+La dernière liste des matchs personnels chargée reste lisible hors ligne après une première connexion. Le cache est séparé par compte et affiché uniquement lorsque la session de ce compte est restaurée. Le premier accès et la première récupération nécessitent Internet. Le cache ne contient ni actions ni vidéos.

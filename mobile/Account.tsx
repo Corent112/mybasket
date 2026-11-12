@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { ActivityIndicator, AppState, Linking, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import NetInfo from '@react-native-community/netinfo';
 import type { Session } from '@supabase/supabase-js';
 import { supabase } from './supabase';
@@ -79,13 +80,23 @@ export function RecentMatches({ session }: { session: Session }) {
   const [offline, setOffline] = useState(false);
   const [error, setError] = useState(false);
   const [live, setLive] = useState(false);
+  const [cached, setCached] = useState(false);
   const [signOutError, setSignOutError] = useState(false);
   const userId = session.user.id;
+  const cacheKey = 'mybasket.recent-matches.v1.' + userId;
 
   useEffect(() => {
     const client = supabase;
     if (!client) return;
-    let stopped = false, connected = true, reading = false, repeat = false;
+    let stopped = false, connected = true, reading = false, repeat = false, fresh = false;
+    void AsyncStorage.getItem(cacheKey).then((raw) => {
+      if (stopped || fresh || !raw) return;
+      const snapshot = JSON.parse(raw);
+      if (!Array.isArray(snapshot)) return;
+      setMatches(snapshot as Match[]);
+      setUpdated(true);
+      setCached(true);
+    }).catch(() => {});
     async function refresh() {
       if (!client || stopped || !connected) return;
       if (reading) { repeat = true; return; }
@@ -95,7 +106,13 @@ export function RecentMatches({ session }: { session: Session }) {
           .eq('user_id', userId).order('match_date', { ascending: false, nullsFirst: false }).limit(6);
         if (stopped) return;
         setError(Boolean(result.error));
-        if (!result.error) { setMatches(result.data); setUpdated(true); }
+        if (!result.error) {
+          fresh = true;
+          setMatches(result.data);
+          setUpdated(true);
+          setCached(false);
+          void AsyncStorage.setItem(cacheKey, JSON.stringify(result.data)).catch(() => {});
+        }
       } catch {
         if (!stopped) setError(true);
       } finally {
@@ -120,7 +137,7 @@ export function RecentMatches({ session }: { session: Session }) {
     const appState = AppState.addEventListener('change', (state) => { if (state === 'active') void refresh(); });
     const timer = setInterval(() => { if (AppState.currentState === 'active') void refresh(); }, 10000);
     return () => { stopped = true; clearInterval(timer); appState.remove(); unsubscribe(); void client.removeChannel(channel); };
-  }, [userId]);
+  }, [userId, cacheKey]);
 
   async function signOut() {
     setSignOutError(false);
@@ -135,7 +152,7 @@ export function RecentMatches({ session }: { session: Session }) {
   return <View style={styles.panel}>
     <Text style={styles.heading}>Mes derniers matchs</Text>
     <Text>{session.user.email}</Text>
-    <Text accessibilityLiveRegion="polite">{offline ? 'Hors ligne' : error ? 'Actualisation indisponible' : live ? 'Actualisation en direct' : updated ? 'Actualisation automatique' : 'Chargement…'}</Text>
+    <Text accessibilityLiveRegion="polite">{offline ? (updated ? 'Hors ligne · dernière liste chargée' : 'Hors ligne · aucun match chargé sur cet appareil') : error ? (cached ? 'Actualisation indisponible · dernière liste chargée' : 'Actualisation indisponible') : live ? 'Actualisation en direct' : updated ? 'Actualisation automatique' : 'Chargement…'}</Text>
     {matches.map((match) => {
       const date = match.match_date ? new Date(match.match_date) : null;
       return <View key={match.id} style={styles.match}><Text style={styles.heading}>{match.opponent || 'Adversaire non renseigné'}</Text>
@@ -150,7 +167,7 @@ export function RecentMatches({ session }: { session: Session }) {
 
 const styles = StyleSheet.create({
   panel: { backgroundColor: '#FFFDFC', borderColor: '#EBDAD6', borderWidth: 1, borderRadius: 15, padding: 14, marginTop: 14, gap: 9 },
-  heading: { color: '#311520', fontSize: 16, fontWeight: '750' },
+  heading: { color: '#311520', fontSize: 16, fontWeight: '700' },
   input: { color: '#311520', borderColor: '#EBDAD6', borderWidth: 1, borderRadius: 9, minHeight: 48, paddingHorizontal: 12, fontSize: 16 },
   button: { backgroundColor: wine, minHeight: 44, borderRadius: 9, alignItems: 'center', justifyContent: 'center' },
   buttonText: { color: '#FFF', fontWeight: '700' },
