@@ -8,7 +8,7 @@ import { accountMenu, launchEntries, mainMenu, type Entry, type Icon } from './n
 
 import { RecentMatches, SignIn, useAccount } from './Account';
 
-const site = 'https://mybasket.vercel.app';
+import { needsBrowser, site, SiteModule } from './SiteModule';
 const colors = { wine: '#6B1A2C', gold: '#F5CD7E', cream: '#FFF8EF', tile: '#FFFDFC', ink: '#311520', line: '#EBDAD6' };
 const storageKey = 'mybasket.shortcut.v1';
 const iconChoices: Icon[] = ['star', 'book-open', 'edit-3', 'activity', 'film', 'target'];
@@ -17,6 +17,7 @@ const defaultShortcut: Shortcut = { target: 'live', label: 'LiveStats', icon: 'a
 
 function AppScreen() {
   const { session, loading } = useAccount();
+  const [webModule, setWebModule] = useState<{ title: string; route: string } | null>(null);
   const [stack, setStack] = useState<Entry[]>([mainMenu]);
   const [editing, setEditing] = useState(false);
   const [shortcut, setShortcut] = useState<Shortcut>(defaultShortcut);
@@ -52,13 +53,15 @@ function AppScreen() {
   }
 
   useEffect(() => {
+    if (webModule) return;
     const subscription = BackHandler.addEventListener('hardwareBackPress', back);
     return () => subscription.remove();
-  }, [editing, stack.length]);
+  }, [editing, stack.length, webModule]);
 
   function go(entry: Entry) {
     if (entry.sections) { setStack((old) => [...old, entry]); return; }
     if (entry.route) {
+      if (!needsBrowser(entry.route)) { setWebModule({ title: entry.label, route: entry.route }); return; }
       void Linking.openURL(site + entry.route).catch(() => {
         Alert.alert('Page indisponible', 'Vérifie ta connexion, puis réessaie.');
       });
@@ -79,13 +82,18 @@ function AppScreen() {
 
   function tile(entry: Entry, label = entry.label, icon = entry.icon) {
     return <Pressable key={entry.id} accessibilityRole="button"
-      accessibilityHint={entry.route ? 'Ouvre le site MyBasket dans le navigateur' : 'Ouvre le sous-menu'}
+      accessibilityHint={entry.route ? (needsBrowser(entry.route) ? 'Ouvre le site MyBasket dans le navigateur' : 'Ouvre la page MyBasket') : 'Ouvre le sous-menu'}
       onPress={() => go(entry)}
       style={({ pressed }) => [styles.tile, { width: tileWidth, minHeight: Math.max(tileWidth, 90 * fontScale) }, pressed && styles.pressed]}>
       <View style={styles.icon}><Feather name={icon} size={22} color={colors.gold} /></View>
       <Text style={styles.tileLabel}>{label}</Text>
     </Pressable>;
   }
+
+  if (webModule) return <SafeAreaView style={styles.safe}>
+    <StatusBar style="light" />
+    <SiteModule title={webModule.title} route={webModule.route} close={() => setWebModule(null)} />
+  </SafeAreaView>;
 
   return <SafeAreaView style={styles.safe}>
     <StatusBar style="light" />

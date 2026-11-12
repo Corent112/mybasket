@@ -21,13 +21,13 @@ npx expo export --platform all
 
 ## Périmètre actuel
 
-Les tuiles finales ouvrent la page correspondante sur le site MyBasket. L’utilisateur s’y identifie avec son compte MyBasket si nécessaire ; le navigateur applique les droits existants. La connexion native utilise le même compte Supabase ; les sessions native et navigateur sont distinctes. La bibliothèque, le dessin et la saisie LiveStats restent disponibles sur le site. La navigation native et le raccourci local fonctionnent hors connexion ; les pages du site dépendent de leur propre fonctionnement.
+Les tuiles de consultation ouvrent les pages du site dans l’app. Le navigateur reste proposé en haut de chaque page. Dessin, Montage, le codage LiveStats et les parcours de paiement s’ouvrent dans le navigateur pour garder le fonctionnement web existant. L’utilisateur s’y identifie avec son compte MyBasket si nécessaire ; le navigateur applique les droits existants. La connexion native utilise le même compte Supabase ; les sessions native et navigateur sont distinctes. La bibliothèque, le dessin et la saisie LiveStats restent disponibles sur le site. La navigation native et le raccourci local fonctionnent hors connexion ; les pages du site dépendent de leur propre fonctionnement.
 
 Le catalogue est défini dans `navigation.ts`. Pour le prochain lot, étendre la consultation aux équipes et matchs partagés, puis intégrer le flux d’écriture LiveStats décrit dans [le plan mobile](../docs/application-mobile.md). L’app n’est pas publiée sur les stores.
 
 ## Connexion et actualisation
 
-Copier `.env.example` dans `.env.local` et renseigner l’URL ainsi que la clé publique (publishable ou anon) du **même projet Supabase** que le site. Redémarrer Expo après modification. Ne jamais utiliser la clé de service. Dans Mon compte, se connecter avec l’adresse et le mot de passe du site. L’app conserve sa propre session dans le stockage sécurisé de l’appareil ; le navigateur conserve la sienne pour les modules qui s’y ouvrent.
+La préversion utilise par défaut l’URL et la clé publishable publiques déjà utilisées par le site. Aucun réglage Supabase n’est nécessaire pour ce projet. Pour un environnement de test séparé, copier `.env.example` dans `.env.local` puis fournir les deux valeurs publiques correspondantes. Ne jamais utiliser la clé de service. Dans Mon compte, se connecter avec l’adresse et le mot de passe du site. L’app conserve sa propre session dans le stockage sécurisé de l’appareil ; les pages du site conservent leur propre session, dans l’app ou dans le navigateur. Une deuxième connexion peut être demandée lors du premier accès à un module web.
 
 L’écran Mon compte affiche les derniers matchs personnels et écoute les changements de la table `match_stats`. Si Realtime n’est pas actif pour cette table, la lecture est renouvelée toutes les 10 secondes lorsque l’app est au premier plan, ainsi qu’à la reconnexion et au retour dans l’app. Aucune migration de production n’est appliquée par cette version. Cette première intégration est en lecture : la saisie de matchs et la synchronisation des autres modules depuis l’app ne sont pas encore intégrées.
 

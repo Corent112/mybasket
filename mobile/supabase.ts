@@ -2,8 +2,11 @@ import 'react-native-url-polyfill/auto';
 import * as SecureStore from 'expo-secure-store';
 import { createClient, processLock } from '@supabase/supabase-js';
 
-const url = process.env.EXPO_PUBLIC_SUPABASE_URL;
-const key = process.env.EXPO_PUBLIC_SUPABASE_PUBLISHABLE_KEY || process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY;
+import production from './public-config.json';
+
+const url = process.env.EXPO_PUBLIC_SUPABASE_URL || production.url;
+const overrideKey = process.env.EXPO_PUBLIC_SUPABASE_PUBLISHABLE_KEY || process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY;
+const key = process.env.EXPO_PUBLIC_SUPABASE_URL ? overrideKey : production.publishableKey;
 
 export const supabase = url && key ? createClient(url, key, {
   auth: {
