@@ -187,7 +187,7 @@ function diagramToPhase(diagram: AiExerciseDiagram, courtType: "half" | "full"):
       from,
       to,
       rotation: 0,
-      ...(path && !nativeDribble ? { points: path } : {}),
+      ...(path ? { points: path } : {}),
       ...(controls?.length ? { ctrls: controls } : {}),
       ...(action.color ? { color: action.color } : {}),
       ...(sourcePlayerId ? { sourcePlayerId } : {}),

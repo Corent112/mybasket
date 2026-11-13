@@ -28,6 +28,23 @@ const width = (b: AiRect)=>b.x1-b.x0+1;
 const height = (b: AiRect)=>b.y1-b.y0+1;
 const center = (b: AiRect)=>({x:(b.x0+b.x1)/2,y:(b.y0+b.y1)/2});
 
+function isZigzag(path:AiPoint[],unit:number){
+  if(path.length<12)return false;
+  let last=0,turns=0;
+  const span=Math.max(2,Math.round(path.length/12));
+  for(let i=span;i<path.length-span;i++){
+    const a=path[i-span],p=path[i],b=path[i+span];
+    const length=distance(a,b);
+    if(!length)continue;
+    const offset=((b.x-a.x)*(p.y-a.y)-(b.y-a.y)*(p.x-a.x))/length;
+    if(Math.abs(offset)<Math.max(1,unit*.003))continue;
+    const side=Math.sign(offset);
+    if(last&&last!==side)turns++;
+    last=side;
+  }
+  return turns>=4;
+}
+
 /** Flat digital half-courts with a solid blue key, wood floor and blue number rings. */
 export async function readColoredCourtDiagram(source: HTMLCanvasElement) {
   const canvas=document.createElement("canvas");
@@ -172,6 +189,90 @@ export async function readColoredCourtDiagram(source: HTMLCanvasElement) {
     }
     return {p,peak};
   };
+  // A marker can hide the middle of a stroke. Reconnect only opposite
+  // fragments whose local directions agree with the gap through the ring.
+  for(const {center:marker,radius} of roster){
+    const contacts=traces.filter(blob=>traceBounds(blob)>unit*.105).flatMap(blob=>{
+      const points=blob.pixels.map(dot);
+      const entry=points.reduce((best,p)=>distance(p,marker)<distance(best,marker)?p:best);
+      if(distance(entry,marker)>radius+unit*.023)return [];
+      const shaft=points.filter(p=>distance(p,entry)>radius*.55&&distance(p,entry)<radius*1.25);
+      if(shaft.length<4)return [];
+      const tangent={x:shaft.reduce((sum,p)=>sum+p.x-entry.x,0)/shaft.length,
+        y:shaft.reduce((sum,p)=>sum+p.y-entry.y,0)/shaft.length};
+      return [{blob,entry,tangent}];
+    });
+    const pairs=contacts.flatMap((a,i)=>contacts.slice(i+1).flatMap(b=>{
+      const dx=b.entry.x-a.entry.x,dy=b.entry.y-a.entry.y,len=Math.hypot(dx,dy);
+      if(len<radius*1.35||len>radius*2.9)return [];
+      const alignment=(v:AiPoint)=>(v.x*dx+v.y*dy)/(Math.hypot(v.x,v.y)*len||1);
+      const score=Math.min(-alignment(a.tangent),alignment(b.tangent));
+      return score>.78?[{a,b,score,len}]:[];
+    })).sort((a,b)=>b.score-a.score);
+    const pair=pairs[0];
+    if(!pair||(pairs[1]&&pair.score-pairs[1].score<.09))continue;
+    const {a,b,len}=pair;
+    const pixels=[...a.blob.pixels,...b.blob.pixels];
+    for(let i=1;i<len;i++){
+      const t=i/len;
+      pixels.push(Math.round(a.entry.y+(b.entry.y-a.entry.y)*t)*w+Math.round(a.entry.x+(b.entry.x-a.entry.x)*t));
+    }
+    traces.splice(traces.indexOf(a.blob),1);
+    traces.splice(traces.indexOf(b.blob),1);
+    traces.push({...a.blob,pixels,x0:Math.min(a.blob.x0,b.blob.x0),y0:Math.min(a.blob.y0,b.blob.y0),
+      x1:Math.max(a.blob.x1,b.blob.x1),y1:Math.max(a.blob.y1,b.blob.y1)});
+  }
+  const followStroke=(blob:Blob,tip:AiPoint,origin?:AiPoint)=>{
+    const pixels=new Set(blob.pixels);
+    const seed=Math.round(tip.y)*w+Math.round(tip.x);
+    const parents=new Map([[seed,seed]]);
+    const queue=[seed];
+    let start=seed;
+    for(let k=0;k<queue.length;k++){
+      const i=queue[k], p=dot(i);
+      if(origin ? distance(p,origin)<distance(dot(start),origin) : distance(p,tip)>distance(dot(start),tip))start=i;
+      for(const dy of [-1,0,1])for(const dx of [-1,0,1]){
+        if(p.x+dx<0||p.x+dx>=w)continue;
+        const next=i+dy*w+dx;
+        if(!pixels.has(next)||parents.has(next))continue;
+        parents.set(next,i);
+        queue.push(next);
+      }
+    }
+    const path:AiPoint[]=[];
+    for(let i=start;i!==seed;i=parents.get(i)!)path.push(dot(i));
+    return path;
+  };
+  const sampleStroke=(path:AiPoint[])=>{
+    const step=Math.max(1,Math.ceil(path.length/72));
+    return path.filter((_,i)=>i%step===0).map((_,i)=>{
+      const index=i*step;
+      const nearby=path.slice(Math.max(0,index-1),index+2);
+      return {x:nearby.reduce((sum,p)=>sum+p.x,0)/nearby.length,y:nearby.reduce((sum,p)=>sum+p.y,0)/nearby.length};
+    });
+  };
+  const screenBreak=(path:AiPoint[],blob:Blob)=>{
+    const pixels=new Set(blob.pixels);
+    const reach=Math.max(3,Math.round(unit*.012));
+    for(let i=reach*2;i<path.length-reach*2;i++){
+      const a=path[i-reach],p=path[i],b=path[i+reach];
+      const directions=[{x:p.x-a.x,y:p.y-a.y},{x:b.x-p.x,y:b.y-p.y}];
+      for(const {x:dx,y:dy} of directions){
+        const length=Math.hypot(dx,dy);
+        if(length<reach*.65)continue;
+        const nx=-dy/length,ny=dx/length;
+        const hasBar=(side:number)=>{
+          for(let j=2;j<=reach;j++){
+            const x=Math.round(p.x+side*j*nx),y=Math.round(p.y+side*j*ny);
+            if(![-1,0,1].some(offset=>pixels.has(y*w+x+offset)||pixels.has((y+offset)*w+x)))return false;
+          }
+          return true;
+        };
+        if(hasBar(-1)&&hasBar(1))return i;
+      }
+    }
+    return -1;
+  };
   const actions:AiDiagramAction[]=[];
   const used=new Set<Blob>();
   const owner=(blob:Blob)=>{
@@ -180,34 +281,34 @@ export async function readColoredCourtDiagram(source: HTMLCanvasElement) {
     return ranked[0]?.gap<unit*.026 && (!ranked[1]||ranked[1].gap-ranked[0].gap>unit*.018)?ranked[0].item:undefined;
   };
   for(const trace of traces.filter(b=>traceBounds(b)>unit*.043&&b.pixels.length>unit*.062)){
-    const source=owner(trace);
-    if(!source)continue;
-    const {p:tip,peak}=head(trace,source.center,source.radius+unit*.025);
-    if(traceBounds(trace)>unit*.13&&peak>=9&&distance(tip,source.center)>unit*.12){
-      const to=canonical(tip),from=source.player;
-      const pixels=new Set(trace.pixels);
-      const seed=Math.round(tip.y)*w+Math.round(tip.x);
-      const parents=new Map([[seed,seed]]);
-      const queue=[seed];
-      let start=seed;
-      for(let k=0;k<queue.length;k++){
-        const i=queue[k], p=dot(i);
-        if(distance(p,source.center)<distance(dot(start),source.center))start=i;
-        for(const dy of [-1,0,1])for(const dx of [-1,0,1]){
-          if(p.x+dx<0||p.x+dx>=w)continue;
-          const next=i+dy*w+dx;
-          if(!pixels.has(next)||parents.has(next))continue;
-          parents.set(next,i);
-          queue.push(next);
-        }
+    const {p:tip,peak}=head(trace);
+    if(traceBounds(trace)>unit*.13&&peak>=9){
+      const shaft=followStroke(trace,tip);
+      if(!shaft.length)continue;
+      const origin=shaft[0];
+      const candidates=roster.map(item=>({item,gap:distance(origin,item.center)-item.radius}))
+        .sort((a,b)=>a.gap-b.gap);
+      const source=candidates[0]?.gap<unit*.055&&(!candidates[1]||candidates[1].gap-candidates[0].gap>unit*.018)
+        ?candidates[0].item:undefined;
+      if(distance(origin,tip)<unit*.12)continue;
+      const from=source?.player??canonical(origin),to=canonical(tip);
+      const stroke=sampleStroke(shaft);
+      const kind=isZigzag(stroke,unit) ? "dribble" : "cut";
+      const split=kind==="cut" ? screenBreak(shaft,trace) : -1;
+      const departure=split<0 ? from : canonical(shaft[split]);
+      if(split>=0){
+        actions.push({action:"screen",from,to:departure,fromPlayer:source?.player.key,
+          points:[from,...sampleStroke(shaft.slice(0,split)).map(canonical),departure],
+          confidence:source ? .79 : .47,source:"Écran : fin du tracé à la barre"});
       }
-      const shaft:AiPoint[]=[];
-      for(let i=start;i!==seed;i=parents.get(i)!)shaft.push(dot(i));
-      const step=Math.max(2,Math.ceil(shaft.length/36));
-      const points=[from,...shaft.filter((_,i)=>i%step===0).map(p=>canonical(p)),to];
-      actions.push({action:"cut",from,to,points,fromPlayer:from.key,confidence:.84,source:"Trajet continu et pointe de flèche"});
+      const remainder=split<0 ? stroke : sampleStroke(shaft.slice(split+1));
+      const points=[departure,...remainder.map(canonical),to];
+      actions.push({action:kind,from:departure,to,points,fromPlayer:source?.player.key,confidence:source?.player ? .84 : .47,
+        source:kind==="dribble" ? "Dribble : oscillations et pointe de flèche" : "Trajet continu et pointe de flèche"});
       used.add(trace);
     }else if(traceBounds(trace)<unit*.115){
+      const source=owner(trace);
+      if(!source)continue;
       const origin=source.center;
       const far=trace.pixels.map(dot).sort((a,b)=>distance(b,origin)-distance(a,origin))[0];
       const length=distance(far,origin), ux=(far.x-origin.x)/length,uy=(far.y-origin.y)/length;
@@ -218,16 +319,28 @@ export async function readColoredCourtDiagram(source: HTMLCanvasElement) {
       const spread=(a:typeof projected)=>a.length?Math.max(...a.map(p=>p.s))-Math.min(...a.map(p=>p.s)):0;
       if(end.length>=8&&stem.length>=4&&spread(end)>unit*.020&&spread(end)>spread(stem)*1.45){
         const to=canonical({x:end.reduce((sum,p)=>sum+p.p.x,0)/end.length,y:end.reduce((sum,p)=>sum+p.p.y,0)/end.length});
-        actions.push({action:"screen",from:source.player,to,fromPlayer:source.player.key,confidence:.86,source:"Écran : barre perpendiculaire au tracé"});
+        const bar=end.reduce((best,item)=>distance(item.p,far)<distance(best.p,far)?item:best).p;
+        const points=[source.player,...sampleStroke(followStroke(trace,bar,origin)).map(canonical),to];
+        actions.push({action:"screen",from:source.player,to,points,fromPlayer:source.player.key,confidence:.86,source:"Écran : barre perpendiculaire au tracé"});
         used.add(trace);
       }
     }
   }
+  const topLeft=canonical({x:x0,y:y0}),bottomRight=canonical({x:x1,y:y1});
+  const toImage=({x,y}:AiPoint)=>({
+    x:x0+(x-topLeft.x)*unit/(bottomRight.x-topLeft.x),
+    y:y0+(y-topLeft.y)*(y1-y0)/(bottomRight.y-topLeft.y),
+  });
   const dribbleEnds=new Map<string,AiPoint>();
   for(const source of roster.filter(item=>item.player.hasBall)){
     const origin=source.center;
     const ball=balls.find(item=>distance(item,origin)<source.radius*2);
     if(!ball)continue;
+    const detected=actions.find(action=>action.action==="dribble"&&action.fromPlayer===source.player.key);
+    if(detected){
+      dribbleEnds.set(source.player.key,toImage(detected.to));
+      continue;
+    }
     const trace=traces.find(blob=>!used.has(blob)&&traceBounds(blob)>unit*.075&&traceBounds(blob)<unit*.16
       &&blob.pixels.some(i=>distance(dot(i),ball)<Math.max(width(ball),height(ball))*.8)
       && head(blob,ball,unit*.045).peak>=7);
@@ -235,7 +348,9 @@ export async function readColoredCourtDiagram(source: HTMLCanvasElement) {
     const end=trace.pixels.map(dot).reduce((best,p)=>distance(p,ball)>distance(best,ball)?p:best,ball);
     dribbleEnds.set(source.player.key,end);
     used.add(trace);
-    actions.push({action:"dribble",from:source.player,to:canonical(end),fromPlayer:source.player.key,
+    const to=canonical(end);
+    const points=[source.player,...sampleStroke(followStroke(trace,end,ball)).map(canonical),to];
+    actions.push({action:"dribble",from:source.player,to,points,fromPlayer:source.player.key,
       confidence:.8,source:"Trajet court dans le prolongement du ballon"});
   }
   const short=traces.filter(b=>!used.has(b)&&traceBounds(b)<unit*.125);
@@ -263,6 +378,57 @@ export async function readColoredCourtDiagram(source: HTMLCanvasElement) {
       accepted.push(candidate.end);
       actions.push({action:"pass",from:canonical(dribbleEnds.get(source.player.key) ?? source.center),to:canonical(candidate.end),fromPlayer:source.player.key,
         toPlayer:candidate.receiver?.player.key,confidence:.85,source:"Passe : pointillés alignés et pointe de flèche"});
+    }
+  }
+  // An unassigned pass can meet a cut that starts at the end of an
+  // screen. Look for the intervening solid stroke before linking them.
+  for (const pass of actions.filter(action=>action.action==="pass"&&!action.toPlayer)) {
+    const catchPoint=toImage(pass.to);
+    const continuations=actions.filter(action=>action.action==="screen"&&action.fromPlayer&&action.fromPlayer!==pass.fromPlayer).flatMap(screen=>{
+      const start=toImage(screen.to);
+      const dx=catchPoint.x-start.x,dy=catchPoint.y-start.y,length=Math.hypot(dx,dy);
+      if(length<unit*.075||length>unit*.29)return [];
+      return traces.filter(blob=>!used.has(blob)&&traceBounds(blob)>length*.55&&traceBounds(blob)<length*1.45)
+        .flatMap(blob=>{
+          const pixels=blob.pixels.map(dot);
+          const entry=pixels.reduce((best,p)=>distance(p,start)<distance(best,start)?p:best);
+          const tip=pixels.reduce((best,p)=>distance(p,catchPoint)<distance(best,catchPoint)?p:best);
+          if(distance(entry,start)>unit*.045||distance(tip,catchPoint)>unit*.026
+            ||distance(entry,tip)<length*.55||head(blob,start,length*.48).peak<7)return [];
+          const bins=Array.from({length:5},()=>({x:0,y:0,count:0}));
+          for(const p of pixels){
+            const t=((p.x-start.x)*dx+(p.y-start.y)*dy)/(length*length);
+            if(t<.12||t>.88)continue;
+            const bin=bins[Math.floor(t*bins.length)];
+            bin.x+=p.x;bin.y+=p.y;bin.count++;
+          }
+          const curve=bins.filter(bin=>bin.count).map(bin=>canonical({x:bin.x/bin.count,y:bin.y/bin.count}));
+          return [{screen,blob,curve,score:distance(entry,start)+distance(tip,catchPoint)}];
+        });
+    }).sort((a,b)=>a.score-b.score);
+    const match=continuations[0];
+    if(!match||(continuations[1]&&continuations[1].score-match.score<unit*.015))continue;
+    used.add(match.blob);
+    const cut:AiDiagramAction={action:"cut",from:match.screen.to,to:pass.to,
+      points:[match.screen.to,...match.curve,pass.to],fromPlayer:match.screen.fromPlayer,
+      confidence:.79,source:"Coupe après écran : trait continu jusqu’au point de réception"};
+    pass.toPlayer=cut.fromPlayer;
+    // The receiver first needs to get to the end of the cut, and the
+    // passer needs the ball if a feed to that player was detected.
+    actions.splice(actions.indexOf(pass),1);
+    const feed=actions.find(action=>action.action==="pass"&&action.toPlayer===pass.fromPlayer);
+    const after=Math.max(actions.indexOf(match.screen),feed?actions.indexOf(feed):-1);
+    actions.splice(after+1,0,cut,pass);
+  }
+  // A player's initial movement must not move the starting point of a
+  // detected dribble from the original ball position.
+  for (const dribble of actions.filter(action=>action.action==="dribble")) {
+    const index=actions.indexOf(dribble);
+    const priorCut=actions.slice(0,index).find(action=>action.action==="cut"&&action.fromPlayer===dribble.fromPlayer
+      &&action.from&&dribble.from&&distance(action.from,dribble.from)<.018);
+    if(priorCut){
+      actions.splice(actions.indexOf(priorCut),1);
+      actions.push(priorCut);
     }
   }
   return {canvas,play,players:roster.map(item=>item.player),objects,actions};
