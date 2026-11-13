@@ -39,6 +39,7 @@ import { listDrawingTeams, ensureDrawingSeasons, createDrawingSeason, type Drawi
 const ExercisePhotoImport = dynamic(() => import("@/components/ai/ExercisePhotoImport"), { ssr: false });
 
 type CourtStyle = {
+  artwork?: 'monochrome';
   floorColor: string;
   paintColor: string;
   lineColor: string;
@@ -131,8 +132,25 @@ const DEFAULT_COURT_STYLE: CourtStyle = {
   brandingColor: '#FFFFFF',
 };
 
+const MONOCHROME_COURT = {
+  half: '/plaquette/court-monochrome-half.webp',
+  full: '/plaquette/court-monochrome-full.webp',
+} as const;
+
 const COURT_STYLE_PRESETS: { id: string; label: string; style: CourtStyle }[] = [
   { id: 'original', label: 'Original', style: DEFAULT_COURT_STYLE },
+  {
+    id: 'monochrome',
+    label: 'Noir et blanc',
+    style: {
+      artwork: 'monochrome',
+      floorColor: '#FFFFFF',
+      paintColor: '#FFFFFF',
+      lineColor: '#111111',
+      borderColor: '#FFFFFF',
+      brandingColor: '#111111',
+    },
+  },
   {
     id: 'classic',
     label: 'Classique',
@@ -176,6 +194,7 @@ const normalizeCourtStyle = (value: unknown): CourtStyle => {
       : fallback;
 
   return {
+    ...(v.artwork === 'monochrome' ? { artwork: v.artwork } : {}),
     floorColor: safeHex(v.floorColor, DEFAULT_COURT_STYLE.floorColor),
     paintColor: safeHex(v.paintColor, DEFAULT_COURT_STYLE.paintColor),
     lineColor: safeHex(v.lineColor, DEFAULT_COURT_STYLE.lineColor),
@@ -344,6 +363,7 @@ const resetPlaquette = () => {
   const courtBrandingRef = useRef<CourtBranding>(DEFAULT_COURT_BRANDING);
   const courtBrandingLogoRef = useRef<HTMLImageElement | null>(null);
   const courtStyleRef = useRef<CourtStyle>(DEFAULT_COURT_STYLE);
+  const monochromeImagesRef = useRef<Partial<Record<'half' | 'full', HTMLImageElement>>>({});
   const courtTextureRef = useRef<Record<'half' | 'full', { key: string; canvas: HTMLCanvasElement } | null>>({
     half: null,
     full: null,
@@ -544,7 +564,7 @@ const resetPlaquette = () => {
   };
 
   const setCourtStyleField = (key: keyof CourtStyle, value: string) => {
-    const next = normalizeCourtStyle({ ...courtStyleRef.current, [key]: value });
+    const next = normalizeCourtStyle({ ...courtStyleRef.current, artwork: undefined, [key]: value });
     courtStyleRef.current = next;
     courtTextureRef.current = { half: null, full: null };
     setCourtStyle(next);
@@ -1247,6 +1267,10 @@ const currentRef = useRef(current);
     ct: 'half' | 'full'
   ): CanvasImageSource => {
     const style = courtStyleRef.current;
+    const artwork = monochromeImagesRef.current[ct];
+    if (style.artwork === 'monochrome' && !courtBrandingRef.current.useCustomBranding && artwork?.complete && artwork.naturalWidth) {
+      return artwork;
+    }
 
     // Garantie importante : sans personnalisation, on dessine l'image originale
     // elle-même. Taille, proportions, cadrage et rendu historique restent inchangés.
@@ -1293,6 +1317,10 @@ const currentRef = useRef(current);
     }
 
     const source = getStyledCourtSource(img, 'half');
+    if (source instanceof HTMLImageElement) {
+      setPhaseCourtThumbnailUrl(source.src);
+      return;
+    }
     if (source instanceof HTMLCanvasElement) {
       try {
         setPhaseCourtThumbnailUrl(source.toDataURL('image/png'));
@@ -3116,7 +3144,23 @@ const owners=ownersAtClock(sched,ballEventsRef.current,clock);
     const full = new Image();
     full.onload = () => { readyRef.current.full = true; render(); };
     full.src = fullUrl; fullImgRef.current = full;
+    const monochrome = (['half', 'full'] as const).map((type) => {
+      const image = new Image();
+      monochromeImagesRef.current[type] = image;
+      image.onload = () => {
+        if (courtStyleRef.current.artwork !== 'monochrome') return;
+        refreshPhaseCourtThumbnail();
+        render();
+      };
+      image.src = MONOCHROME_COURT[type];
+      return image;
+    });
     render();
+    return () => {
+      demi.onload = null;
+      full.onload = null;
+      monochrome.forEach((image) => { image.onload = null; });
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -6002,15 +6046,22 @@ const exportJson = () => {
                     <button
                       key={preset.id}
                       type="button"
-                      onClick={() => applyCourtStyle(preset.style)}
+                      onClick={() => {
+                        applyCourtStyle(preset.style);
+                        if (preset.style.artwork === 'monochrome') applyCourtBranding(DEFAULT_COURT_BRANDING);
+                      }}
                       style={{ border: '1px solid #DDD', borderRadius: 10, background: '#fff', padding: '.38rem', cursor: 'pointer', fontSize: '.7rem', fontWeight: 800, boxShadow: '0 1px 4px rgba(0,0,0,.05)' }}
                     >
                       <span aria-hidden="true" style={{ display: 'block', padding: '4px', borderRadius: 7, marginBottom: '.3rem', background: '#F7F5F2' }}>
-                        <span style={{ display: 'block', position: 'relative', height: 54, overflow: 'hidden', borderRadius: 5, background: preset.style.floorColor, border: `4px solid ${preset.style.borderColor}`, boxSizing: 'border-box' }}>
+                        {preset.style.artwork === 'monochrome' ? (
+                          <img src={MONOCHROME_COURT[courtType]} alt="" style={{ display: 'block', width: '100%', height: 54, objectFit: 'contain', background: '#fff', borderRadius: 5 }} />
+                        ) : (
+                          <span style={{ display: 'block', position: 'relative', height: 54, overflow: 'hidden', borderRadius: 5, background: preset.style.floorColor, border: `4px solid ${preset.style.borderColor}`, boxSizing: 'border-box' }}>
                           <span style={{ position: 'absolute', left: '27%', right: '27%', top: 0, height: '45%', background: preset.style.paintColor, border: `1.5px solid ${preset.style.lineColor}`, borderTop: 0 }} />
                           <span style={{ position: 'absolute', left: '50%', bottom: -21, width: 42, height: 42, transform: 'translateX(-50%)', border: `1.5px solid ${preset.style.lineColor}`, borderRadius: '50%' }} />
                           <span style={{ position: 'absolute', left: '8%', right: '8%', top: '70%', borderTop: `1.5px solid ${preset.style.lineColor}` }} />
                         </span>
+                        )}
                       </span>
                       {preset.label}
                     </button>
