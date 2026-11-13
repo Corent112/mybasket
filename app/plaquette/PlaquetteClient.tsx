@@ -47,6 +47,8 @@ type CourtStyle = {
   brandingColor: string;
 };
 
+type CourtColorField = Exclude<keyof CourtStyle, 'artwork'>;
+
 type CourtBranding = {
   text: string;
   logoDataUrl: string | null;
@@ -226,7 +228,7 @@ const normalizeCourtBranding = (value: unknown): CourtBranding => {
 };
 
 const isDefaultCourtStyle = (style: CourtStyle) =>
-  (Object.keys(DEFAULT_COURT_STYLE) as (keyof CourtStyle)[]).every(
+  (Object.keys(DEFAULT_COURT_STYLE) as CourtColorField[]).every(
     (key) => style[key].toUpperCase() === DEFAULT_COURT_STYLE[key].toUpperCase()
   );
 
@@ -563,14 +565,14 @@ const resetPlaquette = () => {
     applyCourtBranding(DEFAULT_COURT_BRANDING);
   };
 
-  const setCourtStyleField = (key: keyof CourtStyle, value: string) => {
+  const setCourtStyleField = (key: CourtColorField, value: string) => {
     const next = normalizeCourtStyle({ ...courtStyleRef.current, artwork: undefined, [key]: value });
     courtStyleRef.current = next;
     courtTextureRef.current = { half: null, full: null };
     setCourtStyle(next);
   };
 
-  const pickCourtColor = async (key: keyof CourtStyle) => {
+  const pickCourtColor = async (key: CourtColorField) => {
     try {
       const EyeDropperCtor = (window as any).EyeDropper;
       if (EyeDropperCtor) {
@@ -5923,7 +5925,7 @@ const exportJson = () => {
                 ['lineColor', 'Lignes'],
                 ['borderColor', 'Contour du terrain'],
                 ['brandingColor', 'Texte MYBASKET'],
-              ] as [keyof CourtStyle, string][]).map(([key, label]) => (
+              ] as [CourtColorField, string][]).map(([key, label]) => (
                 <div
                   key={key}
                   style={{
