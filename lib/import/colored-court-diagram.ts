@@ -184,15 +184,27 @@ export async function readColoredCourtDiagram(source: HTMLCanvasElement) {
     if(!source)continue;
     const {p:tip,peak}=head(trace,source.center,source.radius+unit*.025);
     if(traceBounds(trace)>unit*.13&&peak>=9&&distance(tip,source.center)>unit*.12){
-      const dx=tip.x-source.center.x,dy=tip.y-source.center.y,len2=dx*dx+dy*dy;
-      const samples=Array.from({length:9},()=>({x:0,y:0,n:0}));
-      for(const i of trace.pixels){
-        const p=dot(i),t=((p.x-source.center.x)*dx+(p.y-source.center.y)*dy)/len2;
-        if(t<.065||t>.95)continue;
-        const b=samples[Math.min(8,Math.floor(t*9))];b.x+=p.x;b.y+=p.y;b.n++;
-      }
       const to=canonical(tip),from=source.player;
-      const points=[from,...samples.filter(b=>b.n).map(b=>canonical({x:b.x/b.n,y:b.y/b.n})),to];
+      const pixels=new Set(trace.pixels);
+      const seed=Math.round(tip.y)*w+Math.round(tip.x);
+      const parents=new Map([[seed,seed]]);
+      const queue=[seed];
+      let start=seed;
+      for(let k=0;k<queue.length;k++){
+        const i=queue[k], p=dot(i);
+        if(distance(p,source.center)<distance(dot(start),source.center))start=i;
+        for(const dy of [-1,0,1])for(const dx of [-1,0,1]){
+          if(p.x+dx<0||p.x+dx>=w)continue;
+          const next=i+dy*w+dx;
+          if(!pixels.has(next)||parents.has(next))continue;
+          parents.set(next,i);
+          queue.push(next);
+        }
+      }
+      const shaft:AiPoint[]=[];
+      for(let i=start;i!==seed;i=parents.get(i)!)shaft.push(dot(i));
+      const step=Math.max(2,Math.ceil(shaft.length/36));
+      const points=[from,...shaft.filter((_,i)=>i%step===0).map(p=>canonical(p)),to];
       actions.push({action:"cut",from,to,points,fromPlayer:from.key,confidence:.84,source:"Trajet continu et pointe de flèche"});
       used.add(trace);
     }else if(traceBounds(trace)<unit*.115){

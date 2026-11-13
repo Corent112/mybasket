@@ -86,6 +86,7 @@ function pickControlPoints(points: AiPoint[], max = 5): AiPoint[] {
 /** Remove scanned zigzags from the movement path; the native tool draws them. */
 function dribbleControls(points: AiPoint[], courtType: "half" | "full"): AiPoint[] {
   if (points.length < 3) return [];
+  if (points.length === 3) return [clampPoint(points[1], courtType)];
   const from = points[0], to = points[points.length - 1];
   const dx = to.x - from.x, dy = to.y - from.y;
   const length2 = dx * dx + dy * dy;
@@ -98,30 +99,6 @@ function dribbleControls(points: AiPoint[], courtType: "half" | "full"): AiPoint
     bin.x += point.x; bin.y += point.y; bin.count++;
   }
   return bins.filter(bin => bin.count).map(bin => clampPoint({ x: bin.x / bin.count, y: bin.y / bin.count }, courtType));
-}
-
-/** Fit native handles to the centre of the stroke, skipping pen hooks and zigzags. */
-function landmarkControls(points: AiPoint[], from: AiPoint, to: AiPoint, courtType: "half" | "full"): AiPoint[] {
-  const sy = courtType === "half" ? 2 : 1;
-  const dx = to.x - from.x, dy = (to.y - from.y) * sy, length = Math.hypot(dx, dy);
-  if (length < .035) return [];
-  const ux = dx / length, uy = dy / length;
-  const bins: number[][] = [[], [], []];
-  for (const point of points) {
-    const x = point.x - from.x, y = (point.y - from.y) * sy;
-    const t = (x * ux + y * uy) / length;
-    if (t >= .12 && t <= .88) bins[Math.floor(t * 3)].push(y * ux - x * uy);
-  }
-  const shifts = bins.map(bin => {
-    if (bin.length < 3) return 0;
-    bin.sort((a,b) => a-b);
-    return Math.max(-length*.34, Math.min(length*.34, bin[Math.floor(bin.length/2)]));
-  });
-  if (Math.max(...shifts.map(Math.abs)) < Math.max(.012, length*.047)) return [];
-  return shifts.map((shift, index) => {
-    const t = (index+.5)/shifts.length;
-    return clampPoint({ x: from.x+t*dx-shift*uy, y: from.y+(t*dy+shift*ux)/sy }, courtType);
-  });
 }
 
 /** Un diagramme détecté → une Phase Plaquette native. */
@@ -197,7 +174,12 @@ function diagramToPhase(diagram: AiExerciseDiagram, courtType: "half" | "full"):
     if (source && ["cut", "screen", "dribble"].includes(action.action)) positions.set(source.id, to);
     const isShoot = action.action === "shoot";
     const nativeDribble = action.action === "dribble";
-    const linkedPass = action.action === "pass" && Boolean(sourcePlayerId || targetPlayerId);
+    const path = action.points?.map((point) => clampPoint(point, courtType));
+    const controls = path && action.action !== "freedraw"
+      ? nativeDribble
+        ? dribbleControls(path, courtType)
+        : pickControlPoints(path, 7)
+      : undefined;
 
     return {
       id: uid(),
@@ -205,22 +187,8 @@ function diagramToPhase(diagram: AiExerciseDiagram, courtType: "half" | "full"):
       from,
       to,
       rotation: 0,
-      // V15 — ne plus détruire la forme détectée.
-      // `points` garde le chemin Vision complet, même pour cut/pass/dribble.
-      // La Plaquette V15 sait rendre ce chemin directement. Les `ctrls` restent
-      // présents comme repli natif si l'utilisateur édite ensuite la trajectoire.
-      ...(diagram.landmarkAligned && action.points?.length && (nativeDribble || action.action === "cut")
-        ? { ctrls: landmarkControls(action.points, from, to, courtType) }
-        : nativeDribble && action.points?.length
-        ? { ctrls: dribbleControls(action.points, courtType) }
-        : action.points?.length && !linkedPass
-        ? {
-            points: action.points.map((point) => clampPoint(point, courtType)),
-            ...(action.action !== "freedraw" && action.points.length > 2
-              ? { ctrls: pickControlPoints(action.points, 7).map((point) => clampPoint(point, courtType)) }
-              : {}),
-          }
-        : {}),
+      ...(path && !nativeDribble ? { points: path } : {}),
+      ...(controls?.length ? { ctrls: controls } : {}),
       ...(action.color ? { color: action.color } : {}),
       ...(sourcePlayerId ? { sourcePlayerId } : {}),
       ...(targetPlayerId ? { targetPlayerId, targetMode: "playerCurrentPoint" as const } : {}),

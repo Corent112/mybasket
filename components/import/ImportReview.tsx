@@ -62,7 +62,7 @@ export const REVIEW_THRESHOLD = 0.5;
 export type Selection =
   | { kind: "player"; index: number }
   | { kind: "object"; index: number }
-  | { kind: "action"; index: number; end: "from" | "to" }
+  | { kind: "action"; index: number; end: "from" | "to" | "curve"; pointIndex?: number }
   | null;
 
 type Props = {
@@ -108,6 +108,19 @@ function playRect(courtType: "half" | "full") {
   return courtType === "full"
     ? { x0: FULL_COURT_LEFT, x1: FULL_COURT_RIGHT, y0: FULL_COURT_TOP, y1: FULL_COURT_BOTTOM }
     : { x0: HALF_COURT_LEFT, x1: HALF_COURT_RIGHT, y0: HALF_COURT_TOP, y1: HALF_COURT_BOTTOM };
+}
+
+function curveHandles(points: AiPoint[] | undefined) {
+  if (!points || points.length < 3) return [];
+  const count = Math.min(7, points.length - 2);
+  return Array.from({ length: count }, (_, i) =>
+    Math.round((i + 1) * (points.length - 1) / (count + 1)));
+}
+
+function distanceToSegment(point: AiPoint, start: AiPoint, end: AiPoint) {
+  const dx = end.x - start.x, dy = end.y - start.y;
+  const t = Math.max(0, Math.min(1, ((point.x - start.x) * dx + (point.y - start.y) * dy) / (dx * dx + dy * dy || 1)));
+  return Math.hypot(point.x - start.x - t * dx, point.y - start.y - t * dy);
 }
 
 const needsReview = (confidence: number | undefined, type?: AiDetectionType): boolean =>
@@ -373,6 +386,16 @@ export default function ImportReview({
         ctx.lineWidth = 1.5;
         ctx.stroke();
       }
+      if (isSelected) for (const pointIndex of curveHandles(action.points)) {
+        const p = toPixel(action.points![pointIndex]);
+        ctx.beginPath();
+        ctx.arc(p.x, p.y, 6, 0, Math.PI * 2);
+        ctx.fillStyle = COLORS.selected;
+        ctx.fill();
+        ctx.strokeStyle = "#fff";
+        ctx.lineWidth = 2;
+        ctx.stroke();
+      }
       ctx.restore();
     });
 
@@ -479,6 +502,15 @@ export default function ImportReview({
     const { width, height } = canvasRef.current;
     const toPixel = (point: AiPoint) => canonicalToPixel(point, width, height, courtType);
 
+    if (stage === "actions" && selection?.kind === "action") {
+      const selected = diagram.actions[selection.index];
+      const pointIndex = curveHandles(selected?.points).find(index => {
+        const p = toPixel(selected.points![index]);
+        return Math.hypot(p.x - x, p.y - y) <= 11;
+      });
+      if (pointIndex !== undefined) return { ...selection, end: "curve", pointIndex };
+    }
+
     for (let i = diagram.players.length - 1; i >= 0; i -= 1) {
       const p = toPixel(diagram.players[i]);
       if (Math.hypot(p.x - x, p.y - y) <= 20) return { kind: "player", index: i };
@@ -496,7 +528,19 @@ export default function ImportReview({
       const from = toPixel(action.from ?? action.to);
       if (Math.hypot(from.x - x, from.y - y) <= 12) return { kind: "action", index: i, end: "from" };
     }
-    return null;
+    let nearest: Selection = null;
+    let gap = 11;
+    diagram.actions.forEach((action, index) => {
+      if (!showUncertain && needsReview(action.confidence)) return;
+      const path = (action.points?.length ? action.points : [action.from ?? action.to, action.to]).map(toPixel);
+      for (let i = 1; i < path.length; i++) {
+        const distance = distanceToSegment({ x, y }, path[i - 1], path[i]);
+        if (distance >= gap) continue;
+        gap = distance;
+        nearest = { kind: "action", index, end: "curve" };
+      }
+    });
+    return nearest;
   };
 
   const updateDiagram = (change: (current: AiExerciseDiagram) => AiExerciseDiagram) => {
@@ -616,6 +660,21 @@ export default function ImportReview({
       }
       const actions = item.actions.map((action, index) => {
         if (index !== selection.index) return action;
+        if (selection.end === "curve") {
+          const pointIndex = selection.pointIndex;
+          const path = action.points;
+          if (!path || pointIndex === undefined) return action;
+          const handles = [0, ...curveHandles(path), path.length - 1];
+          const slot = handles.indexOf(pointIndex);
+          if (slot < 1 || slot >= handles.length - 1) return action;
+          const left = handles[slot - 1], right = handles[slot + 1], anchor = path[pointIndex];
+          const points = path.map((p, i) => {
+            if (i <= left || i >= right) return p;
+            const weight = i <= pointIndex ? (i - left) / (pointIndex - left) : (right - i) / (right - pointIndex);
+            return { x: p.x + (point.x - anchor.x) * weight, y: p.y + (point.y - anchor.y) * weight };
+          });
+          return { ...action, points, confidence: 1, source: "courbe corrigée à la main" };
+        }
         const endpoint = selection.end === "to" ? action.to : action.from ?? action.to;
         const points = action.points?.map((p, i, arr) => {
           const t = i / Math.max(1, arr.length - 1);
@@ -1076,6 +1135,18 @@ export default function ImportReview({
                       Trajectoire détectée : <strong>{selectedAction.action}</strong>. Choisis sa signification MyBasket ;
                       la géométrie du tracé est conservée.
                     </p>
+                    <p style={styles.hint}>Glisse les poignées bleues pour ajuster la courbe sur la photo.</p>
+                    {selectedAction.from && !curveHandles(selectedAction.points).length && (
+                      <button type="button" style={styles.button} onClick={() => {
+                        const { from, to } = selectedAction;
+                        if (!from) return;
+                        const middle = { x: (from.x + to.x) / 2, y: (from.y + to.y) / 2 };
+                        updateDiagram(item => ({ ...item, actions: item.actions.map((action, index) =>
+                          index === selection.index ? { ...action, points: [from, middle, to] } : action) }));
+                      }}>
+                        Ajouter une poignée
+                      </button>
+                    )}
                     {selectedAction.from && selectedAction.action !== "freedraw" && (
                       <button type="button" style={styles.button} onClick={() => reverseAction(selection.index)}>
                         Inverser le sens
