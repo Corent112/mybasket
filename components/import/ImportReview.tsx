@@ -220,7 +220,7 @@ export default function ImportReview({
   const [traceKind, setTraceKind] = useState<AiDiagramActionKind>("freedraw");
   const traceRef = useRef<AiPoint[] | null>(null);
   const [tracePreview, setTracePreview] = useState<AiPoint[]>([]);
-  const [addMode, setAddMode] = useState<AiDetectionType | "cone" | null>(null);
+  const [addMode, setAddMode] = useState<AiDetectionType | "cone" | "ball" | null>(null);
   const [annotationMode, setAnnotationMode] = useState(false);
   const [annotation, setAnnotation] = useState("");
   const [inkColor, setInkColor] = useState("#0f0f12");
@@ -244,6 +244,7 @@ export default function ImportReview({
   }, [courtType]);
 
   useEffect(() => {
+    setOverlay(result.referenceFallback ? .65 : 0);
     setOverlayReady(false);
     overlayImage.current = null;
     if (!diagram?.courtReference?.url) return;
@@ -254,7 +255,7 @@ export default function ImportReview({
     };
     image.src = diagram.courtReference.url;
     return () => { image.onload = null; };
-  }, [diagram?.courtReference?.url]);
+  }, [diagram?.courtReference?.url, result.referenceFallback]);
 
   /* ------------------------------------------------------------- rendu */
 
@@ -530,9 +531,9 @@ export default function ImportReview({
 
     if (addMode) {
       const point = pixelToCanonical(x, y, canvas.width, canvas.height, courtType);
-      if (addMode === "cone") {
+      if (addMode === "cone" || addMode === "ball") {
         updateDiagram(item => ({ ...item, objects: [...item.objects, {
-          ...point, kind: "cone", color: "#F05A16", confidence: 1, source: "ajouté à la main",
+          ...point, kind: addMode, color: "#F05A16", confidence: 1, source: "ajouté à la main",
         }] }));
         setAddMode(null);
         setSelection({ kind: "object", index: diagram.objects.length });
@@ -635,8 +636,17 @@ export default function ImportReview({
     traceRef.current = null;
     setTracePreview([]);
     if (!points || points.length < 2) return;
+    const from = points[0];
+    const to = points[points.length - 1];
+    const playerAt = (point: AiPoint) => diagram.players
+      .map(player => ({ player, distance: Math.hypot(player.x - point.x, player.y - point.y) }))
+      .filter(item => item.distance < .032)
+      .sort((a, b) => a.distance - b.distance)[0]?.player;
+    const source = traceKind === "freedraw" ? undefined : playerAt(from);
+    const receiver = traceKind === "pass" ? playerAt(to) : undefined;
     updateDiagram(item => ({ ...item, actions: [...item.actions, {
-      action: traceKind, from: points[0], to: points[points.length - 1], points,
+      action: traceKind, from, to, points,
+      fromPlayer: source?.key, toPlayer: receiver?.key === source?.key ? undefined : receiver?.key,
       color: inkColor, confidence: 1, source: "retracé à la main",
     }] }));
     setSelection({ kind: "action", index: diagram.actions.length, end: "to" });
@@ -969,6 +979,10 @@ export default function ImportReview({
               <button type="button" style={addMode === "cone" ? styles.buttonPrimary : styles.button}
                 onClick={() => { setTraceMode(false); setAnnotationMode(false); setAddMode(addMode === "cone" ? null : "cone"); }}>
                 + Plot
+              </button>
+              <button type="button" style={addMode === "ball" ? styles.buttonPrimary : styles.button}
+                onClick={() => { setTraceMode(false); setAnnotationMode(false); setAddMode(addMode === "ball" ? null : "ball"); }}>
+                + Ballon
               </button>
             </div>
             {stage === "actions" && <div style={styles.row}>

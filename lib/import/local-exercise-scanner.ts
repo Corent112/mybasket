@@ -1138,7 +1138,7 @@ export async function scanExerciseLocally(
           const courtReference = makeCourtReference(digital.canvas, digital.play);
           state.rectifiedImage = courtReference?.url;
           state.referenceFallback = { detected: true, courtType: "half", players: digital.players,
-            objects: [], actions: digital.actions, notes: "", courtReference };
+            objects: digital.objects, actions: digital.actions, notes: "", courtReference };
           continue;
         }
         const marked = registerMarkedCourt(canvas);
