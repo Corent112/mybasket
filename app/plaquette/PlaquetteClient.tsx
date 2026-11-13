@@ -40,7 +40,7 @@ import { listDrawingTeams, ensureDrawingSeasons, createDrawingSeason, type Drawi
 const ExercisePhotoImport = dynamic(() => import("@/components/ai/ExercisePhotoImport"), { ssr: false });
 
 type CourtStyle = {
-  artwork?: 'monochrome';
+  artwork?: keyof typeof COURT_ARTWORKS;
   floorPattern?: CourtFloorPattern;
   floorColor: string;
   paintColor: string;
@@ -136,9 +136,15 @@ const DEFAULT_COURT_STYLE: CourtStyle = {
   brandingColor: '#FFFFFF',
 };
 
-const MONOCHROME_COURT = {
-  half: '/plaquette/court-monochrome-half.webp',
-  full: '/plaquette/court-monochrome-full-v2.webp',
+const COURT_ARTWORKS = {
+  monochrome: {
+    half: '/plaquette/court-monochrome-half.webp',
+    full: '/plaquette/court-monochrome-full-v2.webp',
+  },
+  rose: {
+    half: '/plaquette/court-rose-half.webp',
+    full: '/plaquette/court-rose-full.webp',
+  },
 } as const;
 
 const COURT_STYLE_PRESETS: { id: string; label: string; style: CourtStyle }[] = [
@@ -167,14 +173,15 @@ const COURT_STYLE_PRESETS: { id: string; label: string; style: CourtStyle }[] = 
     },
   },
   {
-    id: 'black',
-    label: 'Noir',
+    id: 'rose',
+    label: 'Rose',
     style: {
-      floorColor: '#242424',
-      paintColor: '#111111',
+      artwork: 'rose',
+      floorColor: '#F3D7A7',
+      paintColor: '#DB648C',
       lineColor: '#FFFFFF',
-      borderColor: '#111111',
-      brandingColor: '#FFFFFF',
+      borderColor: '#F3CDD8',
+      brandingColor: '#573039',
     },
   },
   {
@@ -201,7 +208,7 @@ const normalizeCourtStyle = (value: unknown): CourtStyle => {
     ...(COURT_FLOOR_PATTERNS.some((pattern) => pattern.id === v.floorPattern)
       ? { floorPattern: v.floorPattern }
       : {}),
-    ...(v.artwork === 'monochrome' ? { artwork: v.artwork } : {}),
+    ...((v.artwork === 'monochrome' || v.artwork === 'rose') ? { artwork: v.artwork } : {}),
     floorColor: safeHex(v.floorColor, DEFAULT_COURT_STYLE.floorColor),
     paintColor: safeHex(v.paintColor, DEFAULT_COURT_STYLE.paintColor),
     lineColor: safeHex(v.lineColor, DEFAULT_COURT_STYLE.lineColor),
@@ -370,7 +377,7 @@ const resetPlaquette = () => {
   const courtBrandingRef = useRef<CourtBranding>(DEFAULT_COURT_BRANDING);
   const courtBrandingLogoRef = useRef<HTMLImageElement | null>(null);
   const courtStyleRef = useRef<CourtStyle>(DEFAULT_COURT_STYLE);
-  const monochromeImagesRef = useRef<Partial<Record<'half' | 'full', HTMLImageElement>>>({});
+  const courtArtworkImages = useRef(new Map<string, HTMLImageElement>());
   const courtTextureRef = useRef<Record<'half' | 'full', { key: string; canvas: CanvasImageSource } | null>>({
     half: null,
     full: null,
@@ -1329,8 +1336,8 @@ const currentRef = useRef(current);
     ct: 'half' | 'full'
   ): CanvasImageSource => {
     const style = courtStyleRef.current;
-    const artwork = monochromeImagesRef.current[ct];
-    const useArtwork = style.artwork === 'monochrome' && !courtBrandingRef.current.useCustomBranding
+    const artwork = style.artwork ? courtArtworkImages.current.get(COURT_ARTWORKS[style.artwork][ct]) : undefined;
+    const useArtwork = !courtBrandingRef.current.useCustomBranding
       && artwork?.complete && artwork.naturalWidth;
     const useOriginal = isDefaultCourtStyle(style) && !courtBrandingRef.current.useCustomBranding;
     const pattern = style.floorPattern ?? 'original';
@@ -1341,7 +1348,7 @@ const currentRef = useRef(current);
 
     const key = [
       pattern,
-      useArtwork ? "monochrome" : "original",
+      useArtwork ? style.artwork : "original",
       style.floorColor,
       style.paintColor,
       style.lineColor,
@@ -1368,7 +1375,7 @@ const currentRef = useRef(current);
 
     const reference = useArtwork ? artwork : img;
     const base = useArtwork || useOriginal ? reference : buildStyledCourtCanvas(img, ct, style);
-    const styled = pattern === 'original' ? base : applyFloorPattern(base, reference, ct, Boolean(useArtwork), pattern);
+    const styled = pattern === 'original' ? base : applyFloorPattern(base, reference, ct, Boolean(useArtwork && style.artwork === 'monochrome'), pattern);
     courtTextureRef.current[ct] = { key, canvas: styled };
     return styled;
   };
@@ -3211,22 +3218,24 @@ const owners=ownersAtClock(sched,ballEventsRef.current,clock);
     const full = new Image();
     full.onload = () => { readyRef.current.full = true; render(); };
     full.src = fullUrl; fullImgRef.current = full;
-    const monochrome = (['half', 'full'] as const).map((type) => {
-      const image = new Image();
-      monochromeImagesRef.current[type] = image;
-      image.onload = () => {
-        if (courtStyleRef.current.artwork !== 'monochrome') return;
-        refreshPhaseCourtThumbnail();
-        render();
-      };
-      image.src = MONOCHROME_COURT[type];
-      return image;
-    });
+    const artworkImages = Object.entries(COURT_ARTWORKS).flatMap(([artwork, urls]) =>
+      Object.values(urls).map((url) => {
+        const image = new Image();
+        courtArtworkImages.current.set(url, image);
+        image.onload = () => {
+          if (courtStyleRef.current.artwork !== artwork) return;
+          refreshPhaseCourtThumbnail();
+          render();
+        };
+        image.src = url;
+        return image;
+      }),
+    );
     render();
     return () => {
       demi.onload = null;
       full.onload = null;
-      monochrome.forEach((image) => { image.onload = null; });
+      artworkImages.forEach((image) => { image.onload = null; });
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -6114,13 +6123,13 @@ const exportJson = () => {
                       type="button"
                       onClick={() => {
                         applyCourtStyle(preset.style);
-                        if (preset.style.artwork === 'monochrome') applyCourtBranding(DEFAULT_COURT_BRANDING);
+                        if (preset.style.artwork) applyCourtBranding(DEFAULT_COURT_BRANDING);
                       }}
                       style={{ border: '1px solid #DDD', borderRadius: 10, background: '#fff', padding: '.38rem', cursor: 'pointer', fontSize: '.7rem', fontWeight: 800, boxShadow: '0 1px 4px rgba(0,0,0,.05)' }}
                     >
                       <span aria-hidden="true" style={{ display: 'block', padding: '4px', borderRadius: 7, marginBottom: '.3rem', background: '#F7F5F2' }}>
-                        {preset.style.artwork === 'monochrome' ? (
-                          <img src={MONOCHROME_COURT[courtType]} alt="" style={{ display: 'block', width: '100%', height: 54, objectFit: 'contain', background: '#fff', borderRadius: 5 }} />
+                        {preset.style.artwork ? (
+                          <img src={COURT_ARTWORKS[preset.style.artwork][courtType]} alt="" style={{ display: 'block', width: '100%', height: 54, objectFit: 'contain', background: '#fff', borderRadius: 5 }} />
                         ) : (
                           <span style={{ display: 'block', position: 'relative', height: 54, overflow: 'hidden', borderRadius: 5, background: preset.style.floorColor, border: `4px solid ${preset.style.borderColor}`, boxSizing: 'border-box' }}>
                           <span style={{ position: 'absolute', left: '27%', right: '27%', top: 0, height: '45%', background: preset.style.paintColor, border: `1.5px solid ${preset.style.lineColor}`, borderTop: 0 }} />
