@@ -1,4 +1,5 @@
 'use client';
+import { COURT_FLOOR_PATTERNS, floorPatternShade, type CourtFloorPattern } from '@/lib/court-floor-pattern';
 import { resolveSystemDrawingPreview } from "@/lib/system-drawing-preview";
 import {drawingSessionStorage} from '@/lib/drawing-session-storage';
 
@@ -40,6 +41,7 @@ const ExercisePhotoImport = dynamic(() => import("@/components/ai/ExercisePhotoI
 
 type CourtStyle = {
   artwork?: 'monochrome';
+  floorPattern?: CourtFloorPattern;
   floorColor: string;
   paintColor: string;
   lineColor: string;
@@ -47,7 +49,7 @@ type CourtStyle = {
   brandingColor: string;
 };
 
-type CourtColorField = Exclude<keyof CourtStyle, 'artwork'>;
+type CourtColorField = Exclude<keyof CourtStyle, 'artwork' | 'floorPattern'>;
 
 type CourtBranding = {
   text: string;
@@ -136,7 +138,7 @@ const DEFAULT_COURT_STYLE: CourtStyle = {
 
 const MONOCHROME_COURT = {
   half: '/plaquette/court-monochrome-half.webp',
-  full: '/plaquette/court-monochrome-full.webp',
+  full: '/plaquette/court-monochrome-full-v2.webp',
 } as const;
 
 const COURT_STYLE_PRESETS: { id: string; label: string; style: CourtStyle }[] = [
@@ -196,6 +198,9 @@ const normalizeCourtStyle = (value: unknown): CourtStyle => {
       : fallback;
 
   return {
+    ...(COURT_FLOOR_PATTERNS.some((pattern) => pattern.id === v.floorPattern)
+      ? { floorPattern: v.floorPattern }
+      : {}),
     ...(v.artwork === 'monochrome' ? { artwork: v.artwork } : {}),
     floorColor: safeHex(v.floorColor, DEFAULT_COURT_STYLE.floorColor),
     paintColor: safeHex(v.paintColor, DEFAULT_COURT_STYLE.paintColor),
@@ -366,7 +371,7 @@ const resetPlaquette = () => {
   const courtBrandingLogoRef = useRef<HTMLImageElement | null>(null);
   const courtStyleRef = useRef<CourtStyle>(DEFAULT_COURT_STYLE);
   const monochromeImagesRef = useRef<Partial<Record<'half' | 'full', HTMLImageElement>>>({});
-  const courtTextureRef = useRef<Record<'half' | 'full', { key: string; canvas: HTMLCanvasElement } | null>>({
+  const courtTextureRef = useRef<Record<'half' | 'full', { key: string; canvas: CanvasImageSource } | null>>({
     half: null,
     full: null,
   });
@@ -1264,21 +1269,79 @@ const currentRef = useRef(current);
     return out;
   };
 
+  const applyFloorPattern = (
+    base: CanvasImageSource,
+    reference: HTMLImageElement,
+    ct: 'half' | 'full',
+    monochrome: boolean,
+    pattern: CourtFloorPattern,
+  ) => {
+    const out = document.createElement('canvas');
+    out.width = reference.naturalWidth;
+    out.height = reference.naturalHeight;
+    const ctx = out.getContext('2d', { willReadFrequently: true });
+    if (!ctx) return base;
+    const { width, height } = out;
+    ctx.drawImage(reference, 0, 0);
+    const mask = ctx.getImageData(0, 0, width, height).data;
+    ctx.drawImage(base, 0, 0);
+    const image = ctx.getImageData(0, 0, width, height);
+    const pixels = image.data;
+
+    for (let y = 0; y < height; y++) {
+      const v = y / height;
+      for (let x = 0; x < width; x++) {
+        const u = x / width;
+        const inside = ct === 'full'
+          ? u > .072 && u < .928 && v > .147 && v < .853
+          : u > .14 && u < .86 && v > .138 && v < .988;
+        if (!inside) continue;
+
+        // Preserve the paint and the entire center mark in both source artworks.
+        const protectedArea = ct === 'full'
+          ? (v > .378 && v < .623 && (u < .246 || u > .754)) ||
+            ((u - .5) / .081) ** 2 + ((v - .5) / .127) ** 2 < 1
+          : (u > .38 && u < .62 && v < .48) ||
+            ((u - .5) / .122) ** 2 + ((v - 1.005) / .17) ** 2 < 1;
+        if (protectedArea) continue;
+
+        const index = (y * width + x) * 4;
+        const [r, g, b] = [mask[index], mask[index + 1], mask[index + 2]];
+        const isWood = monochrome
+          ? Math.min(r, g, b) > 228 && mask[index + 3] === 255
+          : r > 175 && g > 100 && r - g > 22 && g - b > 28;
+        if (!isWood) continue;
+
+        const shade = ct === 'full'
+          ? floorPatternShade(pattern, u, v * .64)
+          : floorPatternShade(pattern, v * .5, (1 - u) * .64);
+        for (let channel = 0; channel < 3; channel++) {
+          pixels[index + channel] = pixels[index + channel] * (1 + shade / 115) + shade * .32;
+        }
+      }
+    }
+    ctx.putImageData(image, 0, 0);
+    return out;
+  };
+
   const getStyledCourtSource = (
     img: HTMLImageElement,
     ct: 'half' | 'full'
   ): CanvasImageSource => {
     const style = courtStyleRef.current;
     const artwork = monochromeImagesRef.current[ct];
-    if (style.artwork === 'monochrome' && !courtBrandingRef.current.useCustomBranding && artwork?.complete && artwork.naturalWidth) {
-      return artwork;
+    const useArtwork = style.artwork === 'monochrome' && !courtBrandingRef.current.useCustomBranding
+      && artwork?.complete && artwork.naturalWidth;
+    const useOriginal = isDefaultCourtStyle(style) && !courtBrandingRef.current.useCustomBranding;
+    const pattern = style.floorPattern ?? 'original';
+    if (pattern === 'original') {
+      if (useArtwork) return artwork;
+      if (useOriginal) return img;
     }
 
-    // Garantie importante : sans personnalisation, on dessine l'image originale
-    // elle-même. Taille, proportions, cadrage et rendu historique restent inchangés.
-    if (isDefaultCourtStyle(style) && !courtBrandingRef.current.useCustomBranding) return img;
-
     const key = [
+      pattern,
+      useArtwork ? "monochrome" : "original",
       style.floorColor,
       style.paintColor,
       style.lineColor,
@@ -1303,7 +1366,9 @@ const currentRef = useRef(current);
     const cached = courtTextureRef.current[ct];
     if (cached?.key === key) return cached.canvas;
 
-    const styled = buildStyledCourtCanvas(img, ct, style);
+    const reference = useArtwork ? artwork : img;
+    const base = useArtwork || useOriginal ? reference : buildStyledCourtCanvas(img, ct, style);
+    const styled = pattern === 'original' ? base : applyFloorPattern(base, reference, ct, Boolean(useArtwork), pattern);
     courtTextureRef.current[ct] = { key, canvas: styled };
     return styled;
   };
@@ -1313,7 +1378,7 @@ const currentRef = useRef(current);
 
     // Les miniatures historiques utilisent le demi-terrain. On conserve exactement
     // cette géométrie, mais on leur applique la même texture colorée que le canvas.
-    if (!img || !readyRef.current.demi || (isDefaultCourtStyle(courtStyleRef.current) && !courtBrandingRef.current.useCustomBranding)) {
+    if (!img || !readyRef.current.demi || (isDefaultCourtStyle(courtStyleRef.current) && (!courtStyleRef.current.floorPattern || courtStyleRef.current.floorPattern === 'original') && !courtBrandingRef.current.useCustomBranding)) {
       setPhaseCourtThumbnailUrl(MYBASKET_DEMI_URL);
       return;
     }
@@ -3173,7 +3238,6 @@ const owners=ownersAtClock(sched,ballEventsRef.current,clock);
     selectionRef.current = selection;
     courtStyleRef.current = courtStyle;
     courtBrandingRef.current = courtBranding;
-    courtTextureRef.current = { half: null, full: null };
     refreshPhaseCourtThumbnail();
     render();
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -6070,6 +6134,19 @@ const exportJson = () => {
                   ))}
                 </div>
               </div>
+
+              <label style={{ display: 'grid', gap: '.4rem', marginTop: '1rem', fontSize: '.78rem', fontWeight: 800 }}>
+                Motif du parquet
+                <select
+                  value={courtStyle.floorPattern ?? 'original'}
+                  onChange={(event) => applyCourtStyle({ ...courtStyleRef.current, floorPattern: event.target.value })}
+                  style={{ padding: '.55rem', border: '1px solid #DDD', borderRadius: 7, background: '#fff' }}
+                >
+                  {COURT_FLOOR_PATTERNS.map((pattern) => (
+                    <option key={pattern.id} value={pattern.id}>{pattern.label}</option>
+                  ))}
+                </select>
+              </label>
 
               <div style={{ marginTop: '1rem', paddingTop: '.85rem', borderTop: '1px solid #ECECEC' }}>
                 <button
