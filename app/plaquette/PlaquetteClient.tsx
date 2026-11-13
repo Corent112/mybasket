@@ -3342,7 +3342,7 @@ const owners=ownersAtClock(sched,ballEventsRef.current,clock);
           pushHistory();
           setPhases((prev) => prev.map((p, i) => {
             if (i !== currentRef.current) return p;
-            return { ...p, lines: p.lines.map((z) => { if (z.id !== lh.id) return z; const cur = (z.ctrls ?? (z.ctrl ? [z.ctrl] : [])).slice(); cur.splice(k, 1); return { ...z, ctrls: cur.length ? cur : undefined, ctrl: undefined }; }) };
+            return { ...p, lines: p.lines.map((z) => { if (z.id !== lh.id) return z; const cur = (z.ctrls ?? (z.ctrl ? [z.ctrl] : [])).slice(); cur.splice(k, 1); return { ...z, ctrls: cur.length ? cur : undefined, ctrl: undefined, points: undefined }; }) };
           }));
           return;
         }
