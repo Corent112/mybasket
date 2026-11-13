@@ -251,11 +251,13 @@ export async function readColoredCourtDiagram(source: HTMLCanvasElement) {
       return {x:nearby.reduce((sum,p)=>sum+p.x,0)/nearby.length,y:nearby.reduce((sum,p)=>sum+p.y,0)/nearby.length};
     });
   };
-  const screenBreak=(path:AiPoint[],blob:Blob)=>{
+  const screenBreak=(path:AiPoint[],blob:Blob,terminal=false)=>{
     const pixels=new Set(blob.pixels);
     const reach=Math.max(3,Math.round(unit*.012));
-    for(let i=reach*2;i<path.length-reach*2;i++){
-      const a=path[i-reach],p=path[i],b=path[i+reach];
+    const first=terminal?Math.max(reach,path.length-reach*3):reach*2;
+    const last=terminal?path.length:path.length-reach*2;
+    for(let i=first;i<last;i++){
+      const a=path[i-reach],p=path[i],b=path[Math.min(path.length-1,i+reach)];
       const directions=[{x:p.x-a.x,y:p.y-a.y},{x:b.x-p.x,y:b.y-p.y}];
       for(const {x:dx,y:dy} of directions){
         const length=Math.hypot(dx,dy);
@@ -283,17 +285,40 @@ export async function readColoredCourtDiagram(source: HTMLCanvasElement) {
   for(const trace of traces.filter(b=>traceBounds(b)>unit*.043&&b.pixels.length>unit*.062)){
     const {p:tip,peak}=head(trace);
     if(traceBounds(trace)>unit*.13&&peak>=9){
-      const shaft=followStroke(trace,tip);
+      let shaft=followStroke(trace,tip);
       if(!shaft.length)continue;
+      let endpoint=tip;
+      const distanceToPlayer=(point:AiPoint)=>Math.min(...roster.map(item=>distance(point,item.center)-item.radius));
+      if(distanceToPlayer(tip)+unit*.025<distanceToPlayer(shaft[0])){
+        endpoint=shaft[0];
+        shaft=followStroke(trace,endpoint,tip);
+      }
+      const nearBall=(point:AiPoint)=>Math.min(...balls.map(ball=>distance(point,ball)));
+      if(isZigzag(shaft,unit)&&nearBall(endpoint)+unit*.02<nearBall(shaft[0])){
+        const priorEndpoint=endpoint;
+        endpoint=shaft[0];
+        shaft=followStroke(trace,endpoint,priorEndpoint);
+      }
+      const screenApproaches=(isZigzag(shaft,unit)?[]:roster).flatMap(item=>{
+        const path=followStroke(trace,endpoint,item.center);
+        const start=path[0];
+        if(!start||distance(start,item.center)>item.radius+unit*.025)return [];
+        const bar=screenBreak(path,trace);
+        return bar>=0?[{path,gap:distance(start,item.center)-item.radius}]:[];
+      }).sort((a,b)=>a.gap-b.gap);
+      if(screenApproaches.length===1)shaft=screenApproaches[0].path;
       const origin=shaft[0];
       const candidates=roster.map(item=>({item,gap:distance(origin,item.center)-item.radius}))
         .sort((a,b)=>a.gap-b.gap);
-      const source=candidates[0]?.gap<unit*.055&&(!candidates[1]||candidates[1].gap-candidates[0].gap>unit*.018)
-        ?candidates[0].item:undefined;
-      if(distance(origin,tip)<unit*.12)continue;
-      const from=source?.player??canonical(origin),to=canonical(tip);
-      const stroke=sampleStroke(shaft);
-      const kind=isZigzag(stroke,unit) ? "dribble" : "cut";
+      const ballHandler=isZigzag(shaft,unit)&&nearBall(origin)<unit*.085
+        ? roster.find(item=>item.player.hasBall&&distance(item.center,origin)<unit*.12):undefined;
+      const source=ballHandler??(candidates[0]?.gap<unit*.055&&(!candidates[1]||candidates[1].gap-candidates[0].gap>unit*.018)
+        ?candidates[0].item:undefined);
+      if(distance(origin,endpoint)<unit*.12)continue;
+      const terminal=screenBreak([...shaft,endpoint],trace,true);
+      const from=source?.player??canonical(origin),to=canonical(terminal<0?endpoint:shaft[terminal]??endpoint);
+      const stroke=sampleStroke(terminal<0?shaft:shaft.slice(0,terminal));
+      const kind=terminal>=0 ? "screen" : isZigzag(stroke,unit) ? "dribble" : "cut";
       const split=kind==="cut" ? screenBreak(shaft,trace) : -1;
       const departure=split<0 ? from : canonical(shaft[split]);
       if(split>=0){
@@ -305,11 +330,34 @@ export async function readColoredCourtDiagram(source: HTMLCanvasElement) {
       const points=[departure,...remainder.map(canonical),to];
       actions.push({action:kind,from:departure,to,points,fromPlayer:source?.player.key,confidence:source?.player ? .84 : .47,
         source:kind==="dribble" ? "Dribble : oscillations et pointe de flèche" : "Trajet continu et pointe de flèche"});
+      if(split>=0){
+        // A second arrow can touch the same screen bar. Search the ink left
+        // outside the two recorded shafts and keep it as a review proposal.
+        const occupied=new Set<number>();
+        const clearance=Math.max(2,Math.round(unit*.008));
+        for(const point of shaft)for(let dy=-clearance;dy<=clearance;dy++)for(let dx=-clearance;dx<=clearance;dx++){
+          const x=point.x+dx;
+          if(x>=0&&x<w)occupied.add((point.y+dy)*w+x);
+        }
+        const remaining=new Uint8Array(ink.length);
+        for(const i of trace.pixels)if(!occupied.has(i))remaining[i]=1;
+        for(const branch of components(remaining,w,Math.round(unit*.095))){
+          if(traceBounds(branch)<unit*.12)continue;
+          const {p:tip,peak}=head(branch,shaft[split],unit*.07);
+          if(peak<7||distance(tip,endpoint)<unit*.08)continue;
+          const path=followStroke(branch,tip,shaft[split]);
+          if(!path.length||distance(path[0],shaft[split])>unit*.22||distance(path[0],tip)<unit*.10)continue;
+          const to=canonical(tip);
+          actions.push({action:"cut",from:canonical(path[0]),to,points:[...sampleStroke(path).map(canonical),to],
+            confidence:.47,source:"Deuxième flèche près de l’écran : départ à vérifier"});
+        }
+      }
       used.add(trace);
     }else if(traceBounds(trace)<unit*.115){
       const source=owner(trace);
       if(!source)continue;
       const origin=source.center;
+      if(source.player.hasBall&&balls.some(ball=>distance(ball,trace)<unit*.04))continue;
       const far=trace.pixels.map(dot).sort((a,b)=>distance(b,origin)-distance(a,origin))[0];
       const length=distance(far,origin), ux=(far.x-origin.x)/length,uy=(far.y-origin.y)/length;
       const projected=trace.pixels.map(dot).map(p=>({p,t:(p.x-origin.x)*ux+(p.y-origin.y)*uy,s:(p.y-origin.y)*ux-(p.x-origin.x)*uy}));
@@ -379,6 +427,46 @@ export async function readColoredCourtDiagram(source: HTMLCanvasElement) {
       actions.push({action:"pass",from:canonical(dribbleEnds.get(source.player.key) ?? source.center),to:canonical(candidate.end),fromPlayer:source.player.key,
         toPlayer:candidate.receiver?.player.key,confidence:.85,source:"Passe : pointillés alignés et pointe de flèche"});
     }
+  }
+  for(const trace of traces.filter(b=>!used.has(b)&&traceBounds(b)>unit*.043&&b.pixels.length>unit*.062)){
+    const {p:seed}=head(trace);
+    const first=followStroke(trace,seed)[0];
+    if(!first)continue;
+    const second=followStroke(trace,first)[0];
+    if(!second)continue;
+    const ends=[first,second].map(point=>{
+      const rosterMatch=roster.map(item=>({item,gap:distance(point,item.center)-item.radius}))
+        .sort((a,b)=>a.gap-b.gap);
+      return {point,match:rosterMatch[0]};
+    }).sort((a,b)=>(a.match?.gap??Infinity)-(b.match?.gap??Infinity));
+    const [start,end]=ends;
+    const source=start.match?.gap<unit*.058 ? start.match.item : undefined;
+    if(distance(start.point,end.point)<unit*.065)continue;
+    const shaft=followStroke(trace,end.point,start.point);
+    if(shaft.length<5)continue;
+    const barNearTip=screenBreak([...shaft,end.point],trace,true);
+    const terminalBar=barNearTip>=0;
+    const {p:headPoint,peak}=head(trace,start.point,distance(start.point,end.point)*.65);
+    if(!terminalBar&&(peak<7||distance(headPoint,end.point)>unit*.07))continue;
+    if(!source||(!terminalBar&&!isZigzag(shaft,unit)))continue;
+    const from=source?.player??canonical(start.point);
+    const tip=terminalBar?shaft[barNearTip]:end.point;
+    const to=canonical(tip);
+    const stroke=sampleStroke(terminalBar?shaft.slice(0,barNearTip):shaft);
+    const kind=terminalBar?"screen":isZigzag(stroke,unit)?"dribble":"cut";
+    const split=kind==="cut"?screenBreak(shaft,trace):-1;
+    const departure=split<0?from:canonical(shaft[split]);
+    if(split>=0){
+      actions.push({action:"screen",from,to:departure,fromPlayer:source?.player.key,
+        points:[from,...sampleStroke(shaft.slice(0,split)).map(canonical),departure],
+        confidence:source ? .79 : .47,source:"Écran : fin du tracé à la barre"});
+    }
+    const remainder=split<0?stroke:sampleStroke(shaft.slice(split+1));
+    actions.push({action:kind,from:departure,to,points:[departure,...remainder.map(canonical),to],
+      fromPlayer:source?.player.key,confidence:source ? .84 : .47,
+      source:kind==="screen"?"Écran : barre perpendiculaire au tracé":
+        kind==="dribble"?"Dribble : oscillations et pointe de flèche":"Trajet continu et pointe de flèche"});
+    used.add(trace);
   }
   // An unassigned pass can meet a cut that starts at the end of an
   // screen. Look for the intervening solid stroke before linking them.

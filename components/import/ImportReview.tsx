@@ -223,7 +223,7 @@ export default function ImportReview({
   const [current, setCurrent] = useState(Math.min(initialDiagram, Math.max(0, initial.length - 1)));
   const [selection, setSelection] = useState<Selection>(null);
   const [stage, setStage] = useState<"players" | "actions">("players");
-  const [showUncertain, setShowUncertain] = useState(false);
+  const [showUncertain, setShowUncertain] = useState(Boolean(result.referenceFallback));
   const checkStage = (next: "players" | "actions") => {
     setStage(next); setSelection(null); setTraceMode(false); setDragging(false);
     setAddMode(null); setAnnotationMode(false); traceRef.current = null; setTracePreview([]);
