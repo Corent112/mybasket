@@ -172,6 +172,39 @@ export async function readColoredCourtDiagram(source: HTMLCanvasElement) {
     }
     return {p,peak};
   };
+  // A marker can hide the middle of a stroke. Reconnect only opposite
+  // fragments whose local directions agree with the gap through the ring.
+  for(const {center:marker,radius} of roster){
+    const contacts=traces.filter(blob=>traceBounds(blob)>unit*.105).flatMap(blob=>{
+      const points=blob.pixels.map(dot);
+      const entry=points.reduce((best,p)=>distance(p,marker)<distance(best,marker)?p:best);
+      if(distance(entry,marker)>radius+unit*.023)return [];
+      const shaft=points.filter(p=>distance(p,entry)>radius*.55&&distance(p,entry)<radius*1.25);
+      if(shaft.length<4)return [];
+      const tangent={x:shaft.reduce((sum,p)=>sum+p.x-entry.x,0)/shaft.length,
+        y:shaft.reduce((sum,p)=>sum+p.y-entry.y,0)/shaft.length};
+      return [{blob,entry,tangent}];
+    });
+    const pairs=contacts.flatMap((a,i)=>contacts.slice(i+1).flatMap(b=>{
+      const dx=b.entry.x-a.entry.x,dy=b.entry.y-a.entry.y,len=Math.hypot(dx,dy);
+      if(len<radius*1.35||len>radius*2.9)return [];
+      const alignment=(v:AiPoint)=>(v.x*dx+v.y*dy)/(Math.hypot(v.x,v.y)*len||1);
+      const score=Math.min(-alignment(a.tangent),alignment(b.tangent));
+      return score>.78?[{a,b,score,len}]:[];
+    })).sort((a,b)=>b.score-a.score);
+    const pair=pairs[0];
+    if(!pair||(pairs[1]&&pair.score-pairs[1].score<.09))continue;
+    const {a,b,len}=pair;
+    const pixels=[...a.blob.pixels,...b.blob.pixels];
+    for(let i=1;i<len;i++){
+      const t=i/len;
+      pixels.push(Math.round(a.entry.y+(b.entry.y-a.entry.y)*t)*w+Math.round(a.entry.x+(b.entry.x-a.entry.x)*t));
+    }
+    traces.splice(traces.indexOf(a.blob),1);
+    traces.splice(traces.indexOf(b.blob),1);
+    traces.push({...a.blob,pixels,x0:Math.min(a.blob.x0,b.blob.x0),y0:Math.min(a.blob.y0,b.blob.y0),
+      x1:Math.max(a.blob.x1,b.blob.x1),y1:Math.max(a.blob.y1,b.blob.y1)});
+  }
   const actions:AiDiagramAction[]=[];
   const used=new Set<Blob>();
   const owner=(blob:Blob)=>{
@@ -180,11 +213,8 @@ export async function readColoredCourtDiagram(source: HTMLCanvasElement) {
     return ranked[0]?.gap<unit*.026 && (!ranked[1]||ranked[1].gap-ranked[0].gap>unit*.018)?ranked[0].item:undefined;
   };
   for(const trace of traces.filter(b=>traceBounds(b)>unit*.043&&b.pixels.length>unit*.062)){
-    const source=owner(trace);
-    if(!source)continue;
-    const {p:tip,peak}=head(trace,source.center,source.radius+unit*.025);
-    if(traceBounds(trace)>unit*.13&&peak>=9&&distance(tip,source.center)>unit*.12){
-      const to=canonical(tip),from=source.player;
+    const {p:tip,peak}=head(trace);
+    if(traceBounds(trace)>unit*.13&&peak>=9){
       const pixels=new Set(trace.pixels);
       const seed=Math.round(tip.y)*w+Math.round(tip.x);
       const parents=new Map([[seed,seed]]);
@@ -192,7 +222,7 @@ export async function readColoredCourtDiagram(source: HTMLCanvasElement) {
       let start=seed;
       for(let k=0;k<queue.length;k++){
         const i=queue[k], p=dot(i);
-        if(distance(p,source.center)<distance(dot(start),source.center))start=i;
+        if(distance(p,tip)>distance(dot(start),tip))start=i;
         for(const dy of [-1,0,1])for(const dx of [-1,0,1]){
           if(p.x+dx<0||p.x+dx>=w)continue;
           const next=i+dy*w+dx;
@@ -201,13 +231,22 @@ export async function readColoredCourtDiagram(source: HTMLCanvasElement) {
           queue.push(next);
         }
       }
+      const origin=dot(start);
+      const candidates=roster.map(item=>({item,gap:distance(origin,item.center)-item.radius}))
+        .sort((a,b)=>a.gap-b.gap);
+      const source=candidates[0]?.gap<unit*.055&&(!candidates[1]||candidates[1].gap-candidates[0].gap>unit*.018)
+        ?candidates[0].item:undefined;
+      if(distance(origin,tip)<unit*.12)continue;
+      const from=source?.player??canonical(origin),to=canonical(tip);
       const shaft:AiPoint[]=[];
       for(let i=start;i!==seed;i=parents.get(i)!)shaft.push(dot(i));
       const step=Math.max(2,Math.ceil(shaft.length/36));
       const points=[from,...shaft.filter((_,i)=>i%step===0).map(p=>canonical(p)),to];
-      actions.push({action:"cut",from,to,points,fromPlayer:from.key,confidence:.84,source:"Trajet continu et pointe de flèche"});
+      actions.push({action:"cut",from,to,points,fromPlayer:source?.player.key,confidence:source?.player ? .84 : .47,source:"Trajet continu et pointe de flèche"});
       used.add(trace);
     }else if(traceBounds(trace)<unit*.115){
+      const source=owner(trace);
+      if(!source)continue;
       const origin=source.center;
       const far=trace.pixels.map(dot).sort((a,b)=>distance(b,origin)-distance(a,origin))[0];
       const length=distance(far,origin), ux=(far.x-origin.x)/length,uy=(far.y-origin.y)/length;
