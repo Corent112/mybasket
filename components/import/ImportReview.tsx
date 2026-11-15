@@ -112,7 +112,7 @@ function playRect(courtType: "half" | "full") {
 
 function curveHandles(points: AiPoint[] | undefined) {
   if (!points || points.length < 3) return [];
-  const count = Math.min(7, points.length - 2);
+  const count = Math.min(2, points.length - 2);
   return Array.from({ length: count }, (_, i) =>
     Math.round((i + 1) * (points.length - 1) / (count + 1)));
 }
@@ -341,23 +341,16 @@ export default function ImportReview({
       ctx.lineWidth = isSelected ? 4 : 3;
       ctx.setLineDash(action.action === "pass" ? [9, 6] : []);
       ctx.beginPath();
-      if (action.points && action.points.length > 1) {
-        action.points.forEach((point, i) => {
-          const p = toPixel(point);
-          if (i === 0) ctx.moveTo(p.x, p.y);
-          else ctx.lineTo(p.x, p.y);
-        });
-      } else {
-        ctx.moveTo(from.x, from.y);
-        ctx.lineTo(to.x, to.y);
-      }
+      const path = [from, ...(action.points?.slice(1, -1).map(toPixel) ?? []), to];
+      path.forEach((point, i) => {
+        if (i === 0) ctx.moveTo(point.x, point.y);
+        else ctx.lineTo(point.x, point.y);
+      });
       ctx.stroke();
       ctx.setLineDash([]);
       // The last segment gives the direction of curved paths.
-      const last = action.points?.at(-1);
-      const previous = action.points?.at(-2);
-      const tip = last ? toPixel(last) : to;
-      const start = previous ? toPixel(previous) : from;
+      const tip = to;
+      const start = path.findLast(point => Math.hypot(point.x - tip.x, point.y - tip.y) >= 3) ?? from;
       const angle = Math.atan2(tip.y - start.y, tip.x - start.x);
       if (action.action !== "freedraw") {
         ctx.beginPath();
@@ -376,13 +369,11 @@ export default function ImportReview({
         }
       }
       // poignées d'extrémité
-      for (const [end, point] of [["from", from], ["to", to]] as Array<["from" | "to", { x: number; y: number }]>) {
+      if (isSelected) for (const [end, point] of [["from", from], ["to", to]] as Array<["from" | "to", { x: number; y: number }]>) {
         const handleSelected = isSelected && selection?.kind === "action" && selection.end === end;
         ctx.beginPath();
         ctx.arc(point.x, point.y, handleSelected ? 7 : 5, 0, Math.PI * 2);
-        ctx.fillStyle = handleSelected ? COLORS.selected : "#ffffff";
-        ctx.fill();
-        ctx.strokeStyle = COLORS.ink;
+        ctx.strokeStyle = handleSelected ? COLORS.selected : "#ffffff";
         ctx.lineWidth = 1.5;
         ctx.stroke();
       }
@@ -532,7 +523,7 @@ export default function ImportReview({
     let gap = 11;
     diagram.actions.forEach((action, index) => {
       if (!showUncertain && needsReview(action.confidence)) return;
-      const path = (action.points?.length ? action.points : [action.from ?? action.to, action.to]).map(toPixel);
+      const path = [action.from ?? action.to, ...(action.points?.slice(1, -1) ?? []), action.to].map(toPixel);
       for (let i = 1; i < path.length; i++) {
         const distance = distanceToSegment({ x, y }, path[i - 1], path[i]);
         if (distance >= gap) continue;

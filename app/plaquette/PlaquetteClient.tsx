@@ -1758,7 +1758,6 @@ const currentRef = useRef(current);
   const anchoredScannedPath = (l: Line, from: Pt, to: Pt): Pt[] | undefined => {
     const points = l.points;
     if (!points || points.length < 2) return undefined;
-    if (!l.sourcePlayerId && !l.targetPlayerId) return points;
     const first = points[0], last = points[points.length - 1];
     return points.map((point, i) => {
       const t = i / (points.length - 1);
@@ -1817,7 +1816,7 @@ const currentRef = useRef(current);
     const poly = linePoly(canvas, l);
     const L = arcLengths(poly);
     const total = L[L.length - 1] || 1;
-    const endTanPt = poly[poly.length - 2] || f; // avant-dernier échantillon → tangente d'arrivée
+    const endTanPt = poly.findLast(p => Math.hypot(p.x - t.x, p.y - t.y) >= 2) ?? f;
 
     if (l.action === 'dribble') {
       // Un dribble importé par Vision est déjà un zigzag réel : ne pas générer
@@ -1826,9 +1825,7 @@ const currentRef = useRef(current);
         ctx.beginPath();
         poly.forEach((p, i) => { if (i) ctx.lineTo(p.x, p.y); else ctx.moveTo(p.x, p.y); });
         ctx.stroke();
-        const tip = poly[poly.length - 1];
-        const before = poly[Math.max(0, poly.length - 2)];
-        arrowHead(ctx, before, tip, w);
+        arrowHead(ctx, endTanPt, t, w);
         return;
       }
       const amp = w * 2.2;
@@ -2290,7 +2287,12 @@ const currentRef = useRef(current);
     const l = ph.lines.find((z) => z.id === sel[0].id); if (!l || l.action === 'freedraw') return null;
     const g = lineGeom(canvas, l);
     const isShoot = l.action === 'shoot' && l.target === 'basket';
-    return { id: l.id, f: g.f, t: g.t, ctrls: g.ctrls, isShoot };
+    const indexes = g.ctrls.map((_, index) => index);
+    const imported = 'importSource' in l || (Array.isArray(l.points) && l.points.length >= 2);
+    const controlIndexes = imported && indexes.length > 2
+      ? [Math.round((indexes.length - 1) / 3), Math.round(2 * (indexes.length - 1) / 3)]
+      : indexes;
+    return { id: l.id, f: g.f, t: g.t, ctrls: controlIndexes.map(index => g.ctrls[index]), controlIndexes, isShoot };
   };
 
   // Lignes visibles à l'écran.
@@ -2665,7 +2667,7 @@ if (anim && anim.balls) {
       const dot = (x: number, y: number, fill: string, rr = 9) => { ctx.beginPath(); ctx.arc(x, y, rr, 0, Math.PI * 2); ctx.fillStyle = fill; ctx.fill(); ctx.lineWidth = 2.5; ctx.strokeStyle = '#FFFFFF'; ctx.stroke(); };
       // extrémités (arrivée masquée pour le tir, fixée au panier)
       dot(lh.f.x, lh.f.y, '#0F0F12', 8);
-      if (!lh.isShoot) dot(lh.t.x, lh.t.y, '#0F0F12', 8);
+      if (!lh.isShoot) { ctx.beginPath(); ctx.arc(lh.t.x, lh.t.y, 8, 0, Math.PI * 2); ctx.lineWidth = 2; ctx.strokeStyle = '#FFFFFF'; ctx.stroke(); }
       // points de contrôle (courbure) — gros cercles bleus faciles à attraper (tablette)
       lh.ctrls.forEach((c) => dot(c.x, c.y, '#1B5E9C', 11));
       ctx.restore();
@@ -3342,7 +3344,7 @@ const owners=ownersAtClock(sched,ballEventsRef.current,clock);
           pushHistory();
           setPhases((prev) => prev.map((p, i) => {
             if (i !== currentRef.current) return p;
-            return { ...p, lines: p.lines.map((z) => { if (z.id !== lh.id) return z; const cur = (z.ctrls ?? (z.ctrl ? [z.ctrl] : [])).slice(); cur.splice(k, 1); return { ...z, ctrls: cur.length ? cur : undefined, ctrl: undefined, points: undefined }; }) };
+            return { ...p, lines: p.lines.map((z) => { if (z.id !== lh.id) return z; const cur = (z.ctrls ?? (z.ctrl ? [z.ctrl] : [])).slice(); cur.splice(lh.controlIndexes[k], 1); return { ...z, ctrls: cur.length ? cur : undefined, ctrl: undefined, points: undefined }; }) };
           }));
           return;
         }
@@ -3551,7 +3553,7 @@ const owners=ownersAtClock(sched,ballEventsRef.current,clock);
       const lh = lineHandles(canvas);
       if (lh) {
         const near = (pt: Pt) => Math.hypot(P.x - pt.x, P.y - pt.y) < 16;
-        for (let k = 0; k < lh.ctrls.length; k++) { if (near(lh.ctrls[k])) { lineDragRef.current = { id: lh.id, which: 'ctrl', index: k }; histPushedRef.current = false; return; } }
+        for (let k = 0; k < lh.ctrls.length; k++) { if (near(lh.ctrls[k])) { lineDragRef.current = { id: lh.id, which: 'ctrl', index: lh.controlIndexes[k] }; histPushedRef.current = false; return; } }
         if (!lh.isShoot && near(lh.t)) { lineDragRef.current = { id: lh.id, which: 'to' }; histPushedRef.current = false; return; }
         if (near(lh.f)) { lineDragRef.current = { id: lh.id, which: 'from' }; histPushedRef.current = false; return; }
       }
