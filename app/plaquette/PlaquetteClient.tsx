@@ -1,6 +1,6 @@
 'use client';
 import { sampleImportedArc } from '@/lib/import/curve-handle';
-import { COURT_FLOOR_PATTERNS, floorPatternShade, type CourtFloorPattern } from '@/lib/court-floor-pattern';
+import { COURT_FLOOR_PATTERNS, floorPatternShade, isInsideThreePointArc, type CourtFloorPattern } from '@/lib/court-floor-pattern';
 import { resolveSystemDrawingPreview } from "@/lib/system-drawing-preview";
 import {drawingSessionStorage} from '@/lib/drawing-session-storage';
 
@@ -1298,6 +1298,8 @@ const currentRef = useRef(current);
     const image = ctx.getImageData(0, 0, width, height);
     const pixels = image.data;
     const textureImage = courtFloorImages.current.get(pattern);
+    const option = COURT_FLOOR_PATTERNS.find(item => item.id === pattern);
+    const tones = option && 'tones' in option ? option.tones : undefined;
     let texture: ImageData | undefined;
     if (textureImage?.complete && textureImage.naturalWidth) {
       ctx.clearRect(0, 0, width, height);
@@ -1311,6 +1313,16 @@ const currentRef = useRef(current);
         ctx.restore();
       }
       texture = ctx.getImageData(0, 0, width, height);
+      if (tones) for (let y = 0; y < height; y++) {
+        for (let x = 0; x < width; x++) {
+          const index = (y * width + x) * 4;
+          if (!texture.data[index + 3]) continue;
+          const tone = isInsideThreePointArc(ct, x / width, y / height) ? tones.inside : tones.outside;
+          for (let channel = 0; channel < 3; channel++) {
+            texture.data[index + channel] += tone[channel];
+          }
+        }
+      }
     }
 
     for (let y = 0; y < height; y++) {
