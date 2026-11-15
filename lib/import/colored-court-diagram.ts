@@ -309,9 +309,9 @@ export async function readColoredCourtDiagram(source: HTMLCanvasElement) {
         const travel=path.slice(1,bar+1).reduce((sum,p,i)=>sum+distance(p,path[i]),0);
         return [{path,score:travel/Math.max(1,length)}];
       }).sort((a,b)=>a.score-b.score);
-      if(screenApproaches[0]&&(!screenApproaches[1]||screenApproaches[1].score-screenApproaches[0].score>.012)){
-        shaft=screenApproaches[0].path;
-      }
+      const approach=screenApproaches[0];
+      const ambiguousApproach=Boolean(approach&&screenApproaches[1]&&screenApproaches[1].score-approach.score<=.012);
+      if(approach)shaft=approach.path;
       const origin=shaft[0];
       const candidates=roster.map(item=>({item,gap:distance(origin,item.center)-item.radius}))
         .sort((a,b)=>a.gap-b.gap);
@@ -340,7 +340,7 @@ export async function readColoredCourtDiagram(source: HTMLCanvasElement) {
       }
       const remainder=split<0 ? stroke : sampleStroke(shaft.slice(split+1));
       const points=[departure,...remainder.map(canonical),to];
-      actions.push({action:kind,from:departure,to,points,fromPlayer:source?.player.key,confidence:source?.player ? .84 : .47,
+      actions.push({action:kind,from:departure,to,points,fromPlayer:source?.player.key,confidence:source && !ambiguousApproach ? .84 : .47,
         source:kind==="dribble" ? "Dribble : oscillations et pointe de flèche" : "Trajet continu et pointe de flèche"});
       if(split>=0){
         // A second arrow can touch the same screen bar. Search the ink left
@@ -531,6 +531,31 @@ export async function readColoredCourtDiagram(source: HTMLCanvasElement) {
     const feed=actions.find(action=>action.action==="pass"&&action.toPlayer===pass.fromPlayer);
     const after=Math.max(actions.indexOf(match.screen),feed?actions.indexOf(feed):-1);
     actions.splice(after+1,0,cut,pass);
+  }
+  // A small gap after a screen can leave the next arrow without a player.
+  // Keep the screen and suggest the visible continuation independently.
+  for(const cut of actions.filter(action=>action.action==="cut"&&!action.fromPlayer&&action.from)){
+    const start=cut.from!;
+    const screens=actions.filter(action=>action.action==="screen"&&action.fromPlayer)
+      .map(screen=>({screen,gap:distance(screen.to,start)})).sort((a,b)=>a.gap-b.gap);
+    const closest=screens[0];
+    if(!closest||closest.gap>.035||(screens[1]&&screens[1].gap-closest.gap<.016))continue;
+    const {screen}=closest;
+    cut.from=screen.to;
+    cut.fromPlayer=screen.fromPlayer;
+    const primary=actions.find(action=>action!==cut&&action.action==="cut"&&action.fromPlayer===screen.fromPlayer
+      &&action.from&&distance(action.from,screen.to)<.008&&!action.continuationChoice?.alternate);
+    if(primary){
+      const group=`screen-${actions.indexOf(screen)}`;
+      primary.continuationChoice={group,alternate:false};
+      cut.continuationChoice={group,alternate:true};
+    }
+    cut.source=primary?"Autre déplacement possible après l’écran":"Déplacement proposé après l’écran : à confirmer";
+    if(cut.points?.length)cut.points=[screen.to,...cut.points.slice(1)];
+    if(actions.indexOf(cut)<actions.indexOf(screen)){
+      actions.splice(actions.indexOf(cut),1);
+      actions.splice(actions.indexOf(screen)+1,0,cut);
+    }
   }
   // A player's initial movement must not move the starting point of a
   // detected dribble from the original ball position.

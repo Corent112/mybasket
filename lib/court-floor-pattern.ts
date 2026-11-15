@@ -2,7 +2,6 @@ export const COURT_FLOOR_PATTERNS = [
   { id: 'original', label: 'Original' },
   { id: 'straight', label: 'Lames droites' },
   { id: 'honeycomb', label: 'Nid d’abeille' },
-  { id: 'diamonds', label: 'Losanges' },
   { id: 'pale-maple', label: 'Érable pâle · lames droites', url: '/plaquette/parquets/erable-pale.webp' },
   { id: 'milwaukee', label: 'Milwaukee · grand losange en bois clair', url: '/plaquette/parquets/milwaukee-clair.webp' },
 ] as const;
@@ -18,11 +17,6 @@ export function floorPatternShade(pattern: CourtFloorPattern, x: number, y: numb
   const grain = (Math.sin(row * 17.13) + Math.sin(row * 3.17)) * 2;
   const planks = grain - (joint < 0.018 ? 6 : 0);
   if (pattern === 'straight') return planks + (y * 150 % 1 < 0.12 ? -9 : 1);
-
-  if (pattern === 'diamonds') {
-    const stripe = Math.floor(y * 5 + x * 2) + Math.floor(y * 5 - x * 2);
-    return planks + (stripe % 2 === 0 ? 9 : -13);
-  }
 
   const radius = 0.029;
   const cellHeight = Math.sqrt(3) * radius;

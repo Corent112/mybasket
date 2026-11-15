@@ -870,7 +870,21 @@ export default function ImportReview({
   const doubtful = reviewItems.filter(item => stage === "players" ? item.selection?.kind !== "action"
     : showUncertain || item.selection?.kind !== "action");
   const omittedCount = diagrams.reduce((n,item) => n+item.actions.filter(action => needsReview(action.confidence)).length,0);
-  const cleanDiagrams = diagrams.map(item => ({ ...item, actions: item.actions.filter(action => !needsReview(action.confidence)) }));
+  const cleanDiagrams = diagrams.map(item => {
+    const accepted = item.actions.filter(action => !needsReview(action.confidence));
+    const chosen = new Map(accepted.flatMap(action => action.continuationChoice?.alternate
+      ? [[action.continuationChoice.group, action] as const] : []));
+    const primaryGroups = new Set(accepted.flatMap(action => action.continuationChoice && !action.continuationChoice.alternate
+      ? [action.continuationChoice.group] : []));
+    const actions = accepted.flatMap(action => {
+      const choice = action.continuationChoice;
+      if (!choice) return [action];
+      const alternate = chosen.get(choice.group);
+      if (!choice.alternate) return [alternate ?? action];
+      return !primaryGroups.has(choice.group) && alternate === action ? [action] : [];
+    });
+    return { ...item, actions };
+  });
   const kept = cleanDiagrams.filter(
     (item) => item.players.length > 0 || item.actions.length > 0 || item.objects.length > 0
   );
@@ -1133,6 +1147,9 @@ export default function ImportReview({
                       Trajectoire détectée : <strong>{selectedAction.action}</strong>. Choisis sa signification MyBasket ;
                       la géométrie du tracé est conservée.
                     </p>
+                    {selectedAction.continuationChoice?.alternate && (
+                      <p style={styles.hint}>Si tu confirmes ce déplacement, il remplace l’autre déplacement après cet écran.</p>
+                    )}
                     <p style={styles.hint}>Glisse les poignées bleues pour ajuster la courbe sur la photo.</p>
                     {selectedAction.from && !curveHandles(selectedAction).length && (
                       <button type="button" style={styles.button} onClick={() => {
