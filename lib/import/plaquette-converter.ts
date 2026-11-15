@@ -64,23 +64,11 @@ const clampPoint = (point: AiPoint | undefined, courtType: "half" | "full"): AiP
   y: clampY(point?.y ?? (courtType === "half" ? 0.25 : 0.5), courtType),
 });
 
-/**
- * Points de contrôle d'une courbe : au plus 5, répartis régulièrement entre les
- * deux extrémités (qui, elles, sont `from` et `to` et ne sont pas des ctrls).
- *
- * L'ancienne formule utilisait `i % Math.max(1, Math.floor(arr.length / 5))` :
- * dès que le tracé comptait moins de 5 points intermédiaires, le pas valait 1 et
- * TOUS les points étaient conservés — d'où des courbes qui gondolent sur les
- * tracés courts.
- */
-function pickControlPoints(points: AiPoint[], max = 5): AiPoint[] {
-  const middle = points.slice(1, -1);
-  if (middle.length <= max) return middle;
-  const out: AiPoint[] = [];
-  for (let i = 0; i < max; i += 1) {
-    out.push(middle[Math.round((i * (middle.length - 1)) / (max - 1))]);
-  }
-  return out;
+/** Retain two editable handles while keeping the complete scanned stroke. */
+function pickControlPoints(points: AiPoint[]): AiPoint[] {
+  const count = Math.min(2, points.length - 2);
+  return Array.from({ length: Math.max(0, count) }, (_, i) =>
+    points[Math.round((i + 1) * (points.length - 1) / (count + 1))]);
 }
 
 /** Remove scanned zigzags from the movement path; the native tool draws them. */
@@ -91,7 +79,7 @@ function dribbleControls(points: AiPoint[], courtType: "half" | "full"): AiPoint
   const dx = to.x - from.x, dy = to.y - from.y;
   const length2 = dx * dx + dy * dy;
   if (length2 < 1e-6) return [];
-  const bins = Array.from({ length: 5 }, () => ({ x: 0, y: 0, count: 0 }));
+  const bins = Array.from({ length: 2 }, () => ({ x: 0, y: 0, count: 0 }));
   for (const point of points.slice(1, -1)) {
     const t = ((point.x - from.x) * dx + (point.y - from.y) * dy) / length2;
     if (t < .08 || t > .92) continue;
@@ -178,7 +166,7 @@ function diagramToPhase(diagram: AiExerciseDiagram, courtType: "half" | "full"):
     const controls = path && action.action !== "freedraw"
       ? nativeDribble
         ? dribbleControls(path, courtType)
-        : pickControlPoints(path, 7)
+        : pickControlPoints(path)
       : undefined;
 
     return {
@@ -502,7 +490,7 @@ function drawLineNative(ctx: CanvasRenderingContext2D, l: any, toPx: (p: AiPoint
   }
   const raw = [l.from, ...(Array.isArray(l.ctrls) ? l.ctrls : l.ctrl ? [l.ctrl] : []), l.to].filter(Boolean).map((p: AiPoint) => toPx(p));
   const traced = Array.isArray(l.points) && l.points.length >= 2;
-  const poly: AiPoint[] = traced ? l.points.map(toPx) : catmullRom(raw);
+  const poly: AiPoint[] = traced ? [raw[0], ...l.points.slice(1, -1).map(toPx), raw[raw.length - 1]] : catmullRom(raw);
   if (poly.length < 2) return;
   if (l.action === "pass") ctx.setLineDash([w * 3, w * 2.4]);
   if (l.action === "dribble" && !traced) {
@@ -521,7 +509,8 @@ function drawLineNative(ctx: CanvasRenderingContext2D, l: any, toPx: (p: AiPoint
     ctx.beginPath(); poly.forEach((p, i) => (i ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y))); ctx.stroke();
   }
   ctx.setLineDash([]);
-  const tip = poly[poly.length - 1], tan = poly[poly.length - 2] || poly[0];
+  const tip = poly[poly.length - 1];
+  const tan = poly.findLast(p => Math.hypot(p.x - tip.x, p.y - tip.y) >= 2) ?? poly[0];
   if (l.action === "screen") {
     const angle = Math.atan2(tip.y - tan.y, tip.x - tan.x), bar = w * 4;
     ctx.beginPath(); ctx.moveTo(tip.x - bar * Math.sin(angle), tip.y + bar * Math.cos(angle)); ctx.lineTo(tip.x + bar * Math.sin(angle), tip.y - bar * Math.cos(angle)); ctx.stroke();
