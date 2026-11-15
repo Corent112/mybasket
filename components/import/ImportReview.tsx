@@ -20,6 +20,7 @@
  * en calque sous le dessin pour comparer avec la photo d'origine.
  */
 
+import { importedCurveHandle, sampleImportedArc } from "@/lib/import/curve-handle";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type {
   AiDetectionType,
@@ -110,11 +111,17 @@ function playRect(courtType: "half" | "full") {
     : { x0: HALF_COURT_LEFT, x1: HALF_COURT_RIGHT, y0: HALF_COURT_TOP, y1: HALF_COURT_BOTTOM };
 }
 
-function curveHandles(points: AiPoint[] | undefined) {
-  if (!points || points.length < 3) return [];
-  const count = Math.min(2, points.length - 2);
-  return Array.from({ length: count }, (_, i) =>
-    Math.round((i + 1) * (points.length - 1) / (count + 1)));
+function curveHandles(action: AiDiagramAction | undefined) {
+  const handle = importedCurveHandle(action?.points, action?.action === "dribble");
+  return handle ? [handle.index] : [];
+}
+
+function reviewPath(action: AiDiagramAction): AiPoint[] {
+  const from = action.from ?? action.to;
+  if (action.action === "dribble" || action.action === "freedraw") {
+    return [from, ...(action.points?.slice(1, -1) ?? []), action.to];
+  }
+  return sampleImportedArc(from, action.to, importedCurveHandle(action.points)?.point);
 }
 
 function distanceToSegment(point: AiPoint, start: AiPoint, end: AiPoint) {
@@ -341,7 +348,7 @@ export default function ImportReview({
       ctx.lineWidth = isSelected ? 4 : 3;
       ctx.setLineDash(action.action === "pass" ? [9, 6] : []);
       ctx.beginPath();
-      const path = [from, ...(action.points?.slice(1, -1).map(toPixel) ?? []), to];
+      const path = reviewPath(action).map(toPixel);
       path.forEach((point, i) => {
         if (i === 0) ctx.moveTo(point.x, point.y);
         else ctx.lineTo(point.x, point.y);
@@ -377,7 +384,7 @@ export default function ImportReview({
         ctx.lineWidth = 1.5;
         ctx.stroke();
       }
-      if (isSelected) for (const pointIndex of curveHandles(action.points)) {
+      if (isSelected) for (const pointIndex of curveHandles(action)) {
         const p = toPixel(action.points![pointIndex]);
         ctx.beginPath();
         ctx.arc(p.x, p.y, 6, 0, Math.PI * 2);
@@ -495,7 +502,7 @@ export default function ImportReview({
 
     if (stage === "actions" && selection?.kind === "action") {
       const selected = diagram.actions[selection.index];
-      const pointIndex = curveHandles(selected?.points).find(index => {
+      const pointIndex = curveHandles(selected).find(index => {
         const p = toPixel(selected.points![index]);
         return Math.hypot(p.x - x, p.y - y) <= 11;
       });
@@ -523,7 +530,7 @@ export default function ImportReview({
     let gap = 11;
     diagram.actions.forEach((action, index) => {
       if (!showUncertain && needsReview(action.confidence)) return;
-      const path = [action.from ?? action.to, ...(action.points?.slice(1, -1) ?? []), action.to].map(toPixel);
+      const path = reviewPath(action).map(toPixel);
       for (let i = 1; i < path.length; i++) {
         const distance = distanceToSegment({ x, y }, path[i - 1], path[i]);
         if (distance >= gap) continue;
@@ -655,7 +662,7 @@ export default function ImportReview({
           const pointIndex = selection.pointIndex;
           const path = action.points;
           if (!path || pointIndex === undefined) return action;
-          const handles = [0, ...curveHandles(path), path.length - 1];
+          const handles = [0, pointIndex, path.length - 1];
           const slot = handles.indexOf(pointIndex);
           if (slot < 1 || slot >= handles.length - 1) return action;
           const left = handles[slot - 1], right = handles[slot + 1], anchor = path[pointIndex];
@@ -695,7 +702,7 @@ export default function ImportReview({
     const source = traceKind === "freedraw" ? undefined : playerAt(from);
     const receiver = traceKind === "pass" ? playerAt(to) : undefined;
     updateDiagram(item => ({ ...item, actions: [...item.actions, {
-      action: traceKind, from, to, points,
+      action: traceKind, from: source ?? from, to, points,
       fromPlayer: source?.key, toPlayer: receiver?.key === source?.key ? undefined : receiver?.key,
       color: inkColor, confidence: 1, source: "retracé à la main",
     }] }));
@@ -1127,11 +1134,11 @@ export default function ImportReview({
                       la géométrie du tracé est conservée.
                     </p>
                     <p style={styles.hint}>Glisse les poignées bleues pour ajuster la courbe sur la photo.</p>
-                    {selectedAction.from && !curveHandles(selectedAction.points).length && (
+                    {selectedAction.from && !curveHandles(selectedAction).length && (
                       <button type="button" style={styles.button} onClick={() => {
                         const { from, to } = selectedAction;
                         if (!from) return;
-                        const middle = { x: (from.x + to.x) / 2, y: (from.y + to.y) / 2 };
+                        const middle = { x: (from.x + to.x) / 2 - (to.y - from.y) * .16, y: (from.y + to.y) / 2 + (to.x - from.x) * .16 };
                         updateDiagram(item => ({ ...item, actions: item.actions.map((action, index) =>
                           index === selection.index ? { ...action, points: [from, middle, to] } : action) }));
                       }}>

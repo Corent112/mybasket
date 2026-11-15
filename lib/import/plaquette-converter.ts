@@ -19,6 +19,7 @@
  * schemaDataList partageant le même tableau `phases`.
  */
 
+import { importedCurveHandle, sampleImportedArc } from "./curve-handle";
 import type {
   AiExerciseDiagram,
   AiExerciseImport,
@@ -63,31 +64,6 @@ const clampPoint = (point: AiPoint | undefined, courtType: "half" | "full"): AiP
   x: clampX(point?.x ?? 0.5),
   y: clampY(point?.y ?? (courtType === "half" ? 0.25 : 0.5), courtType),
 });
-
-/** Retain two editable handles while keeping the complete scanned stroke. */
-function pickControlPoints(points: AiPoint[]): AiPoint[] {
-  const count = Math.min(2, points.length - 2);
-  return Array.from({ length: Math.max(0, count) }, (_, i) =>
-    points[Math.round((i + 1) * (points.length - 1) / (count + 1))]);
-}
-
-/** Remove scanned zigzags from the movement path; the native tool draws them. */
-function dribbleControls(points: AiPoint[], courtType: "half" | "full"): AiPoint[] {
-  if (points.length < 3) return [];
-  if (points.length === 3) return [clampPoint(points[1], courtType)];
-  const from = points[0], to = points[points.length - 1];
-  const dx = to.x - from.x, dy = to.y - from.y;
-  const length2 = dx * dx + dy * dy;
-  if (length2 < 1e-6) return [];
-  const bins = Array.from({ length: 2 }, () => ({ x: 0, y: 0, count: 0 }));
-  for (const point of points.slice(1, -1)) {
-    const t = ((point.x - from.x) * dx + (point.y - from.y) * dy) / length2;
-    if (t < .08 || t > .92) continue;
-    const bin = bins[Math.floor(t * bins.length)];
-    bin.x += point.x; bin.y += point.y; bin.count++;
-  }
-  return bins.filter(bin => bin.count).map(bin => clampPoint({ x: bin.x / bin.count, y: bin.y / bin.count }, courtType));
-}
 
 /** Un diagramme détecté → une Phase Plaquette native. */
 function diagramToPhase(diagram: AiExerciseDiagram, courtType: "half" | "full"): PlaquettePhase {
@@ -161,13 +137,9 @@ function diagramToPhase(diagram: AiExerciseDiagram, courtType: "half" | "full"):
     const to = (target && positions.get(target.id)) || clampPoint(action.to, courtType);
     if (source && ["cut", "screen", "dribble"].includes(action.action)) positions.set(source.id, to);
     const isShoot = action.action === "shoot";
-    const nativeDribble = action.action === "dribble";
     const path = action.points?.map((point) => clampPoint(point, courtType));
-    const controls = path && action.action !== "freedraw"
-      ? nativeDribble
-        ? dribbleControls(path, courtType)
-        : pickControlPoints(path)
-      : undefined;
+    const control = action.action === "freedraw" ? undefined : importedCurveHandle(path, action.action === "dribble");
+
 
     return {
       id: uid(),
@@ -175,8 +147,8 @@ function diagramToPhase(diagram: AiExerciseDiagram, courtType: "half" | "full"):
       from,
       to,
       rotation: 0,
-      ...(path ? { points: path } : {}),
-      ...(controls?.length ? { ctrls: controls } : {}),
+      ...(path && (action.action === "dribble" || action.action === "freedraw") ? { points: path } : {}),
+      ...(control ? { ctrls: [control.point] } : {}),
       ...(action.color ? { color: action.color } : {}),
       ...(sourcePlayerId ? { sourcePlayerId } : {}),
       ...(targetPlayerId ? { targetPlayerId, targetMode: "playerCurrentPoint" as const } : {}),
@@ -185,7 +157,7 @@ function diagramToPhase(diagram: AiExerciseDiagram, courtType: "half" | "full"):
       startMode: "afterPrevious" as const,
       duration: 1,
       ...(action.confidence !== undefined ? { importConfidence: action.confidence } : {}),
-      ...(action.source ? { importSource: action.source } : {}),
+      importSource: action.source ?? "Import photo",
       ...((action.confidence ?? 1) < 0.5 ? { needsReview: true } : {}),
     };
   });
@@ -490,7 +462,9 @@ function drawLineNative(ctx: CanvasRenderingContext2D, l: any, toPx: (p: AiPoint
   }
   const raw = [l.from, ...(Array.isArray(l.ctrls) ? l.ctrls : l.ctrl ? [l.ctrl] : []), l.to].filter(Boolean).map((p: AiPoint) => toPx(p));
   const traced = Array.isArray(l.points) && l.points.length >= 2;
-  const poly: AiPoint[] = traced ? [raw[0], ...l.points.slice(1, -1).map(toPx), raw[raw.length - 1]] : catmullRom(raw);
+  const poly: AiPoint[] = traced ? [raw[0], ...l.points.slice(1, -1).map(toPx), raw[raw.length - 1]] : l.importSource && raw.length <= 3
+    ? sampleImportedArc(raw[0], raw[raw.length - 1], raw.length === 3 ? raw[1] : undefined)
+    : catmullRom(raw);
   if (poly.length < 2) return;
   if (l.action === "pass") ctx.setLineDash([w * 3, w * 2.4]);
   if (l.action === "dribble" && !traced) {

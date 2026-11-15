@@ -304,21 +304,33 @@ export async function readColoredCourtDiagram(source: HTMLCanvasElement) {
         const start=path[0];
         if(!start||distance(start,item.center)>item.radius+unit*.025)return [];
         const bar=screenBreak(path,trace);
-        return bar>=0?[{path,gap:distance(start,item.center)-item.radius}]:[];
-      }).sort((a,b)=>a.gap-b.gap);
-      if(screenApproaches.length===1)shaft=screenApproaches[0].path;
+        if(bar<0)return [];
+        const end=path[bar],length=distance(start,end);
+        const travel=path.slice(1,bar+1).reduce((sum,p,i)=>sum+distance(p,path[i]),0);
+        return [{path,score:travel/Math.max(1,length)}];
+      }).sort((a,b)=>a.score-b.score);
+      if(screenApproaches[0]&&(!screenApproaches[1]||screenApproaches[1].score-screenApproaches[0].score>.012)){
+        shaft=screenApproaches[0].path;
+      }
       const origin=shaft[0];
       const candidates=roster.map(item=>({item,gap:distance(origin,item.center)-item.radius}))
         .sort((a,b)=>a.gap-b.gap);
-      const ballHandler=isZigzag(shaft,unit)&&nearBall(origin)<unit*.085
-        ? roster.find(item=>item.player.hasBall&&distance(item.center,origin)<unit*.12):undefined;
+      const ballHandler=isZigzag(shaft,unit)&&nearBall(origin)<unit*.145
+        ? roster.find(item=>item.player.hasBall&&distance(item.center,origin)<unit*.17):undefined;
       const source=ballHandler??(candidates[0]?.gap<unit*.055&&(!candidates[1]||candidates[1].gap-candidates[0].gap>unit*.018)
         ?candidates[0].item:undefined);
-      if(distance(origin,endpoint)<unit*.12)continue;
-      const terminal=screenBreak([...shaft,endpoint],trace,true);
+      if(distance(origin,endpoint)<unit*.075)continue;
+      let terminal=isZigzag(shaft,unit) ? -1 : screenBreak([...shaft,endpoint],trace,true);
+      if(terminal<0&&source&&!isZigzag(shaft,unit)&&traceBounds(trace)<unit*.2){
+        const start=shaft[Math.max(0,shaft.length-12)];
+        const dx=endpoint.x-start.x,dy=endpoint.y-start.y,length=Math.hypot(dx,dy)||1;
+        const across=trace.pixels.map(dot).filter(p=>distance(p,endpoint)<unit*.025)
+          .map(p=>((p.y-endpoint.y)*dx-(p.x-endpoint.x)*dy)/length);
+        if(across.length&&Math.max(...across)-Math.min(...across)>unit*.022)terminal=shaft.length-1;
+      }
       const from=source?.player??canonical(origin),to=canonical(terminal<0?endpoint:shaft[terminal]??endpoint);
       const stroke=sampleStroke(terminal<0?shaft:shaft.slice(0,terminal));
-      const kind=terminal>=0 ? "screen" : isZigzag(stroke,unit) ? "dribble" : "cut";
+      const kind=ballHandler || isZigzag(shaft,unit) ? "dribble" : terminal>=0 ? "screen" : "cut";
       const split=kind==="cut" ? screenBreak(shaft,trace) : -1;
       const departure=split<0 ? from : canonical(shaft[split]);
       if(split>=0){
@@ -348,7 +360,12 @@ export async function readColoredCourtDiagram(source: HTMLCanvasElement) {
           const path=followStroke(branch,tip,shaft[split]);
           if(!path.length||distance(path[0],shaft[split])>unit*.22||distance(path[0],tip)<unit*.10)continue;
           const to=canonical(tip);
-          actions.push({action:"cut",from:canonical(path[0]),to,points:[...sampleStroke(path).map(canonical),to],
+          const nearby=roster.filter(item=>item!==source)
+            .map(item=>({item,gap:distance(item.center,path[0])-item.radius})).sort((a,b)=>a.gap-b.gap);
+          const starter=nearby[0]?.gap<unit*.064&&(!nearby[1]||nearby[1].gap-nearby[0].gap>unit*.026)
+            ? nearby[0].item.player : undefined;
+          const from=starter??canonical(path[0]);
+          actions.push({action:"cut",from,to,fromPlayer:starter?.key,points:[from,...sampleStroke(path).map(canonical),to],
             confidence:.47,source:"Deuxième flèche près de l’écran : départ à vérifier"});
         }
       }
@@ -467,6 +484,13 @@ export async function readColoredCourtDiagram(source: HTMLCanvasElement) {
       source:kind==="screen"?"Écran : barre perpendiculaire au tracé":
         kind==="dribble"?"Dribble : oscillations et pointe de flèche":"Trajet continu et pointe de flèche"});
     used.add(trace);
+  }
+  for(const pass of actions.filter(action=>action.action==="pass"&&!action.toPlayer)){
+    const landing=actions.filter(action=>action.action==="cut"&&action.fromPlayer&&action.fromPlayer!==pass.fromPlayer)
+      .map(action=>({action,gap:distance(action.to,pass.to)})).sort((a,b)=>a.gap-b.gap);
+    if(landing[0]?.gap<.021&&(!landing[1]||landing[1].gap-landing[0].gap>.012)){
+      pass.toPlayer=landing[0].action.fromPlayer;
+    }
   }
   // An unassigned pass can meet a cut that starts at the end of an
   // screen. Look for the intervening solid stroke before linking them.
