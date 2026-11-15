@@ -6203,18 +6203,35 @@ const exportJson = () => {
                 </div>
               </div>
 
-              <label style={{ display: 'grid', gap: '.4rem', marginTop: '1rem', fontSize: '.78rem', fontWeight: 800 }}>
-                Motif du parquet
-                <select
-                  value={courtStyle.floorPattern ?? 'original'}
-                  onChange={(event) => applyCourtStyle({ ...courtStyleRef.current, floorPattern: event.target.value })}
-                  style={{ padding: '.55rem', border: '1px solid #DDD', borderRadius: 7, background: '#fff' }}
-                >
-                  {COURT_FLOOR_PATTERNS.map((pattern) => (
-                    <option key={pattern.id} value={pattern.id}>{pattern.label}</option>
-                  ))}
-                </select>
-              </label>
+              <div role="group" aria-label="Motif du parquet" style={{ marginTop: '1rem' }}>
+                <div style={{ marginBottom: '.4rem', fontSize: '.78rem', fontWeight: 800 }}>Motif du parquet</div>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(100px, 1fr))', gap: '.45rem' }}>
+                  {COURT_FLOOR_PATTERNS.map(pattern => {
+                    const selected = (courtStyle.floorPattern ?? 'original') === pattern.id;
+                    return (
+                      <button
+                        key={pattern.id}
+                        type="button"
+                        aria-pressed={selected}
+                        onClick={() => applyCourtStyle({ ...courtStyleRef.current, floorPattern: pattern.id })}
+                        style={{
+                          display: 'grid', alignContent: 'start', gap: '.3rem', borderRadius: 10,
+                          border: selected ? '2px solid #6B1A2C' : '2px solid #E1DAD3',
+                          background: selected ? '#F8F0F2' : '#fff', padding: '.3rem',
+                          color: '#33262A', cursor: 'pointer', fontSize: '.72rem', fontWeight: 800,
+                        }}
+                      >
+                        <img
+                          src={'preview' in pattern ? pattern.preview : pattern.url}
+                          alt=""
+                          style={{ display: 'block', width: '100%', height: 48, objectFit: 'cover', borderRadius: 5 }}
+                        />
+                        {pattern.label}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
 
               <div style={{ marginTop: '1rem', paddingTop: '.85rem', borderTop: '1px solid #ECECEC' }}>
                 <button
