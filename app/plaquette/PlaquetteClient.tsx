@@ -924,10 +924,11 @@ const currentRef = useRef(current);
   const pushHistory = () => { setPast((p) => [...p.slice(-49), snap()]); setFuture([]); };
   const insertPhotoDrawing = async (result: AiExerciseImport) => {
     const { importToPlaquetteSchema } = await import('@/lib/import/plaquette-converter');
-    const drawing = importToPlaquetteSchema(result);
-    if (!drawing) throw new Error("Aucun schéma reconnu sur cette image.");
     const existing = phasesRef.current;
     const hasContent = existing.some(p => p.players.length || p.objects.length || p.lines.length || p.notes.trim());
+    const finalPlayers = hasContent ? computePhaseFinalState(existing.length - 1).players : [];
+    const drawing = importToPlaquetteSchema(result, finalPlayers.map(player => ({ ...player, key: player.id })));
+    if (!drawing) throw new Error("Aucun schéma reconnu sur cette image.");
     if (hasContent && drawing.courtType !== courtRef.current) {
       throw new Error("Cette photo utilise un autre format de terrain. Ouvre une nouvelle plaquette pour l’ajouter sans modifier ton dessin actuel.");
     }
