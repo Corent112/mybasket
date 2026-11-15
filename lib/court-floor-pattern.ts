@@ -4,8 +4,8 @@ export const COURT_FLOOR_PATTERNS = [
   { id: 'honeycomb', preview: '/plaquette/parquets/honeycomb-preview.webp', label: 'Nid d’abeille' },
   { id: 'pale-maple', label: 'Érable pâle · lames droites', url: '/plaquette/parquets/erable-pale.webp' },
   { id: 'milwaukee', label: 'Milwaukee · grand losange en bois clair', url: '/plaquette/parquets/milwaukee-clair.webp' },
-  { id: 'boston', label: 'Boston', url: '/plaquette/parquets/boston.webp' },
-  { id: 'brooklyn', label: 'Brooklyn', url: '/plaquette/parquets/brooklyn.webp' },
+  { id: 'boston', label: 'Boston', url: '/plaquette/parquets/boston.webp', repeats: [5, 4] },
+  { id: 'brooklyn', label: 'Brooklyn', url: '/plaquette/parquets/brooklyn.webp', repeats: [4, 3] },
   { id: 'blond-miel', label: 'Blond et miel', url: '/plaquette/parquets/erable-pale.webp',
     preview: '/plaquette/parquets/blond-miel-preview.webp', tones: { inside: [-6, -48, -99], outside: [11, 1, -11] } },
   { id: 'miel-blond', label: 'Miel et blond', url: '/plaquette/parquets/erable-pale.webp',
@@ -15,6 +15,13 @@ export const COURT_FLOOR_PATTERNS = [
 ] as const;
 
 export type CourtFloorPattern = typeof COURT_FLOOR_PATTERNS[number]['id'];
+
+/** Both views read from the same landscape floor, starting at the same baseline. */
+export function courtFloorProjection(court: 'half' | 'full', width: number, height: number) {
+  return court === 'full'
+    ? { x: width * .072, y: height * .147, angle: 0, length: width * .856, breadth: height * .706 }
+    : { x: width * .86, y: height * .138, angle: Math.PI / 2, length: height * 1.7, breadth: width * .72 };
+}
 
 /** Arc and corner straights measured in the normalized MyBasket court artwork. */
 export function isInsideThreePointArc(court: 'half' | 'full', u: number, v: number): boolean {

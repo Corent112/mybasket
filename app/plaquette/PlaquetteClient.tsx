@@ -1,6 +1,6 @@
 'use client';
 import { sampleImportedArc } from '@/lib/import/curve-handle';
-import { COURT_FLOOR_PATTERNS, floorPatternShade, isInsideThreePointArc, type CourtFloorPattern } from '@/lib/court-floor-pattern';
+import { COURT_FLOOR_PATTERNS, courtFloorProjection, floorPatternShade, isInsideThreePointArc, type CourtFloorPattern } from '@/lib/court-floor-pattern';
 import { resolveSystemDrawingPreview } from "@/lib/system-drawing-preview";
 import {drawingSessionStorage} from '@/lib/drawing-session-storage';
 
@@ -1303,15 +1303,27 @@ const currentRef = useRef(current);
     let texture: ImageData | undefined;
     if (textureImage?.complete && textureImage.naturalWidth) {
       ctx.clearRect(0, 0, width, height);
-      if (ct === 'full') {
-        ctx.drawImage(textureImage, width * .072, height * .147, width * .856, height * .706);
-      } else {
-        ctx.save();
-        ctx.translate(width * .14, height * .988);
-        ctx.rotate(-Math.PI / 2);
-        ctx.drawImage(textureImage, 0, 0, height * 1.7, width * .72);
-        ctx.restore();
+      const projection = courtFloorProjection(ct, width, height);
+      const [columns, rows] = option && 'repeats' in option ? option.repeats : [1, 1];
+      const tileWidth = projection.length / columns;
+      const tileHeight = projection.breadth / rows;
+      ctx.save();
+      ctx.translate(projection.x, projection.y);
+      ctx.rotate(projection.angle);
+      for (let row = 0; row < rows; row++) {
+        for (let col = 0; col < columns; col++) {
+          ctx.save();
+          // Boston's source has four columns and three rows. Mirror the
+          // alternate bands so perpendicular panels continue across seams.
+          const flipX = pattern === 'boston' ? row % 2 === 1 : col % 2 === 1;
+          const flipY = pattern === 'brooklyn' && row % 2 === 1;
+          ctx.translate((col + Number(flipX)) * tileWidth, (row + Number(flipY)) * tileHeight);
+          ctx.scale(flipX ? -1 : 1, flipY ? -1 : 1);
+          ctx.drawImage(textureImage, 0, 0, tileWidth, tileHeight);
+          ctx.restore();
+        }
       }
+      ctx.restore();
       texture = ctx.getImageData(0, 0, width, height);
       if (tones) for (let y = 0; y < height; y++) {
         for (let x = 0; x < width; x++) {
