@@ -54,6 +54,7 @@ type CourtColorField = Exclude<keyof CourtStyle, 'artwork' | 'floorPattern'>;
 type CourtBranding = {
   text: string;
   logoDataUrl: string | null;
+  logoAtCenter: boolean;
   useCustomBranding: boolean;
   showLogo: boolean;
   showText: boolean;
@@ -105,6 +106,7 @@ const getCourtFontFamily = (fontId: string) => BUILTIN_COURT_FONTS.find((font) =
 const DEFAULT_COURT_BRANDING: CourtBranding = {
   text: 'MYBASKET.FR',
   logoDataUrl: null,
+  logoAtCenter: false,
   useCustomBranding: false,
   showLogo: true,
   showText: true,
@@ -226,6 +228,7 @@ const normalizeCourtBranding = (value: unknown): CourtBranding => {
   return {
     text: typeof v.text === 'string' ? v.text.slice(0, 40) : DEFAULT_COURT_BRANDING.text,
     logoDataUrl: typeof v.logoDataUrl === 'string' && v.logoDataUrl.startsWith('data:image/') ? v.logoDataUrl : null,
+    logoAtCenter: v.logoAtCenter === true,
     useCustomBranding: v.useCustomBranding === true,
     showLogo: v.showLogo !== false,
     showText: v.showText !== false,
@@ -377,6 +380,7 @@ const resetPlaquette = () => {
   const courtBrandingRef = useRef<CourtBranding>(DEFAULT_COURT_BRANDING);
   const courtBrandingLogoRef = useRef<HTMLImageElement | null>(null);
   const courtStyleRef = useRef<CourtStyle>(DEFAULT_COURT_STYLE);
+  const courtFloorImages = useRef(new Map<CourtFloorPattern, HTMLImageElement>());
   const courtArtworkImages = useRef(new Map<string, HTMLImageElement>());
   const courtTextureRef = useRef<Record<'half' | 'full', { key: string; canvas: CanvasImageSource } | null>>({
     half: null,
@@ -502,9 +506,14 @@ const resetPlaquette = () => {
     setCourtBranding(next);
     if (next.logoDataUrl) {
       const logo = new Image();
-      logo.onload = () => { courtBrandingLogoRef.current = logo; courtTextureRef.current = { half: null, full: null }; render(); };
-      logo.src = next.logoDataUrl;
       courtBrandingLogoRef.current = logo;
+      logo.onload = () => {
+        if (courtBrandingLogoRef.current !== logo) return;
+        courtTextureRef.current = { half: null, full: null };
+        refreshPhaseCourtThumbnail();
+        render();
+      };
+      logo.src = next.logoDataUrl;
     } else {
       courtBrandingLogoRef.current = null;
     }
@@ -1133,6 +1142,9 @@ const currentRef = useRef(current);
       ox.putImageData(patch, safeLeft, safeTop);
     };
 
+    const branding = courtBrandingRef.current;
+    const centerLogo = branding.logoAtCenter && branding.showLogo ? courtBrandingLogoRef.current : null;
+    const hasCenterLogo = Boolean(centerLogo?.complete && centerLogo.naturalWidth);
     const drawCenterCircle = (cx: number, cy: number, radius: number, clipTop?: number) => {
       ox.save();
       if (typeof clipTop === 'number') {
@@ -1140,11 +1152,20 @@ const currentRef = useRef(current);
         ox.rect(0, clipTop, out.width, out.height - clipTop);
         ox.clip();
       }
-      ox.strokeStyle = style.lineColor;
-      ox.lineWidth = Math.max(3, out.width * 0.0052);
-      ox.beginPath();
-      ox.arc(cx, cy, radius, 0, Math.PI * 2);
-      ox.stroke();
+      if (hasCenterLogo && centerLogo) {
+        const scale = radius * 1.9 / Math.max(centerLogo.naturalWidth, centerLogo.naturalHeight);
+        const width = centerLogo.naturalWidth * scale;
+        const height = centerLogo.naturalHeight * scale;
+        ox.translate(cx, cy);
+        if (ct === 'full') ox.rotate(-Math.PI / 2);
+        ox.drawImage(centerLogo, -width / 2, -height / 2, width, height);
+      } else {
+        ox.strokeStyle = style.lineColor;
+        ox.lineWidth = Math.max(3, out.width * 0.0052);
+        ox.beginPath();
+        ox.arc(cx, cy, radius, 0, Math.PI * 2);
+        ox.stroke();
+      }
       ox.restore();
     };
 
@@ -1160,7 +1181,6 @@ const currentRef = useRef(current);
       const cy = out.height * 0.5;
       const radius = out.width * 0.0835;
       paintParquetRect(out.width * 0.395, out.height * 0.34, out.width * 0.21, out.height * 0.32, out.height * 0.29);
-      drawCenterCircle(cx, cy, radius);
       // Le terrain complet source est horizontal avant sa rotation à l'écran :
       // sa ligne médiane traverse donc verticalement le rond central.
       ox.save();
@@ -1171,9 +1191,9 @@ const currentRef = useRef(current);
       ox.lineTo(cx, out.height * 0.66);
       ox.stroke();
       ox.restore();
+      drawCenterCircle(cx, cy, radius);
     }
 
-    const branding = courtBrandingRef.current;
     if (branding.useCustomBranding) {
       const drawBrand = (cx: number, cy: number, maxW: number, maxH: number, rotateForFull = false, flip180 = false) => {
         ox.save();
@@ -1196,7 +1216,7 @@ const currentRef = useRef(current);
         const by = branding.offsetY * contentH;
 
         const logo = courtBrandingLogoRef.current;
-        const hasLogo = branding.showLogo && !!(logo && logo.complete && logo.naturalWidth > 0);
+        const hasLogo = !branding.logoAtCenter && branding.showLogo && !!(logo && logo.complete && logo.naturalWidth > 0);
         const text = branding.showText ? branding.text.trim() : '';
 
         const baseLogoH = contentH * 0.72 * branding.logoScale;
@@ -1294,6 +1314,21 @@ const currentRef = useRef(current);
     ctx.drawImage(base, 0, 0);
     const image = ctx.getImageData(0, 0, width, height);
     const pixels = image.data;
+    const textureImage = courtFloorImages.current.get(pattern);
+    let texture: ImageData | undefined;
+    if (textureImage?.complete && textureImage.naturalWidth) {
+      ctx.clearRect(0, 0, width, height);
+      if (ct === 'full') {
+        ctx.drawImage(textureImage, width * .072, height * .147, width * .856, height * .706);
+      } else {
+        ctx.save();
+        ctx.translate(width * .14, height * .988);
+        ctx.rotate(-Math.PI / 2);
+        ctx.drawImage(textureImage, 0, 0, height * 1.7, width * .72);
+        ctx.restore();
+      }
+      texture = ctx.getImageData(0, 0, width, height);
+    }
 
     for (let y = 0; y < height; y++) {
       const v = y / height;
@@ -1318,6 +1353,10 @@ const currentRef = useRef(current);
           ? Math.min(r, g, b) > 228 && mask[index + 3] === 255
           : r > 175 && g > 100 && r - g > 22 && g - b > 28;
         if (!isWood) continue;
+        if (texture?.data[index + 3]) {
+          pixels.set(texture.data.subarray(index, index + 3), index);
+          continue;
+        }
 
         const shade = ct === 'full'
           ? floorPatternShade(pattern, u, v * .64)
@@ -1360,6 +1399,7 @@ const currentRef = useRef(current);
       courtBrandingRef.current.text,
       courtBrandingRef.current.logoDataUrl || '',
       courtBrandingRef.current.showLogo ? 'logo1' : 'logo0',
+      courtBrandingRef.current.logoAtCenter,
       courtBrandingRef.current.showText ? 'text1' : 'text0',
       courtBrandingRef.current.logoScale,
       courtBrandingRef.current.textScale,
@@ -2289,8 +2329,8 @@ const currentRef = useRef(current);
     const isShoot = l.action === 'shoot' && l.target === 'basket';
     const indexes = g.ctrls.map((_, index) => index);
     const imported = 'importSource' in l || (Array.isArray(l.points) && l.points.length >= 2);
-    const controlIndexes = imported && indexes.length > 2
-      ? [Math.round((indexes.length - 1) / 3), Math.round(2 * (indexes.length - 1) / 3)]
+    const controlIndexes = imported && indexes.length > 1
+      ? [Math.floor(indexes.length / 2)]
       : indexes;
     return { id: l.id, f: g.f, t: g.t, ctrls: controlIndexes.map(index => g.ctrls[index]), controlIndexes, isShoot };
   };
@@ -3233,8 +3273,22 @@ const owners=ownersAtClock(sched,ballEventsRef.current,clock);
         return image;
       }),
     );
+    const floorImages = COURT_FLOOR_PATTERNS.flatMap(pattern => {
+      if (!('url' in pattern)) return [];
+      const image = new Image();
+      courtFloorImages.current.set(pattern.id, image);
+      image.onload = () => {
+        if (courtStyleRef.current.floorPattern !== pattern.id) return;
+        courtTextureRef.current = { half: null, full: null };
+        refreshPhaseCourtThumbnail();
+        render();
+      };
+      image.src = pattern.url;
+      return [image];
+    });
     render();
     return () => {
+      floorImages.forEach(image => { image.onload = null; });
       demi.onload = null;
       full.onload = null;
       artworkImages.forEach((image) => { image.onload = null; });
@@ -5866,6 +5920,12 @@ const exportJson = () => {
                 e.currentTarget.value='';
               }} style={{ width:'100%', marginBottom:'.75rem' }} />
               <label style={{ display:'block', fontSize:'.78rem', fontWeight:800, marginBottom:'.35rem' }}>Logo du club</label>
+              <label style={{ display:'flex', alignItems:'center', gap:'.45rem', fontSize:'.78rem', marginBottom:'.5rem' }}>
+                <input type="checkbox" checked={courtBranding.logoAtCenter} onChange={event => applyCourtBranding({
+                  ...courtBrandingRef.current, logoAtCenter: event.target.checked, useCustomBranding: true,
+                })} />
+                Remplacer le rond central par le logo du club
+              </label>
               <div style={{ fontSize:'.7rem', color:'#777', marginBottom:'.45rem' }}>PNG/JPG/WebP : fond blanc relié aux bords supprimé et recadrage automatique. SVG conseillé pour une qualité parfaite.</div>
               <input type="file" accept="image/png,image/jpeg,image/webp,image/svg+xml,.svg" onChange={(e) => {
                 const file=e.target.files?.[0]; if(!file) return;
@@ -5991,7 +6051,7 @@ const exportJson = () => {
               </div>
 
               <div style={{ fontSize: '.76rem', color: '#6b6b6b', marginBottom: '.9rem', lineHeight: 1.35 }}>
-                La taille, le cadrage et les repères du terrain restent strictement identiques. Le rond central reste sur le parquet et sa ligne reprend la couleur des lignes du terrain.
+                La taille, le cadrage et les repères du terrain restent strictement identiques. Le rond central reprend la couleur des lignes, sauf si tu le remplaces par le logo du club.
               </div>
 
               {([

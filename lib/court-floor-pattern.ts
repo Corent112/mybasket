@@ -3,12 +3,14 @@ export const COURT_FLOOR_PATTERNS = [
   { id: 'straight', label: 'Lames droites' },
   { id: 'honeycomb', label: 'Nid d’abeille' },
   { id: 'diamonds', label: 'Losanges' },
+  { id: 'pale-maple', label: 'Érable pâle · lames droites', url: '/plaquette/parquets/erable-pale.webp' },
+  { id: 'milwaukee', label: 'Milwaukee · grand losange en bois clair', url: '/plaquette/parquets/milwaukee-clair.webp' },
 ] as const;
 
 export type CourtFloorPattern = typeof COURT_FLOOR_PATTERNS[number]['id'];
 
 export function floorPatternShade(pattern: CourtFloorPattern, x: number, y: number): number {
-  if (pattern === 'original') return 0;
+  if (pattern === 'original' || pattern === 'pale-maple' || pattern === 'milwaukee') return 0;
 
   // Coordinates are in full-court units, with the same scale on both axes.
   const row = Math.floor(y * 150);
