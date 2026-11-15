@@ -208,6 +208,9 @@ const normalizeCourtStyle = (value: unknown): CourtStyle => {
       : fallback;
 
   return {
+    ...((value as { floorPattern?: string } | null)?.floorPattern === 'diamonds'
+      ? { floorPattern: 'milwaukee' as const }
+      : {}),
     ...(COURT_FLOOR_PATTERNS.some((pattern) => pattern.id === v.floorPattern)
       ? { floorPattern: v.floorPattern }
       : {}),
@@ -1119,7 +1122,6 @@ const currentRef = useRef(current);
     // On nettoie toute la boîte du rond avant de le redessiner afin qu'aucun ancien
     // halo, logo ou pixel du JPEG ne puisse rester visible.
     const paintParquetRect = (left: number, top: number, width: number, height: number, sampleY: number) => {
-      const floorRgb = hexToRgb(style.floorColor);
       const safeTop = Math.max(0, Math.round(top));
       const safeLeft = Math.max(0, Math.round(left));
       const safeWidth = Math.max(1, Math.min(out.width - safeLeft, Math.round(width)));
@@ -1131,69 +1133,20 @@ const currentRef = useRef(current);
         for (let pxX = 0; pxX < safeWidth; pxX += 1) {
           const sourceX = Math.max(0, Math.min(out.width - 1, safeLeft + pxX));
           const si = sourceX * 4;
-          const lum = (sourceData[si] * 0.299 + sourceData[si + 1] * 0.587 + sourceData[si + 2] * 0.114) / 255;
-          const factor = Math.max(0.84, Math.min(1.14, lum / 0.72));
           const i = (py * safeWidth + pxX) * 4;
-          patch.data[i] = Math.min(255, Math.round(floorRgb.r * factor));
-          patch.data[i + 1] = Math.min(255, Math.round(floorRgb.g * factor));
-          patch.data[i + 2] = Math.min(255, Math.round(floorRgb.b * factor));
-          patch.data[i + 3] = 255;
+          patch.data.set(sourceData.subarray(si, si + 4), i);
         }
       }
       ox.putImageData(patch, safeLeft, safeTop);
     };
 
     const branding = courtBrandingRef.current;
-    const centerLogo = branding.logoAtCenter && branding.showLogo ? courtBrandingLogoRef.current : null;
-    const hasCenterLogo = Boolean(centerLogo?.complete && centerLogo.naturalWidth);
-    const drawCenterCircle = (cx: number, cy: number, radius: number, clipTop?: number) => {
-      ox.save();
-      if (typeof clipTop === 'number') {
-        ox.beginPath();
-        ox.rect(0, clipTop, out.width, out.height - clipTop);
-        ox.clip();
-      }
-      if (hasCenterLogo && centerLogo) {
-        const scale = radius * 1.9 / Math.max(centerLogo.naturalWidth, centerLogo.naturalHeight);
-        const width = centerLogo.naturalWidth * scale;
-        const height = centerLogo.naturalHeight * scale;
-        ox.translate(cx, cy);
-        if (ct === 'full') ox.rotate(-Math.PI / 2);
-        ox.drawImage(centerLogo, -width / 2, -height / 2, width, height);
-      } else {
-        ox.strokeStyle = style.lineColor;
-        ox.lineWidth = Math.max(3, out.width * 0.0052);
-        ox.beginPath();
-        ox.arc(cx, cy, radius, 0, Math.PI * 2);
-        ox.stroke();
-      }
-      ox.restore();
-    };
-
     if (ct === 'half') {
-      const cx = out.width * 0.5;
-      const cy = out.height * 1.005;
-      const radius = out.width * 0.105;
-      // Toute la zone centrale visible est remise en parquet avant de redessiner le demi-rond.
-      paintParquetRect(out.width * 0.34, out.height * 0.79, out.width * 0.32, out.height * 0.21, out.height * 0.74);
-      drawCenterCircle(cx, cy, radius, out.height * 0.79);
+      paintParquetRect(out.width * .34, out.height * .79, out.width * .32, out.height * .21, out.height * .74);
     } else {
-      const cx = out.width * 0.5;
-      const cy = out.height * 0.5;
-      const radius = out.width * 0.0835;
-      paintParquetRect(out.width * 0.395, out.height * 0.34, out.width * 0.21, out.height * 0.32, out.height * 0.29);
-      // Le terrain complet source est horizontal avant sa rotation à l'écran :
-      // sa ligne médiane traverse donc verticalement le rond central.
-      ox.save();
-      ox.strokeStyle = style.lineColor;
-      ox.lineWidth = Math.max(3, out.width * 0.0052);
-      ox.beginPath();
-      ox.moveTo(cx, out.height * 0.34);
-      ox.lineTo(cx, out.height * 0.66);
-      ox.stroke();
-      ox.restore();
-      drawCenterCircle(cx, cy, radius);
+      paintParquetRect(out.width * .395, out.height * .34, out.width * .21, out.height * .32, out.height * .29);
     }
+    drawCourtCenterMark(ox, out.width, out.height, ct, style.lineColor);
 
     if (branding.useCustomBranding) {
       const drawBrand = (cx: number, cy: number, maxW: number, maxH: number, rotateForFull = false, flip180 = false) => {
@@ -1217,7 +1170,7 @@ const currentRef = useRef(current);
         const by = branding.offsetY * contentH;
 
         const logo = courtBrandingLogoRef.current;
-        const hasLogo = !branding.logoAtCenter && branding.showLogo && !!(logo && logo.complete && logo.naturalWidth > 0);
+        const hasLogo = branding.showLogo && !!(logo && logo.complete && logo.naturalWidth > 0);
         const text = branding.showText ? branding.text.trim() : '';
 
         const baseLogoH = contentH * 0.72 * branding.logoScale;
@@ -1297,6 +1250,35 @@ const currentRef = useRef(current);
     return out;
   };
 
+  const drawCourtCenterMark = (
+    ctx: CanvasRenderingContext2D, width: number, height: number, ct: 'half' | 'full', color: string,
+  ) => {
+    const cx = width / 2, cy = height * (ct === 'half' ? 1.005 : .5);
+    const radius = width * (ct === 'half' ? .105 : .0835);
+    const logo = courtBrandingRef.current.logoAtCenter ? courtBrandingLogoRef.current : null;
+    ctx.save();
+    ctx.strokeStyle = color;
+    ctx.lineWidth = Math.max(3, width * .0052);
+    if (ct === 'full') {
+      ctx.beginPath();
+      ctx.moveTo(cx, height * .34);
+      ctx.lineTo(cx, height * .66);
+      ctx.stroke();
+    }
+    if (logo?.complete && logo.naturalWidth) {
+      const scale = radius * 1.9 / Math.max(logo.naturalWidth, logo.naturalHeight);
+      const w = logo.naturalWidth * scale, h = logo.naturalHeight * scale;
+      ctx.translate(cx, cy);
+      if (ct === 'full') ctx.rotate(-Math.PI / 2);
+      ctx.drawImage(logo, -w / 2, -h / 2, w, h);
+    } else {
+      ctx.beginPath();
+      ctx.arc(cx, cy, radius, 0, Math.PI * 2);
+      ctx.stroke();
+    }
+    ctx.restore();
+  };
+
   const applyFloorPattern = (
     base: CanvasImageSource,
     reference: HTMLImageElement,
@@ -1340,7 +1322,17 @@ const currentRef = useRef(current);
           : u > .14 && u < .86 && v > .138 && v < .988;
         if (!inside) continue;
 
-        // Preserve the paint and the entire center mark in both source artworks.
+        // The central patch uses the same texture coordinates as the rest of the floor.
+        const centerPatch = ct === 'full'
+          ? u >= .395 && u <= .605 && v >= .34 && v <= .66
+          : u >= .34 && u <= .66 && v >= .79;
+        const index = (y * width + x) * 4;
+        if (centerPatch && texture?.data[index + 3]) {
+          pixels.set(texture.data.subarray(index, index + 3), index);
+          continue;
+        }
+
+        // Preserve court markings outside the repainted center.
         const protectedArea = ct === 'full'
           ? (v > .378 && v < .623 && (u < .246 || u > .754)) ||
             ((u - .5) / .081) ** 2 + ((v - .5) / .127) ** 2 < 1
@@ -1348,7 +1340,6 @@ const currentRef = useRef(current);
             ((u - .5) / .122) ** 2 + ((v - 1.005) / .17) ** 2 < 1;
         if (protectedArea) continue;
 
-        const index = (y * width + x) * 4;
         const [r, g, b] = [mask[index], mask[index + 1], mask[index + 2]];
         const isWood = monochrome
           ? Math.min(r, g, b) > 228 && mask[index + 3] === 255
@@ -1368,6 +1359,7 @@ const currentRef = useRef(current);
       }
     }
     ctx.putImageData(image, 0, 0);
+    if (texture) drawCourtCenterMark(ctx, width, height, ct, courtStyleRef.current.lineColor);
     return out;
   };
 
@@ -5896,7 +5888,6 @@ const exportJson = () => {
                 <button type="button" onClick={() => setCourtBrandingOpen(false)} style={{ border:0, background:'transparent', fontSize:'1.35rem', cursor:'pointer' }}>×</button>
               </div>
               <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:'.6rem', marginBottom:'.7rem' }}>
-                <label style={{ display:'flex', alignItems:'center', gap:'.45rem', fontSize:'.78rem', fontWeight:800 }}><input type="checkbox" checked={courtBranding.showLogo} onChange={(e) => applyCourtBranding({ ...courtBrandingRef.current, showLogo:e.target.checked, useCustomBranding:true })} /> Afficher le logo</label>
                 <label style={{ display:'flex', alignItems:'center', gap:'.45rem', fontSize:'.78rem', fontWeight:800 }}><input type="checkbox" checked={courtBranding.showText} onChange={(e) => applyCourtBranding({ ...courtBrandingRef.current, showText:e.target.checked, useCustomBranding:true })} /> Afficher le texte</label>
               </div>
               <label style={{ display:'block', fontSize:'.78rem', fontWeight:800, marginBottom:'.35rem' }}>Texte affiché sur le terrain</label>
@@ -5925,11 +5916,12 @@ const exportJson = () => {
                 e.currentTarget.value='';
               }} style={{ width:'100%', marginBottom:'.75rem' }} />
               <label style={{ display:'block', fontSize:'.78rem', fontWeight:800, marginBottom:'.35rem' }}>Logo du club</label>
+              <label style={{ display:'flex', alignItems:'center', gap:'.45rem', fontSize:'.78rem', fontWeight:800 }}><input type="checkbox" checked={courtBranding.showLogo} onChange={(e) => applyCourtBranding({ ...courtBrandingRef.current, showLogo:e.target.checked, useCustomBranding:true })} /> À la place du logo MyBasket</label>
               <label style={{ display:'flex', alignItems:'center', gap:'.45rem', fontSize:'.78rem', marginBottom:'.5rem' }}>
                 <input type="checkbox" checked={courtBranding.logoAtCenter} onChange={event => applyCourtBranding({
                   ...courtBrandingRef.current, logoAtCenter: event.target.checked, useCustomBranding: true,
                 })} />
-                Remplacer le rond central par le logo du club
+                À la place du rond central
               </label>
               <div style={{ fontSize:'.7rem', color:'#777', marginBottom:'.45rem' }}>PNG/JPG/WebP : fond blanc relié aux bords supprimé et recadrage automatique. SVG conseillé pour une qualité parfaite.</div>
               <input type="file" accept="image/png,image/jpeg,image/webp,image/svg+xml,.svg" onChange={(e) => {
@@ -5940,7 +5932,7 @@ const exportJson = () => {
                   // Un SVG reste vectoriel : on le conserve tel quel pour un rendu net
                   // quelle que soit la taille d'affichage sur le terrain.
                   if (file.type === 'image/svg+xml' || /\.svg$/i.test(file.name)) {
-                    applyCourtBranding({ ...courtBrandingRef.current, logoDataUrl:src, showLogo:true, useCustomBranding:true });
+                    applyCourtBranding({ ...courtBrandingRef.current, logoDataUrl:src, useCustomBranding:true });
                     return;
                   }
                   const img=new Image();
@@ -5994,7 +5986,7 @@ const exportJson = () => {
                     const octx=out.getContext('2d');
                     if(!octx) return;
                     octx.drawImage(work,minX,minY,out.width,out.height,0,0,out.width,out.height);
-                    applyCourtBranding({ ...courtBrandingRef.current, logoDataUrl:out.toDataURL('image/png'), showLogo:true, useCustomBranding:true });
+                    applyCourtBranding({ ...courtBrandingRef.current, logoDataUrl:out.toDataURL('image/png'), useCustomBranding:true });
                   };
                   img.src=src;
                 };
@@ -6211,18 +6203,35 @@ const exportJson = () => {
                 </div>
               </div>
 
-              <label style={{ display: 'grid', gap: '.4rem', marginTop: '1rem', fontSize: '.78rem', fontWeight: 800 }}>
-                Motif du parquet
-                <select
-                  value={courtStyle.floorPattern ?? 'original'}
-                  onChange={(event) => applyCourtStyle({ ...courtStyleRef.current, floorPattern: event.target.value })}
-                  style={{ padding: '.55rem', border: '1px solid #DDD', borderRadius: 7, background: '#fff' }}
-                >
-                  {COURT_FLOOR_PATTERNS.map((pattern) => (
-                    <option key={pattern.id} value={pattern.id}>{pattern.label}</option>
-                  ))}
-                </select>
-              </label>
+              <div role="group" aria-label="Motif du parquet" style={{ marginTop: '1rem' }}>
+                <div style={{ marginBottom: '.4rem', fontSize: '.78rem', fontWeight: 800 }}>Motif du parquet</div>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(100px, 1fr))', gap: '.45rem' }}>
+                  {COURT_FLOOR_PATTERNS.map(pattern => {
+                    const selected = (courtStyle.floorPattern ?? 'original') === pattern.id;
+                    return (
+                      <button
+                        key={pattern.id}
+                        type="button"
+                        aria-pressed={selected}
+                        onClick={() => applyCourtStyle({ ...courtStyleRef.current, floorPattern: pattern.id })}
+                        style={{
+                          display: 'grid', alignContent: 'start', gap: '.3rem', borderRadius: 10,
+                          border: selected ? '2px solid #6B1A2C' : '2px solid #E1DAD3',
+                          background: selected ? '#F8F0F2' : '#fff', padding: '.3rem',
+                          color: '#33262A', cursor: 'pointer', fontSize: '.72rem', fontWeight: 800,
+                        }}
+                      >
+                        <img
+                          src={'preview' in pattern ? pattern.preview : pattern.url}
+                          alt=""
+                          style={{ display: 'block', width: '100%', height: 48, objectFit: 'cover', borderRadius: 5 }}
+                        />
+                        {pattern.label}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
 
               <div style={{ marginTop: '1rem', paddingTop: '.85rem', borderTop: '1px solid #ECECEC' }}>
                 <button
