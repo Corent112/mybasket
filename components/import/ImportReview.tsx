@@ -20,7 +20,7 @@
  * en calque sous le dessin pour comparer avec la photo d'origine.
  */
 
-import { importedCurveHandle } from "@/lib/import/curve-handle";
+import { importedCurveHandle, sampleImportedArc } from "@/lib/import/curve-handle";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type {
   AiDetectionType,
@@ -114,6 +114,14 @@ function playRect(courtType: "half" | "full") {
 function curveHandles(action: AiDiagramAction | undefined) {
   const handle = importedCurveHandle(action?.points, action?.action === "dribble");
   return handle ? [handle.index] : [];
+}
+
+function reviewPath(action: AiDiagramAction): AiPoint[] {
+  const from = action.from ?? action.to;
+  if (action.action === "dribble" || action.action === "freedraw") {
+    return [from, ...(action.points?.slice(1, -1) ?? []), action.to];
+  }
+  return sampleImportedArc(from, action.to, importedCurveHandle(action.points)?.point);
 }
 
 function distanceToSegment(point: AiPoint, start: AiPoint, end: AiPoint) {
@@ -340,7 +348,7 @@ export default function ImportReview({
       ctx.lineWidth = isSelected ? 4 : 3;
       ctx.setLineDash(action.action === "pass" ? [9, 6] : []);
       ctx.beginPath();
-      const path = [from, ...(action.points?.slice(1, -1).map(toPixel) ?? []), to];
+      const path = reviewPath(action).map(toPixel);
       path.forEach((point, i) => {
         if (i === 0) ctx.moveTo(point.x, point.y);
         else ctx.lineTo(point.x, point.y);
@@ -522,7 +530,7 @@ export default function ImportReview({
     let gap = 11;
     diagram.actions.forEach((action, index) => {
       if (!showUncertain && needsReview(action.confidence)) return;
-      const path = [action.from ?? action.to, ...(action.points?.slice(1, -1) ?? []), action.to].map(toPixel);
+      const path = reviewPath(action).map(toPixel);
       for (let i = 1; i < path.length; i++) {
         const distance = distanceToSegment({ x, y }, path[i - 1], path[i]);
         if (distance >= gap) continue;

@@ -1,4 +1,5 @@
 'use client';
+import { sampleImportedArc } from '@/lib/import/curve-handle';
 import { COURT_FLOOR_PATTERNS, floorPatternShade, type CourtFloorPattern } from '@/lib/court-floor-pattern';
 import { resolveSystemDrawingPreview } from "@/lib/system-drawing-preview";
 import {drawingSessionStorage} from '@/lib/drawing-session-storage';
@@ -1816,6 +1817,7 @@ const currentRef = useRef(current);
       if (scanned) return scanned.map((point) => toPx(canvas, point));
     }
     const g = lineGeom(canvas, l);
+    if ('importSource' in l && g.ctrls.length <= 1) return sampleImportedArc(g.f, g.t, g.ctrls[0]);
     return catmullRom([g.f, ...g.ctrls, g.t]);
   };
   // longueurs cumulées d'une polyligne
@@ -2725,8 +2727,11 @@ if (anim && anim.balls) {
 
   // point (canonique) à la fraction t le long de la trajectoire d'une action (courbe respectée)
   const actionPointN = (startN: Pt, line: Line, t: number): Pt => {
+    const controls = lineCtrls(line);
     const poly = anchoredScannedPath(line, startN, line.to)
-      ?? catmullRom([startN, ...lineCtrls(line), line.to], 24);
+      ?? ('importSource' in line && controls.length <= 1
+        ? sampleImportedArc(startN, line.to, controls[0])
+        : catmullRom([startN, ...controls, line.to], 24));
     if (poly.length < 2) return poly[0] || startN;
     let total = 0; const seg: number[] = [];
     for (let i = 1; i < poly.length; i++) { const d = Math.hypot(poly[i].x - poly[i - 1].x, poly[i].y - poly[i - 1].y); seg.push(d); total += d; }

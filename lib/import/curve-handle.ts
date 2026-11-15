@@ -17,3 +17,19 @@ export function importedCurveHandle(points: AiPoint[] | undefined, dribble = fal
   const offset = Math.abs(dx * (point.y - from.y) - dy * (point.x - from.x)) / length;
   return offset >= Math.max(.005, length * .045) ? { index, point } : undefined;
 }
+
+/** A quadratic arc through the visible midpoint handle. */
+export function sampleImportedArc(from: AiPoint, to: AiPoint, middle?: AiPoint): AiPoint[] {
+  if (!middle) return [from, to];
+  const control = {
+    x: 2 * middle.x - (from.x + to.x) / 2,
+    y: 2 * middle.y - (from.y + to.y) / 2,
+  };
+  return Array.from({ length: 25 }, (_, index) => {
+    const t = index / 24, u = 1 - t;
+    return {
+      x: u * u * from.x + 2 * u * t * control.x + t * t * to.x,
+      y: u * u * from.y + 2 * u * t * control.y + t * t * to.y,
+    };
+  });
+}

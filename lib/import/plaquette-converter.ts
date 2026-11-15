@@ -19,7 +19,7 @@
  * schemaDataList partageant le même tableau `phases`.
  */
 
-import { importedCurveHandle } from "./curve-handle";
+import { importedCurveHandle, sampleImportedArc } from "./curve-handle";
 import type {
   AiExerciseDiagram,
   AiExerciseImport,
@@ -147,7 +147,7 @@ function diagramToPhase(diagram: AiExerciseDiagram, courtType: "half" | "full"):
       from,
       to,
       rotation: 0,
-      ...(path ? { points: path } : {}),
+      ...(path && (action.action === "dribble" || action.action === "freedraw") ? { points: path } : {}),
       ...(control ? { ctrls: [control.point] } : {}),
       ...(action.color ? { color: action.color } : {}),
       ...(sourcePlayerId ? { sourcePlayerId } : {}),
@@ -157,7 +157,7 @@ function diagramToPhase(diagram: AiExerciseDiagram, courtType: "half" | "full"):
       startMode: "afterPrevious" as const,
       duration: 1,
       ...(action.confidence !== undefined ? { importConfidence: action.confidence } : {}),
-      ...(action.source ? { importSource: action.source } : {}),
+      importSource: action.source ?? "Import photo",
       ...((action.confidence ?? 1) < 0.5 ? { needsReview: true } : {}),
     };
   });
@@ -462,7 +462,9 @@ function drawLineNative(ctx: CanvasRenderingContext2D, l: any, toPx: (p: AiPoint
   }
   const raw = [l.from, ...(Array.isArray(l.ctrls) ? l.ctrls : l.ctrl ? [l.ctrl] : []), l.to].filter(Boolean).map((p: AiPoint) => toPx(p));
   const traced = Array.isArray(l.points) && l.points.length >= 2;
-  const poly: AiPoint[] = traced ? [raw[0], ...l.points.slice(1, -1).map(toPx), raw[raw.length - 1]] : catmullRom(raw);
+  const poly: AiPoint[] = traced ? [raw[0], ...l.points.slice(1, -1).map(toPx), raw[raw.length - 1]] : l.importSource && raw.length <= 3
+    ? sampleImportedArc(raw[0], raw[raw.length - 1], raw.length === 3 ? raw[1] : undefined)
+    : catmullRom(raw);
   if (poly.length < 2) return;
   if (l.action === "pass") ctx.setLineDash([w * 3, w * 2.4]);
   if (l.action === "dribble" && !traced) {
