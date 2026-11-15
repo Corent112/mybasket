@@ -67,6 +67,12 @@ export async function readColoredCourtDiagram(source: HTMLCanvasElement) {
   }
   const key=components(keyMask,w,Math.max(80,w*h*.025)).sort((a,b)=>b.pixels.length-a.pixels.length)[0];
   if(!key||key.pixels.length<width(key)*height(key)*.62||width(key)/height(key)<.56||width(key)/height(key)>1.32)return null;
+  // Keep antialiased black strokes where they cross the blue paint.
+  for(let y=key.y0-1;y<=key.y1+1;y++)for(let x=key.x0-1;x<=key.x1+1;x++){
+    if(x<0||x>=w||y<0||y>=h)continue;
+    const i=y*w+x,r=rgba[i*4],g=rgba[i*4+1],b=rgba[i*4+2];
+    if(r<72&&g<105&&b<151)ink[i]=1;
+  }
   const rows=new Uint16Array(h);
   for(let y=0;y<h;y++)for(let x=0;x<w;x++)rows[y]+=floor[y*w+x];
   const y0=rows.findIndex(n=>n>width(key)*1.25);
@@ -285,6 +291,43 @@ export async function readColoredCourtDiagram(source: HTMLCanvasElement) {
   for(const trace of traces.filter(b=>traceBounds(b)>unit*.043&&b.pixels.length>unit*.062)){
     const {p:tip,peak}=head(trace);
     if(traceBounds(trace)>unit*.13&&peak>=9){
+      // A shared stroke can contain two screen branches and one continuous
+      // run. Use the detached arrow end and keep each screen up to its bar.
+      const contacts=roster.filter(item=>trace.pixels.some(i=>distance(dot(i),item.center)<item.radius+unit*.012));
+      if(contacts.length>=3){
+        const inkPoints=trace.pixels.map(dot);
+        const extremes=[
+          (p:AiPoint)=>p.x, (p:AiPoint)=>-p.x, (p:AiPoint)=>p.y, (p:AiPoint)=>-p.y,
+        ].map(axis=>inkPoints.reduce((best,p)=>axis(p)>axis(best)?p:best));
+        const gap=(p:AiPoint)=>Math.min(...contacts.map(item=>distance(p,item.center)-item.radius));
+        const arrow=extremes.filter(p=>gap(p)>unit*.08)
+          .sort((a,b)=>gap(b)-gap(a))[0];
+        if(arrow){
+          const routes=contacts.flatMap(item=>{
+            const path=followStroke(trace,arrow,item.center);
+            if(path.length<20||distance(path[0],item.center)>item.radius+unit*.012)return [];
+            const bar=screenBreak(path,trace);
+            const stop=bar>=0?path[bar]:undefined;
+            return [{item,path,stop,bar}];
+          });
+          const runs=routes.filter(route=>!route.stop);
+          const screens=routes.filter(route=>route.stop);
+          if(runs.length===1&&screens.length>=2&&head({...trace,pixels:trace.pixels.filter(i=>distance(dot(i),arrow)<unit*.022)}).peak>=9){
+            for(const route of screens){
+              const from=route.item.player,to=canonical(route.stop!);
+              actions.push({action:"screen",from,to,fromPlayer:from.key,
+                points:[from,...sampleStroke(route.path.slice(0,route.bar)).map(canonical),to],
+                confidence:.78,source:"Écran : branche distincte terminée par une barre"});
+            }
+            const {item,path}=runs[0];
+            const from=item.player,to=canonical(arrow);
+            actions.push({action:"cut",from,to,fromPlayer:from.key,points:[from,...sampleStroke(path).map(canonical),to],
+              confidence:.78,source:"Déplacement continu à travers les écrans"});
+            used.add(trace);
+            continue;
+          }
+        }
+      }
       let shaft=followStroke(trace,tip);
       if(!shaft.length)continue;
       let endpoint=tip;

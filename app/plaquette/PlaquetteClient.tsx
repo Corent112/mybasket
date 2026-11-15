@@ -1,4 +1,5 @@
 'use client';
+import { ActionKindDialog } from '@/components/import/ActionKindDialog';
 import { sampleImportedArc } from '@/lib/import/curve-handle';
 import { COURT_FLOOR_PATTERNS, courtFloorProjection, floorPatternShade, isInsideThreePointArc, type CourtFloorPattern } from '@/lib/court-floor-pattern';
 import { resolveSystemDrawingPreview } from "@/lib/system-drawing-preview";
@@ -782,6 +783,7 @@ useEffect(() => {
   const [selection, setSelection] = useState<SelItem[]>([]);
   const [past, setPast] = useState<{ phases: Phase[]; current: number }[]>([]);
   const [future, setFuture] = useState<{ phases: Phase[]; current: number }[]>([]);
+  const [editingLine, setEditingLine] = useState<{ id: string; phase: number; action: string } | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [linkOpen, setLinkOpen] = useState(false);
   const [linkQuery, setLinkQuery] = useState('');
@@ -3412,9 +3414,20 @@ const owners=ownersAtClock(sched,ballEventsRef.current,clock);
     const canvas = canvasRef.current; if (!canvas) return;
     const rect = canvas.getBoundingClientRect();
     const P = { x: ((e.clientX - rect.left) / rect.width) * canvas.width, y: ((e.clientY - rect.top) / rect.height) * canvas.height };
-    // double-clic sur un point de contrôle d'une trajectoire sélectionnée → suppression du point
+    const hit = hitTest(canvas, P);
     const lh = lineHandles(canvas);
-    if (lh) {
+    const controlHit = lh?.ctrls.some(point => Math.hypot(P.x - point.x, P.y - point.y) < 12);
+    if (!e.altKey && !animPosRef.current && (hit?.type === 'line' || controlHit)) {
+      const phase = currentRef.current;
+      const id = hit?.type === 'line' ? hit.id : lh?.id;
+      const line = phasesRef.current[phase]?.lines.find(item => item.id === id);
+      if (line && ACTION_KINDS.includes(line.action)) {
+        setSelection([{ type: 'line', id: line.id }]);
+        setEditingLine({ id: line.id, phase, action: line.action });
+        return;
+      }
+    }
+    if (e.altKey && lh) {
       for (let k = 0; k < lh.ctrls.length; k++) {
         if (Math.hypot(P.x - lh.ctrls[k].x, P.y - lh.ctrls[k].y) < 16) {
           pushHistory();
@@ -5904,6 +5917,43 @@ const exportJson = () => {
         )}
 
 
+
+        {editingLine && (
+          <ActionKindDialog
+            current={editingLine.action}
+            choices={[
+              { value: 'cut', label: 'Déplacement' }, { value: 'dribble', label: 'Dribble' },
+              { value: 'pass', label: 'Passe' }, { value: 'screen', label: 'Écran' },
+              { value: 'shoot', label: 'Tir' },
+            ]}
+            onClose={() => setEditingLine(null)}
+            onChange={action => {
+              setEditingLine(null);
+              if (action === editingLine.action) return;
+              pushHistory();
+              setPhases(previous => previous.map((phase, index) => index !== editingLine.phase ? phase : {
+                ...phase,
+                lines: phase.lines.map(line => {
+                  if (line.id !== editingLine.id) return line;
+                  const moving = ['cut', 'dribble', 'screen'].includes(action);
+                  return {
+                    ...line, action,
+                    points: line.action === 'dribble' || action === 'dribble' ? undefined : line.points,
+                    target: action === 'shoot' ? 'basket' : undefined,
+                    targetBasketId: undefined,
+                    targetPlayerId: action === 'pass' ? line.targetPlayerId : undefined,
+                    targetMode: action === 'pass' ? line.targetMode : undefined,
+                    createdTargetPoint: action === 'pass' ? line.createdTargetPoint : undefined,
+                    targetMachineId: action === 'pass' ? line.targetMachineId : undefined,
+                    sourceMachineId: moving ? undefined : line.sourceMachineId,
+                    returnPlayerId: undefined,
+                    returnMachineId: undefined,
+                  };
+                }),
+              }));
+            }}
+          />
+        )}
 
         {courtBrandingOpen && (
           <div onClick={() => setCourtBrandingOpen(false)} style={{ position:'fixed', inset:0, background:'rgba(15,15,18,.56)', display:'flex', alignItems:'center', justifyContent:'center', zIndex:4200, padding:'1rem' }}>

@@ -21,6 +21,7 @@
  */
 
 import { importedCurveHandle, sampleImportedArc } from "@/lib/import/curve-handle";
+import { ActionKindDialog } from "./ActionKindDialog";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type {
   AiDetectionType,
@@ -111,6 +112,10 @@ function playRect(courtType: "half" | "full") {
     : { x0: HALF_COURT_LEFT, x1: HALF_COURT_RIGHT, y0: HALF_COURT_TOP, y1: HALF_COURT_BOTTOM };
 }
 
+function requiresStartingPlayer(action: AiDiagramAction) {
+  return action.action !== "freedraw" && !action.fromPlayer;
+}
+
 function curveHandles(action: AiDiagramAction | undefined) {
   const handle = importedCurveHandle(action?.points, action?.action === "dribble");
   return handle ? [handle.index] : [];
@@ -174,7 +179,7 @@ export function reviewItemsOfDiagram(diagram: AiExerciseDiagram | undefined): Re
   });
 
   diagram.actions.forEach((action, index) => {
-    if (!needsReview(action.confidence)) return;
+    if (!needsReview(action.confidence) && !requiresStartingPlayer(action)) return;
     list.push({
       label: `Action ${index + 1} · ${action.action}`,
       selection: { kind: "action", index, end: "to" },
@@ -246,6 +251,7 @@ export default function ImportReview({
   const [inkColor, setInkColor] = useState("#0f0f12");
   const [dragging, setDragging] = useState(false);
   const [linkStart, setLinkStart] = useState(false);
+  const [actionTypeIndex, setActionTypeIndex] = useState<number | null>(null);
   useEffect(() => { setLinkStart(false); }, [current, selection]);
 
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -500,7 +506,7 @@ export default function ImportReview({
 
   /* ------------------------------------------------------- interactions */
 
-  const pointerPosition = (event: React.PointerEvent<HTMLCanvasElement>) => {
+  const pointerPosition = (event: React.MouseEvent<HTMLCanvasElement>) => {
     const canvas = canvasRef.current;
     if (!canvas) return { x: 0, y: 0 };
     const bounds = canvas.getBoundingClientRect();
@@ -569,7 +575,9 @@ export default function ImportReview({
     if (linkStart && selection?.kind === "action") {
       const hit = hitTest(x, y);
       if (hit?.kind === "player") {
-        setActionPlayer(selection.index, "from", diagram.players[hit.index].key);
+        const key = diagram.players[hit.index].key;
+        if (key === diagram.actions[selection.index]?.toPlayer) return;
+        setActionPlayer(selection.index, "from", key);
         setLinkStart(false);
       }
       return;
@@ -807,6 +815,9 @@ export default function ImportReview({
           ? {
               ...line,
               action,
+              points: line.action === "dribble" && action !== "dribble" && line.from
+                ? [line.from, ...(importedCurveHandle(line.points, true)?.point ? [importedCurveHandle(line.points, true)!.point] : []), line.to]
+                : line.points,
               confidence: action === "freedraw" || line.fromPlayer ? 1 : line.confidence,
               source: `type corrigé à la main : ${action}`,
             }
@@ -856,6 +867,10 @@ export default function ImportReview({
 
   const confirmSelected = () => {
     if (!selection || !diagram) return;
+    if (selection.kind === "action" && diagram.actions[selection.index] && requiresStartingPlayer(diagram.actions[selection.index])) {
+      setLinkStart(true);
+      return;
+    }
     updateDiagram((item) => {
       if (selection.kind === "player") {
         return {
@@ -897,9 +912,9 @@ export default function ImportReview({
   const uncertain = reviewItems.filter(item => item.selection?.kind === "action");
   const doubtful = reviewItems.filter(item => stage === "players" ? item.selection?.kind !== "action"
     : showUncertain || item.selection?.kind !== "action");
-  const omittedCount = diagrams.reduce((n,item) => n+item.actions.filter(action => needsReview(action.confidence)).length,0);
+  const omittedCount = diagrams.reduce((n,item) => n+item.actions.filter(action => needsReview(action.confidence) || requiresStartingPlayer(action)).length,0);
   const cleanDiagrams = diagrams.map(item => {
-    const accepted = item.actions.filter(action => !needsReview(action.confidence));
+    const accepted = item.actions.filter(action => !needsReview(action.confidence) && !requiresStartingPlayer(action));
     const chosen = new Map(accepted.flatMap(action => action.continuationChoice?.alternate
       ? [[action.continuationChoice.group, action] as const] : []));
     const primaryGroups = new Set(accepted.flatMap(action => action.continuationChoice && !action.continuationChoice.alternate
@@ -1038,6 +1053,14 @@ export default function ImportReview({
             height={size.h}
             style={styles.canvas}
             onPointerDown={handlePointerDown}
+            onDoubleClick={event => {
+              if (stage !== "actions" || traceMode || addMode || annotationMode || linkStart) return;
+              const { x, y } = pointerPosition(event);
+              const hit = hitTest(x, y);
+              if (hit?.kind !== "action") return;
+              setSelection(hit);
+              setActionTypeIndex(hit.index);
+            }}
             onPointerMove={handlePointerMove}
             onPointerUp={handlePointerUp}
             onPointerCancel={() => { traceRef.current = null; setTracePreview([]); setDragging(false); }}
@@ -1178,6 +1201,9 @@ export default function ImportReview({
                     {selectedAction.continuationChoice?.alternate && (
                       <p style={styles.hint}>Si tu confirmes ce déplacement, il remplace l’autre déplacement après cet écran.</p>
                     )}
+                    {requiresStartingPlayer(selectedAction) && (
+                      <p style={styles.hint}>Choisis le joueur de départ pour importer cette action.</p>
+                    )}
                     <p style={styles.hint}>Glisse les poignées bleues pour ajuster la courbe sur la photo.</p>
                     {selectedAction.from && !curveHandles(selectedAction).length && (
                       <button type="button" style={styles.button} onClick={() => {
@@ -1249,7 +1275,7 @@ export default function ImportReview({
                 )}
                 <div style={styles.row}>
                   <button type="button" style={styles.button} onClick={confirmSelected}>
-                    Confirmer
+                    {selectedAction && requiresStartingPlayer(selectedAction) ? "Choisir le joueur de départ" : "Confirmer"}
                   </button>
                   <button type="button" style={styles.buttonDanger} onClick={removeSelected}>
                     Supprimer
@@ -1282,6 +1308,18 @@ export default function ImportReview({
         </div>
       </div>
 
+      {actionTypeIndex !== null && diagram.actions[actionTypeIndex] && (
+        <ActionKindDialog
+          current={diagram.actions[actionTypeIndex].action}
+          choices={actionChoices}
+          onClose={() => setActionTypeIndex(null)}
+          onChange={value => {
+            setActionKind(actionTypeIndex, value as AiDiagramActionKind);
+            setActionTypeIndex(null);
+            if (value !== "freedraw" && !diagram.actions[actionTypeIndex].fromPlayer) setLinkStart(true);
+          }}
+        />
+      )}
       <div style={styles.footer}>
         {batchMode && diagrams.length > 1 && (
           <button type="button" style={styles.buttonGhost} onClick={() => {
