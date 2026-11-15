@@ -176,9 +176,9 @@ export function reviewItemsOfDiagram(diagram: AiExerciseDiagram | undefined): Re
   diagram.actions.forEach((action, index) => {
     if (!needsReview(action.confidence)) return;
     list.push({
-      label: `Tracé ${action.action}`,
+      label: `Action ${index + 1} · ${action.action}`,
       selection: { kind: "action", index, end: "to" },
-      detail: `confiance ${Math.round((action.confidence ?? 0) * 100)} %`,
+      detail: !action.fromPlayer && action.action !== "freedraw" ? "Joueur au départ à choisir" : action.source ?? "Tracé à confirmer",
     });
   });
 
@@ -232,7 +232,7 @@ export default function ImportReview({
   const [stage, setStage] = useState<"players" | "actions">("players");
   const [showUncertain, setShowUncertain] = useState(Boolean(result.referenceFallback));
   const checkStage = (next: "players" | "actions") => {
-    setStage(next); setSelection(null); setTraceMode(false); setDragging(false);
+    setStage(next); setSelection(null); setLinkStart(false); setTraceMode(false); setDragging(false);
     setAddMode(null); setAnnotationMode(false); traceRef.current = null; setTracePreview([]);
   };
   const [overlay, setOverlay] = useState(0);
@@ -245,6 +245,8 @@ export default function ImportReview({
   const [annotation, setAnnotation] = useState("");
   const [inkColor, setInkColor] = useState("#0f0f12");
   const [dragging, setDragging] = useState(false);
+  const [linkStart, setLinkStart] = useState(false);
+  useEffect(() => { setLinkStart(false); }, [current, selection]);
 
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const overlayImage = useRef<HTMLImageElement | null>(null);
@@ -375,6 +377,19 @@ export default function ImportReview({
           ctx.fill();
         }
       }
+      const middle = path.length === 2
+        ? { x: (from.x + to.x) / 2, y: (from.y + to.y) / 2 }
+        : path[Math.floor(path.length / 2)];
+      ctx.beginPath();
+      ctx.arc(middle.x, middle.y, 9, 0, Math.PI * 2);
+      ctx.fillStyle = "#D4A24C";
+      ctx.fill();
+      ctx.fillStyle = COLORS.ink;
+      ctx.font = "700 11px system-ui, sans-serif";
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      ctx.fillText(String(index + 1), middle.x, middle.y);
+
       // poignées d'extrémité
       if (isSelected) for (const [end, point] of [["from", from], ["to", to]] as Array<["from" | "to", { x: number; y: number }]>) {
         const handleSelected = isSelected && selection?.kind === "action" && selection.end === end;
@@ -550,6 +565,15 @@ export default function ImportReview({
     const { x, y } = pointerPosition(event);
     const canvas = canvasRef.current;
     if (!canvas) return;
+
+    if (linkStart && selection?.kind === "action") {
+      const hit = hitTest(x, y);
+      if (hit?.kind === "player") {
+        setActionPlayer(selection.index, "from", diagram.players[hit.index].key);
+        setLinkStart(false);
+      }
+      return;
+    }
 
     if (traceMode) {
       const point = pixelToCanonical(x, y, canvas.width, canvas.height, courtType);
@@ -783,7 +807,7 @@ export default function ImportReview({
           ? {
               ...line,
               action,
-              confidence: 1,
+              confidence: action === "freedraw" || line.fromPlayer ? 1 : line.confidence,
               source: `type corrigé à la main : ${action}`,
             }
           : line
@@ -798,8 +822,12 @@ export default function ImportReview({
         if (i !== index) return line;
         const player = item.players.find(candidate => candidate.key === key);
         if (!player) return end === "from" ? { ...line, fromPlayer: undefined } : { ...line, toPlayer: undefined };
-        const lastMove = item.actions.slice(0, index).findLast(action =>
-          action.fromPlayer === key && ["cut", "screen", "dribble"].includes(action.action));
+        const previousActions = item.actions.slice(0, index);
+        const primary = line.continuationChoice?.alternate
+          ? previousActions.findIndex(action => action.continuationChoice?.group === line.continuationChoice?.group
+            && !action.continuationChoice?.alternate) : -1;
+        const lastMove = previousActions.slice(0, primary >= 0 ? primary : index).findLast(action =>
+          action.fromPlayer === key && !action.continuationChoice?.alternate && ["cut", "screen", "dribble"].includes(action.action));
         const point = lastMove?.to ?? { x: player.x, y: player.y };
         const previous = end === "from" ? line.from ?? line.to : line.to;
         const points = line.points?.map((p, j, all) => {
@@ -1179,6 +1207,14 @@ export default function ImportReview({
                             ))}
                           </select>
                         </label>
+                        <button type="button" aria-pressed={linkStart}
+                          style={linkStart ? styles.buttonPrimary : styles.button}
+                          onClick={() => {
+                            setTraceMode(false); setAddMode(null); setAnnotationMode(false);
+                            setLinkStart(active => !active);
+                          }}>
+                          {linkStart ? "Clique sur le joueur de départ" : "Choisir le joueur sur le terrain"}
+                        </button>
                         {selectedAction.action === "pass" && (
                           <label style={styles.fieldLabel}>
                             Destinataire
@@ -1233,7 +1269,7 @@ export default function ImportReview({
               <ul style={styles.doubtList}>
                 {doubtful.map((item, index) => (
                   <li key={index}>
-                    <button type="button" style={styles.doubtButton} onClick={() => setSelection(item.selection)}>
+                    <button type="button" style={styles.doubtButton} onClick={() => { if (item.selection?.kind === "action") setShowUncertain(true); setSelection(item.selection); }}>
                       <strong>{item.label}</strong> — {item.detail}
                     </button>
                   </li>

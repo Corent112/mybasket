@@ -2599,7 +2599,8 @@ const currentRef = useRef(current);
     acts.forEach((l, i) => {
       if (anim && !visibleLineIds.has(l.id)) return;
       const poly = linePoly(canvas, l); if (!poly.length) return;
-      const m = poly[Math.floor(poly.length / 2)] || poly[0];
+      const lengths = arcLengths(poly);
+      const m = pointAtLength(poly, lengths, lengths[lengths.length - 1] / 2).pt;
       drawActionNumber(ctx, m.x, m.y, i + 1);
     });
 

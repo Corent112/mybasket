@@ -253,7 +253,7 @@ export async function readColoredCourtDiagram(source: HTMLCanvasElement) {
   };
   const screenBreak=(path:AiPoint[],blob:Blob,terminal=false)=>{
     const pixels=new Set(blob.pixels);
-    const reach=Math.max(3,Math.round(unit*.012));
+    const reach=Math.max(3,Math.round(unit*.009));
     const first=terminal?Math.max(reach,path.length-reach*3):reach*2;
     const last=terminal?path.length:path.length-reach*2;
     for(let i=first;i<last;i++){
@@ -304,10 +304,10 @@ export async function readColoredCourtDiagram(source: HTMLCanvasElement) {
         const start=path[0];
         if(!start||distance(start,item.center)>item.radius+unit*.025)return [];
         const bar=screenBreak(path,trace);
-        if(bar<0)return [];
+        if(bar<0||distance(path[bar],endpoint)<unit*.075)return [];
         const end=path[bar],length=distance(start,end);
         const travel=path.slice(1,bar+1).reduce((sum,p,i)=>sum+distance(p,path[i]),0);
-        return [{path,score:travel/Math.max(1,length)}];
+        return [{path,bar,item,score:travel/Math.max(1,length)}];
       }).sort((a,b)=>a.score-b.score);
       const approach=screenApproaches[0];
       const ambiguousApproach=Boolean(approach&&screenApproaches[1]&&screenApproaches[1].score-approach.score<=.012);
@@ -317,11 +317,11 @@ export async function readColoredCourtDiagram(source: HTMLCanvasElement) {
         .sort((a,b)=>a.gap-b.gap);
       const ballHandler=isZigzag(shaft,unit)&&nearBall(origin)<unit*.145
         ? roster.find(item=>item.player.hasBall&&distance(item.center,origin)<unit*.17):undefined;
-      const source=ballHandler??(candidates[0]?.gap<unit*.055&&(!candidates[1]||candidates[1].gap-candidates[0].gap>unit*.018)
+      const source=ballHandler??approach?.item??(candidates[0]?.gap<unit*.055&&(!candidates[1]||candidates[1].gap-candidates[0].gap>unit*.018)
         ?candidates[0].item:undefined);
       if(distance(origin,endpoint)<unit*.075)continue;
-      let terminal=isZigzag(shaft,unit) ? -1 : screenBreak([...shaft,endpoint],trace,true);
-      if(terminal<0&&source&&!isZigzag(shaft,unit)&&traceBounds(trace)<unit*.2){
+      let terminal=approach||isZigzag(shaft,unit) ? -1 : screenBreak([...shaft,endpoint],trace,true);
+      if(!approach&&terminal<0&&source&&!isZigzag(shaft,unit)&&traceBounds(trace)<unit*.2){
         const start=shaft[Math.max(0,shaft.length-12)];
         const dx=endpoint.x-start.x,dy=endpoint.y-start.y,length=Math.hypot(dx,dy)||1;
         const across=trace.pixels.map(dot).filter(p=>distance(p,endpoint)<unit*.025)
@@ -330,8 +330,9 @@ export async function readColoredCourtDiagram(source: HTMLCanvasElement) {
       }
       const from=source?.player??canonical(origin),to=canonical(terminal<0?endpoint:shaft[terminal]??endpoint);
       const stroke=sampleStroke(terminal<0?shaft:shaft.slice(0,terminal));
-      const kind=ballHandler || isZigzag(shaft,unit) ? "dribble" : terminal>=0 ? "screen" : "cut";
-      const split=kind==="cut" ? screenBreak(shaft,trace) : -1;
+      const kind=approach ? "cut" : ballHandler || isZigzag(shaft,unit) ? "dribble" : terminal>=0 ? "screen" : "cut";
+      const bar=approach?.bar??(kind==="cut" ? screenBreak(shaft,trace) : -1);
+      const split=bar>=0&&distance(shaft[bar],endpoint)>=unit*.075 ? bar : -1;
       const departure=split<0 ? from : canonical(shaft[split]);
       if(split>=0){
         actions.push({action:"screen",from,to:departure,fromPlayer:source?.player.key,
