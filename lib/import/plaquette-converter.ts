@@ -19,8 +19,10 @@
  * schemaDataList partageant le même tableau `phases`.
  */
 
+import { deduplicateDiagramPlayers, numberedPlayerKey } from "./diagram-roster";
 import { importedCurveHandle, sampleImportedArc } from "./curve-handle";
 import type {
+  AiDiagramPlayer,
   AiExerciseDiagram,
   AiExerciseImport,
   AiPoint,
@@ -65,17 +67,29 @@ const clampPoint = (point: AiPoint | undefined, courtType: "half" | "full"): AiP
   y: clampY(point?.y ?? (courtType === "half" ? 0.25 : 0.5), courtType),
 });
 
+type ImportedPlayerState = { id: string; point: AiPoint; player: AiDiagramPlayer };
+
 /** Un diagramme détecté → une Phase Plaquette native. */
-function diagramToPhase(diagram: AiExerciseDiagram, courtType: "half" | "full"): PlaquettePhase {
+function diagramToPhase(
+  diagram: AiExerciseDiagram, courtType: "half" | "full",
+  previousRoster: Map<string, ImportedPlayerState>,
+): PlaquettePhase {
   const idByKey = new Map<string, string>();
 
-  const players = diagram.players.map((player) => {
-    const id = uid();
+  const numberedPlayers = new Map<string, { id: string; player: AiDiagramPlayer }>();
+  const visibleNumbers = new Set(diagram.players.map(numberedPlayerKey));
+  const carriedPlayers = [...previousRoster].filter(([number]) => !visibleNumbers.has(number))
+    .map(([, state]) => ({ ...state.player, key: `carried-${state.id}`, hasBall: false }));
+  const players = [...diagram.players, ...carriedPlayers].map((player) => {
+    const numbered = numberedPlayerKey(player);
+    const previous = numbered ? previousRoster.get(numbered) : undefined;
+    const id = previous?.id ?? uid();
+    if (numbered) numberedPlayers.set(numbered, { id, player });
     idByKey.set(player.key, id);
     return {
       id,
-      x: clampX(player.x),
-      y: clampY(player.y, courtType),
+      x: previous?.point.x ?? clampX(player.x),
+      y: previous?.point.y ?? clampY(player.y, courtType),
       label: player.label,
       team: player.team === "def" ? "def" : "att",
       // Règle import : attaquants ET défenseurs sont toujours des ronds.
@@ -137,7 +151,14 @@ function diagramToPhase(diagram: AiExerciseDiagram, courtType: "half" | "full"):
     const to = (target && positions.get(target.id)) || clampPoint(action.to, courtType);
     if (source && ["cut", "screen", "dribble"].includes(action.action)) positions.set(source.id, to);
     const isShoot = action.action === "shoot";
-    const path = action.points?.map((point) => clampPoint(point, courtType));
+    const path = action.points?.map((point, i, all) => {
+      if (!action.from || action.action === "freedraw") return clampPoint(point, courtType);
+      const t = i / Math.max(1, all.length - 1);
+      return clampPoint({
+        x: point.x + (from.x - action.from.x) * (1 - t) + (to.x - action.to.x) * t,
+        y: point.y + (from.y - action.from.y) * (1 - t) + (to.y - action.to.y) * t,
+      }, courtType);
+    });
     const control = action.action === "freedraw" ? undefined : importedCurveHandle(path, action.action === "dribble");
 
 
@@ -162,6 +183,11 @@ function diagramToPhase(diagram: AiExerciseDiagram, courtType: "half" | "full"):
     };
   });
 
+  for (const [key, entry] of numberedPlayers) {
+    const point = positions.get(entry.id);
+    if (point) previousRoster.set(key, { ...entry, point });
+  }
+
   return {
     players,
     objects,
@@ -176,7 +202,9 @@ function diagramToPhase(diagram: AiExerciseDiagram, courtType: "half" | "full"):
  * Construit LE schéma importé : un seul groupe, une phase par graphique
  * détecté, exactement comme un schéma multi-phases créé à la main.
  */
-export function importToPlaquetteSchema(result: AiExerciseImport): PlaquetteImportResult | null {
+export function importToPlaquetteSchema(
+  result: AiExerciseImport, previousPlayers: (AiDiagramPlayer & { id: string })[] = [],
+): PlaquetteImportResult | null {
   const detected = (result.diagrams?.length ? result.diagrams : [result.diagram]).filter(
     (diagram) => diagram && diagram.detected
   );
@@ -187,7 +215,12 @@ export function importToPlaquetteSchema(result: AiExerciseImport): PlaquetteImpo
   // dès qu'un graphique est un terrain complet, tout le groupe l'est.
   const courtType: "half" | "full" = detected.some((diagram) => diagram.courtType === "full") ? "full" : "half";
 
-  const phases = detected.map((diagram) => diagramToPhase(diagram, courtType));
+  const roster = new Map<string, ImportedPlayerState>();
+  for (const player of previousPlayers) {
+    const key = numberedPlayerKey(player);
+    if (key && !roster.has(key)) roster.set(key, { id: player.id, point: player, player });
+  }
+  const phases = detected.map(diagram => diagramToPhase(deduplicateDiagramPlayers(diagram), courtType, roster));
   const schemaGroupId = uid();
   const baseTitle = result.title?.trim() || "Schéma"; // idem L2593
 

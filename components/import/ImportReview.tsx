@@ -21,6 +21,7 @@
  */
 
 import { importedCurveHandle, sampleImportedArc } from "@/lib/import/curve-handle";
+import { deduplicateDiagramPlayers } from "@/lib/import/diagram-roster";
 import { ActionKindDialog } from "./ActionKindDialog";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type {
@@ -220,7 +221,7 @@ export default function ImportReview({
     const detected = diagramsOf(result);
     const source = !detected.length && result.referenceFallback ? [result.referenceFallback] : detected;
     // Copie profonde : on ne modifie jamais le résultat d'import reçu.
-    return source.map((diagram) => ({
+    return source.map(deduplicateDiagramPlayers).map((diagram) => ({
       ...diagram,
       players: diagram.players.map((player) => ({ ...player })),
       objects: diagram.objects.map((object) => ({ ...object })),
