@@ -253,7 +253,7 @@ export async function readColoredCourtDiagram(source: HTMLCanvasElement) {
   };
   const screenBreak=(path:AiPoint[],blob:Blob,terminal=false)=>{
     const pixels=new Set(blob.pixels);
-    const reach=Math.max(3,Math.round(unit*.009));
+    const reach=Math.max(3,Math.round(unit*(terminal?.012:.009)));
     const first=terminal?Math.max(reach,path.length-reach*3):reach*2;
     const last=terminal?path.length:path.length-reach*2;
     for(let i=first;i<last;i++){
