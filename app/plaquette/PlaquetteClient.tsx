@@ -149,6 +149,18 @@ const COURT_ARTWORKS = {
     half: '/plaquette/court-rose-half.webp',
     full: '/plaquette/court-rose-full.webp',
   },
+  blue: {
+    half: '/plaquette/court-blue-half.webp',
+    full: '/plaquette/court-blue-full.webp',
+  },
+  red: {
+    half: '/plaquette/court-red-half.webp',
+    full: '/plaquette/court-red-full.webp',
+  },
+  gray: {
+    half: '/plaquette/court-gray-half.webp',
+    full: '/plaquette/court-gray-full.webp',
+  },
 } as const;
 
 const COURT_STYLE_PRESETS: { id: string; label: string; style: CourtStyle }[] = [
@@ -166,17 +178,6 @@ const COURT_STYLE_PRESETS: { id: string; label: string; style: CourtStyle }[] = 
     },
   },
   {
-    id: 'classic',
-    label: 'Classique',
-    style: {
-      floorColor: '#D8B074',
-      paintColor: '#1B5E9C',
-      lineColor: '#FFFFFF',
-      borderColor: '#1B5E9C',
-      brandingColor: '#FFFFFF',
-    },
-  },
-  {
     id: 'rose',
     label: 'Rose',
     style: {
@@ -188,17 +189,21 @@ const COURT_STYLE_PRESETS: { id: string; label: string; style: CourtStyle }[] = 
       brandingColor: '#573039',
     },
   },
-  {
-    id: 'burgundy',
-    label: 'Bordeaux',
+  ...([
+    { id: 'blue', label: 'Bleu', color: '#12568E' },
+    { id: 'red', label: 'Rouge', color: '#741D2C' },
+    { id: 'gray', label: 'Gris', color: '#474858' },
+  ] as const).map(({ id, label, color }) => ({
+    id,
+    label,
     style: {
-      floorColor: '#8B2A3C',
-      paintColor: '#6B1A2C',
-      lineColor: '#FFFFFF',
-      borderColor: '#4A0F1E',
-      brandingColor: '#D4A24C',
+      ...DEFAULT_COURT_STYLE,
+      artwork: id,
+      floorColor: '#F3D7B0',
+      paintColor: color,
+      borderColor: color,
     },
-  },
+  })),
 ];
 
 const normalizeCourtStyle = (value: unknown): CourtStyle => {
@@ -215,7 +220,7 @@ const normalizeCourtStyle = (value: unknown): CourtStyle => {
     ...(COURT_FLOOR_PATTERNS.some((pattern) => pattern.id === v.floorPattern)
       ? { floorPattern: v.floorPattern }
       : {}),
-    ...((v.artwork === 'monochrome' || v.artwork === 'rose') ? { artwork: v.artwork } : {}),
+    ...((v.artwork && Object.hasOwn(COURT_ARTWORKS, v.artwork)) ? { artwork: v.artwork } : {}),
     floorColor: safeHex(v.floorColor, DEFAULT_COURT_STYLE.floorColor),
     paintColor: safeHex(v.paintColor, DEFAULT_COURT_STYLE.paintColor),
     lineColor: safeHex(v.lineColor, DEFAULT_COURT_STYLE.lineColor),
@@ -6262,15 +6267,13 @@ const exportJson = () => {
                       style={{ border: '1px solid #DDD', borderRadius: 10, background: '#fff', padding: '.38rem', cursor: 'pointer', fontSize: '.7rem', fontWeight: 800, boxShadow: '0 1px 4px rgba(0,0,0,.05)' }}
                     >
                       <span aria-hidden="true" style={{ display: 'block', padding: '4px', borderRadius: 7, marginBottom: '.3rem', background: '#F7F5F2' }}>
-                        {preset.style.artwork ? (
-                          <img src={COURT_ARTWORKS[preset.style.artwork][courtType]} alt="" style={{ display: 'block', width: '100%', height: 54, objectFit: 'contain', background: '#fff', borderRadius: 5 }} />
-                        ) : (
-                          <span style={{ display: 'block', position: 'relative', height: 54, overflow: 'hidden', borderRadius: 5, background: preset.style.floorColor, border: `4px solid ${preset.style.borderColor}`, boxSizing: 'border-box' }}>
-                          <span style={{ position: 'absolute', left: '27%', right: '27%', top: 0, height: '45%', background: preset.style.paintColor, border: `1.5px solid ${preset.style.lineColor}`, borderTop: 0 }} />
-                          <span style={{ position: 'absolute', left: '50%', bottom: -21, width: 42, height: 42, transform: 'translateX(-50%)', border: `1.5px solid ${preset.style.lineColor}`, borderRadius: '50%' }} />
-                          <span style={{ position: 'absolute', left: '8%', right: '8%', top: '70%', borderTop: `1.5px solid ${preset.style.lineColor}` }} />
-                        </span>
-                        )}
+                        <img
+                          src={preset.style.artwork
+                            ? COURT_ARTWORKS[preset.style.artwork][courtType]
+                            : `/plaquette/${courtType === 'half' ? 'half' : 'full'}-court.jpg`}
+                          alt=""
+                          style={{ display: 'block', width: '100%', height: 54, objectFit: 'contain', background: '#fff', borderRadius: 5 }}
+                        />
                       </span>
                       {preset.label}
                     </button>
