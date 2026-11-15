@@ -1,6 +1,7 @@
 'use client';
+import { ActionKindDialog } from '@/components/import/ActionKindDialog';
 import { sampleImportedArc } from '@/lib/import/curve-handle';
-import { COURT_FLOOR_PATTERNS, floorPatternShade, type CourtFloorPattern } from '@/lib/court-floor-pattern';
+import { COURT_FLOOR_PATTERNS, courtFloorProjection, floorPatternShade, isInsideThreePointArc, type CourtFloorPattern } from '@/lib/court-floor-pattern';
 import { resolveSystemDrawingPreview } from "@/lib/system-drawing-preview";
 import {drawingSessionStorage} from '@/lib/drawing-session-storage';
 
@@ -782,6 +783,7 @@ useEffect(() => {
   const [selection, setSelection] = useState<SelItem[]>([]);
   const [past, setPast] = useState<{ phases: Phase[]; current: number }[]>([]);
   const [future, setFuture] = useState<{ phases: Phase[]; current: number }[]>([]);
+  const [editingLine, setEditingLine] = useState<{ id: string; phase: number; action: string } | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [linkOpen, setLinkOpen] = useState(false);
   const [linkQuery, setLinkQuery] = useState('');
@@ -1298,19 +1300,43 @@ const currentRef = useRef(current);
     const image = ctx.getImageData(0, 0, width, height);
     const pixels = image.data;
     const textureImage = courtFloorImages.current.get(pattern);
+    const option = COURT_FLOOR_PATTERNS.find(item => item.id === pattern);
+    const tones = option && 'tones' in option ? option.tones : undefined;
     let texture: ImageData | undefined;
     if (textureImage?.complete && textureImage.naturalWidth) {
       ctx.clearRect(0, 0, width, height);
-      if (ct === 'full') {
-        ctx.drawImage(textureImage, width * .072, height * .147, width * .856, height * .706);
-      } else {
-        ctx.save();
-        ctx.translate(width * .14, height * .988);
-        ctx.rotate(-Math.PI / 2);
-        ctx.drawImage(textureImage, 0, 0, height * 1.7, width * .72);
-        ctx.restore();
+      const projection = courtFloorProjection(ct, width, height);
+      const [columns, rows] = option && 'repeats' in option ? option.repeats : [1, 1];
+      const tileWidth = projection.length / columns;
+      const tileHeight = projection.breadth / rows;
+      ctx.save();
+      ctx.translate(projection.x, projection.y);
+      ctx.rotate(projection.angle);
+      for (let row = 0; row < rows; row++) {
+        for (let col = 0; col < columns; col++) {
+          ctx.save();
+          // Boston's source has four columns and three rows. Mirror the
+          // alternate bands so perpendicular panels continue across seams.
+          const flipX = pattern === 'boston' ? row % 2 === 1 : col % 2 === 1;
+          const flipY = pattern === 'brooklyn' && row % 2 === 1;
+          ctx.translate((col + Number(flipX)) * tileWidth, (row + Number(flipY)) * tileHeight);
+          ctx.scale(flipX ? -1 : 1, flipY ? -1 : 1);
+          ctx.drawImage(textureImage, 0, 0, tileWidth, tileHeight);
+          ctx.restore();
+        }
       }
+      ctx.restore();
       texture = ctx.getImageData(0, 0, width, height);
+      if (tones) for (let y = 0; y < height; y++) {
+        for (let x = 0; x < width; x++) {
+          const index = (y * width + x) * 4;
+          if (!texture.data[index + 3]) continue;
+          const tone = isInsideThreePointArc(ct, x / width, y / height) ? tones.inside : tones.outside;
+          for (let channel = 0; channel < 3; channel++) {
+            texture.data[index + channel] += tone[channel];
+          }
+        }
+      }
     }
 
     for (let y = 0; y < height; y++) {
@@ -2575,7 +2601,8 @@ const currentRef = useRef(current);
     acts.forEach((l, i) => {
       if (anim && !visibleLineIds.has(l.id)) return;
       const poly = linePoly(canvas, l); if (!poly.length) return;
-      const m = poly[Math.floor(poly.length / 2)] || poly[0];
+      const lengths = arcLengths(poly);
+      const m = pointAtLength(poly, lengths, lengths[lengths.length - 1] / 2).pt;
       drawActionNumber(ctx, m.x, m.y, i + 1);
     });
 
@@ -3387,9 +3414,20 @@ const owners=ownersAtClock(sched,ballEventsRef.current,clock);
     const canvas = canvasRef.current; if (!canvas) return;
     const rect = canvas.getBoundingClientRect();
     const P = { x: ((e.clientX - rect.left) / rect.width) * canvas.width, y: ((e.clientY - rect.top) / rect.height) * canvas.height };
-    // double-clic sur un point de contrôle d'une trajectoire sélectionnée → suppression du point
+    const hit = hitTest(canvas, P);
     const lh = lineHandles(canvas);
-    if (lh) {
+    const controlHit = lh?.ctrls.some(point => Math.hypot(P.x - point.x, P.y - point.y) < 12);
+    if (!e.altKey && !animPosRef.current && (hit?.type === 'line' || controlHit)) {
+      const phase = currentRef.current;
+      const id = hit?.type === 'line' ? hit.id : lh?.id;
+      const line = phasesRef.current[phase]?.lines.find(item => item.id === id);
+      if (line && ACTION_KINDS.includes(line.action)) {
+        setSelection([{ type: 'line', id: line.id }]);
+        setEditingLine({ id: line.id, phase, action: line.action });
+        return;
+      }
+    }
+    if (e.altKey && lh) {
       for (let k = 0; k < lh.ctrls.length; k++) {
         if (Math.hypot(P.x - lh.ctrls[k].x, P.y - lh.ctrls[k].y) < 16) {
           pushHistory();
@@ -5879,6 +5917,43 @@ const exportJson = () => {
         )}
 
 
+
+        {editingLine && (
+          <ActionKindDialog
+            current={editingLine.action}
+            choices={[
+              { value: 'cut', label: 'Déplacement' }, { value: 'dribble', label: 'Dribble' },
+              { value: 'pass', label: 'Passe' }, { value: 'screen', label: 'Écran' },
+              { value: 'shoot', label: 'Tir' },
+            ]}
+            onClose={() => setEditingLine(null)}
+            onChange={action => {
+              setEditingLine(null);
+              if (action === editingLine.action) return;
+              pushHistory();
+              setPhases(previous => previous.map((phase, index) => index !== editingLine.phase ? phase : {
+                ...phase,
+                lines: phase.lines.map(line => {
+                  if (line.id !== editingLine.id) return line;
+                  const moving = ['cut', 'dribble', 'screen'].includes(action);
+                  return {
+                    ...line, action,
+                    points: line.action === 'dribble' || action === 'dribble' ? undefined : line.points,
+                    target: action === 'shoot' ? 'basket' : undefined,
+                    targetBasketId: undefined,
+                    targetPlayerId: action === 'pass' ? line.targetPlayerId : undefined,
+                    targetMode: action === 'pass' ? line.targetMode : undefined,
+                    createdTargetPoint: action === 'pass' ? line.createdTargetPoint : undefined,
+                    targetMachineId: action === 'pass' ? line.targetMachineId : undefined,
+                    sourceMachineId: moving ? undefined : line.sourceMachineId,
+                    returnPlayerId: undefined,
+                    returnMachineId: undefined,
+                  };
+                }),
+              }));
+            }}
+          />
+        )}
 
         {courtBrandingOpen && (
           <div onClick={() => setCourtBrandingOpen(false)} style={{ position:'fixed', inset:0, background:'rgba(15,15,18,.56)', display:'flex', alignItems:'center', justifyContent:'center', zIndex:4200, padding:'1rem' }}>
