@@ -189,6 +189,7 @@ function diagramToPhase(
   }
 
   return {
+    photoImported: true,
     players,
     objects,
     lines,

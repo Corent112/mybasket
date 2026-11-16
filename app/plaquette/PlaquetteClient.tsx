@@ -1,5 +1,6 @@
 'use client';
 import { ActionKindDialog } from '@/components/import/ActionKindDialog';
+import { linkImportedDrawingPhases } from '@/lib/import/link-drawing-phases';
 import { sampleImportedArc } from '@/lib/import/curve-handle';
 import { COURT_FLOOR_PATTERNS, courtFloorProjection, floorPatternShade, isInsideThreePointArc, type CourtFloorPattern } from '@/lib/court-floor-pattern';
 import { resolveSystemDrawingPreview } from "@/lib/system-drawing-preview";
@@ -316,7 +317,7 @@ const EDIT_EXERCISE_ID_KEY = "mybasket_edit_exercise_id";
   type Line = { returnPlayerId?: string; sourceMachineId?: string; targetMachineId?: string; returnMachineId?: string; id: string; action: string; from: Pt; to: Pt; ctrls?: Pt[]; ctrl?: Pt; points?: Pt[]; rotation?: number; color?: string; target?: 'basket'; targetBasketId?: string; sourcePlayerId?: string; targetPlayerId?: string; order?: number; startMode?: 'withPrevious' | 'afterPrevious'; duration?: number; targetMode?: 'player' | 'playerCurrentPoint'; createdTargetPoint?: Pt };
   type ActSched = { line: Line; start: number; dur: number; end: number };
   type Sched = { idx: number; start: number; span: number; end: number; actSched: ActSched[] };
-  type Phase = DrawingOptionPhase & { players: Player[]; objects: Obj[]; lines: Line[]; notes: string; duration?: number; startMode?: 'withPrevious' | 'afterPrevious' };
+  type Phase = DrawingOptionPhase & { photoImported?: boolean; players: Player[]; objects: Obj[]; lines: Line[]; notes: string; duration?: number; startMode?: 'withPrevious' | 'afterPrevious' };
   type Tool =
     | { kind: 'none' }
     | { kind: 'player'; label: string; team: 'att' | 'def'; shape: 'circle' | 'square'; coach?: boolean }
@@ -719,8 +720,9 @@ useEffect(() => {
       }
 
       if (schemaData.phases) {
-        setPhases(schemaData.phases);
-        phasesRef.current = schemaData.phases;
+        const linked = linkImportedDrawingPhases(schemaData.phases as Phase[]);
+        setPhases(linked);
+        phasesRef.current = linked;
       }
 
       if (schemaData.sheet) {
@@ -2899,10 +2901,7 @@ if (anim && anim.balls) {
       if (!phasesRef.current[s.idx].players.some((p) => p.id === playerId)) continue;
       if (s.start <= clock && s.start >= chosenStart) { chosenStart = s.start; chosen = s; }
     }
-    if (!chosen) {
-      for (const s of sched) { const pl = phasesRef.current[s.idx].players.find((p) => p.id === playerId); if (pl) return { x: pl.x, y: pl.y }; }
-      return null;
-    }
+    if (!chosen) return null;
     return phasePlayerPosAt(chosen, playerId, clock - chosen.start);
   };
 
@@ -3219,8 +3218,12 @@ const owners=ownersAtClock(sched,ballEventsRef.current,clock);
   };
 
   const playAnim = (phaseIndices?: number[]) => {
-    const phs = phasesRef.current;
+    const phs = linkImportedDrawingPhases(phasesRef.current);
     if (!phs.length) return;
+    if (phs !== phasesRef.current) {
+      phasesRef.current = phs;
+      setPhases(phs);
+    }
     const availableOptions = drawingOptions(phs);
     const path = phaseIndices || drawingPath(phs, phs[currentRef.current]?.option?.id || availableOptions.find(option => option.id === activeOptionRef.current)?.id || availableOptions[0]?.id);
     const hasAction = path.some((index) => { const p = phs[index]; return p.lines.some((l) => MOVE_KINDS.includes(l.action) || BALL_KINDS.includes(l.action)); });
@@ -4200,7 +4203,7 @@ useEffect(() => {
       const data = await getPlaquetteTransfer<any>(LOAD_KEY);
       if (!data || !alive || loadToken !== drawingLoadTokenRef.current) return;
 
-      const loadedPhases = Array.isArray(data.phases) ? data.phases : [];
+      const loadedPhases = Array.isArray(data.phases) ? linkImportedDrawingPhases(data.phases as Phase[]) : [];
       const loadedCurrent =
         typeof data.current === "number"
           ? data.current
@@ -5046,7 +5049,7 @@ const exportJson = () => {
     for (const key of ['mybasket_drawing_source_system_id','mybasket_current_system_id','mybasket_edit_systeme_id','mybasket_edit_system_id']) localStorage.removeItem(key);
     drawingSessionStorage.setItem(EDIT_EXERCISE_ID_KEY, exercise.id);
     drawingSessionStorage.setItem(EDIT_INDEX_KEY, String(index));
-    const loaded = JSON.parse(JSON.stringify(data.phases)) as Phase[];
+    const loaded = linkImportedDrawingPhases(data.phases as Phase[]);
     phasesRef.current = loaded; currentRef.current = 0; setPhases(loaded); setCurrent(0);
     activeOptionRef.current = null; setActiveOptionId(null); setOptionFormOpen(false);
     setTitle(exercise.title); setSelection([]); selectionRef.current = []; setPast([]); setFuture([]);
