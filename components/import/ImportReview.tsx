@@ -912,8 +912,9 @@ export default function ImportReview({
 
   const reviewItems = useMemo(() => reviewItemsOfDiagram(diagram), [diagram]);
   const uncertain = reviewItems.filter(item => item.selection?.kind === "action");
-  const doubtful = reviewItems.filter(item => stage === "players" ? item.selection?.kind !== "action"
-    : showUncertain || item.selection?.kind !== "action");
+  const doubtful = stage === "players"
+    ? reviewItems.filter(item => item.selection?.kind !== "action")
+    : reviewItems;
   const omittedCount = diagrams.reduce((n,item) => n+item.actions.filter(action => needsReview(action.confidence) || requiresStartingPlayer(action)).length,0);
   const cleanDiagrams = diagrams.map(item => {
     const accepted = item.actions.filter(action => !needsReview(action.confidence) && !requiresStartingPlayer(action));

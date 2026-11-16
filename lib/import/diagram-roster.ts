@@ -121,22 +121,43 @@ export function reconcileDiagramRosters(diagrams: AiExerciseDiagram[]): AiExerci
   return phases.map((diagram, index) => {
     const next = phases[index + 1];
     if (!next || diagram.courtType !== next.courtType) return diagram;
+    const recovered: AiDiagramAction[] = [];
     const actions = diagram.actions.map((action, actionIndex) => {
-      if (action.action !== "cut" || (action.confidence ?? 1) >= .5 || !action.from || !action.fromPlayer) return action;
-      const player = diagram.players.find(candidate => candidate.key === action.fromPlayer);
-      const number = player && player.labelConfident !== false && numberedPlayerKey(player);
-      if (!number) return action;
-      const previous = diagram.actions.slice(0, actionIndex).findLast(candidate =>
-        candidate.fromPlayer === action.fromPlayer && travels(candidate));
-      if (previous?.action !== "screen" || (previous.confidence ?? 1) < .65
-        || distance(previous.to, action.from) > .012) return action;
-      const arrivals = next.players.filter(candidate => candidate.labelConfident !== false
-        && numberedPlayerKey(candidate) === number && distance(candidate, action.to) < .04);
-      const competing = diagram.actions.some(candidate => candidate !== action && candidate.action === "cut"
-        && candidate.fromPlayer === action.fromPlayer && candidate.from && distance(candidate.from, previous.to) < .015);
-      if (arrivals.length !== 1 || competing) return action;
-      return { ...action, confidence: .78, source: "Coupe après écran confirmée par la position sur la phase suivante" };
+      if (action.action !== "cut" || (action.confidence ?? 1) >= .5 || !action.from) return action;
+      const candidates = diagram.actions.slice(0, actionIndex).filter(screen =>
+        screen.action === "screen" && screen.fromPlayer && (screen.confidence ?? 1) >= .65
+        && distance(screen.to, action.from!) < (screen.fromPlayer === action.fromPlayer ? .012 : .03));
+      const corroborated = candidates.filter(screen => {
+        const player = diagram.players.find(candidate => candidate.key === screen.fromPlayer);
+        const number = player && player.labelConfident !== false && numberedPlayerKey(player);
+        if (!number) return false;
+        return next.players.filter(candidate => candidate.labelConfident !== false
+          && numberedPlayerKey(candidate) === number && distance(candidate, action.to) < .04).length === 1
+          && !diagram.actions.some(candidate => candidate !== action && candidate.action === "cut"
+            && candidate.fromPlayer === screen.fromPlayer && candidate.from && distance(candidate.from, screen.to) < .015)
+          && !diagram.actions.slice(diagram.actions.indexOf(screen) + 1, actionIndex).some(candidate =>
+            candidate.fromPlayer === screen.fromPlayer && travels(candidate));
+      });
+      if (corroborated.length !== 1) return action;
+      const screen = corroborated[0];
+      const cut = { ...action, from: screen.to, fromPlayer: screen.fromPlayer,
+        points: action.points?.length ? [screen.to, ...action.points.slice(1)] : undefined,
+        confidence: .78, source: "Coupe après écran confirmée par la position sur la phase suivante" };
+      recovered.push(cut);
+      return cut;
     });
-    return { ...diagram, actions };
+    for (const pass of actions.filter(action => action.action === "pass")) {
+      const receivers = recovered.filter(cut => cut.fromPlayer !== pass.fromPlayer && distance(cut.to, pass.to) < .025);
+      if (receivers.length !== 1) continue;
+      const cut = receivers[0];
+      const oldReceiver = diagram.players.find(player => player.key === pass.toPlayer);
+      if (oldReceiver && oldReceiver.key !== cut.fromPlayer && distance(oldReceiver, pass.to) < .035) continue;
+      const passIndex = actions.indexOf(pass);
+      const cutIndex = actions.indexOf(cut);
+      const linked = { ...pass, toPlayer: cut.fromPlayer };
+      actions.splice(passIndex, 1);
+      actions.splice(Math.max(passIndex, cutIndex), 0, linked);
+    }
+    return { ...diagram, actions: recovered.length ? actions.map((action, index) => ({ ...action, order: index + 1 })) : actions };
   });
 }
