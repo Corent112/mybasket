@@ -685,15 +685,31 @@ export async function readColoredCourtDiagram(source: HTMLCanvasElement) {
     }
   };
   linkPassLandings();
-  // An unassigned pass can meet a cut that starts at the end of an
-  // screen. Look for the intervening solid stroke before linking them.
-  for (const pass of actions.filter(action=>action.action==="pass"&&!action.toPlayer)) {
+  // A pass can meet a cut at the end of a screen, even if a nearby
+  // stationary player was initially selected as the receiver.
+  for (const pass of actions.filter(action=>action.action==="pass")) {
     const catchPoint=toImage(pass.to);
+    const receiver=roster.find(item=>item.player.key===pass.toPlayer);
+    if(receiver&&distance(receiver.center,catchPoint)<unit*.037)continue;
+    if(actions.some(cut=>cut.action==="cut"&&cut.fromPlayer===pass.toPlayer&&distance(cut.to,pass.to)<.022))continue;
     const continuations=actions.filter(action=>action.action==="screen"&&action.fromPlayer&&action.fromPlayer!==pass.fromPlayer).flatMap(screen=>{
       const start=toImage(screen.to);
       const dx=catchPoint.x-start.x,dy=catchPoint.y-start.y,length=Math.hypot(dx,dy);
       if(length<unit*.075||length>unit*.29)return [];
-      return traces.filter(blob=>!used.has(blob)&&traceBounds(blob)>length*.55&&traceBounds(blob)<length*1.45)
+      const corridor=new Uint8Array(ink.length);
+      const margin=unit*.027;
+      // The arrowhead can touch the pass and join its component. Isolate
+      // the shaft running from the screen toward the receiving point.
+      for(let y=Math.max(y0,Math.floor(Math.min(start.y,catchPoint.y)-margin));y<=Math.min(y1,Math.ceil(Math.max(start.y,catchPoint.y)+margin));y++)
+        for(let x=Math.max(x0,Math.floor(Math.min(start.x,catchPoint.x)-margin));x<=Math.min(x1,Math.ceil(Math.max(start.x,catchPoint.x)+margin));x++){
+          const i=y*w+x;
+          const along=((x-start.x)*dx+(y-start.y)*dy)/length;
+          const across=((y-start.y)*dx-(x-start.x)*dy)/length;
+          if(ink[i]&&along>=-margin&&along<=length+margin&&Math.abs(across)<=margin)corridor[i]=1;
+        }
+      const originals=traces.filter(blob=>!used.has(blob)&&traceBounds(blob)>length*.55&&traceBounds(blob)<length*1.45);
+      const isolated=components(corridor,w,Math.round(length*.5));
+      return [...originals,...isolated]
         .flatMap(blob=>{
           const pixels=blob.pixels.map(dot);
           const entry=pixels.reduce((best,p)=>distance(p,start)<distance(best,start)?p:best);
@@ -708,11 +724,17 @@ export async function readColoredCourtDiagram(source: HTMLCanvasElement) {
             bin.x+=p.x;bin.y+=p.y;bin.count++;
           }
           const curve=bins.filter(bin=>bin.count).map(bin=>canonical({x:bin.x/bin.count,y:bin.y/bin.count}));
+          if(curve.length<3)return [];
           return [{screen,blob,curve,score:distance(entry,start)+distance(tip,catchPoint)}];
         });
     }).sort((a,b)=>a.score-b.score);
     const match=continuations[0];
-    if(!match||(continuations[1]&&continuations[1].score-match.score<unit*.015))continue;
+    const competitor=continuations.find(candidate=>candidate.screen!==match?.screen);
+    if(!match||(competitor&&competitor.score-match.score<unit*.015))continue;
+    const existing=actions.find(action=>action.action==="cut"&&action.from&&distance(action.from,match.screen.to)<.035
+      &&distance(action.to,pass.to)<.035);
+    if(existing&&(existing.confidence??1)>=.65&&existing.fromPlayer!==match.screen.fromPlayer)continue;
+    if(existing)actions.splice(actions.indexOf(existing),1);
     used.add(match.blob);
     const cut:AiDiagramAction={action:"cut",from:match.screen.to,to:pass.to,
       points:[match.screen.to,...match.curve,pass.to],fromPlayer:match.screen.fromPlayer,
