@@ -123,11 +123,11 @@ const containsWord = (haystack: string, needle: string): boolean =>
 /* Entrées : image et vidéo                                                   */
 /* -------------------------------------------------------------------------- */
 
-function drawToCanvas(source: CanvasImageSource, width: number, height: number): HTMLCanvasElement {
+function drawToCanvas(source: CanvasImageSource, width: number, height: number, upscale = true): HTMLCanvasElement {
   const longest = Math.max(width, height, 1);
   let scale = 1;
   if (longest > MAX_SIDE) scale = MAX_SIDE / longest;
-  else if (longest < MIN_SIDE) scale = Math.min(MAX_UPSCALE, MIN_SIDE / longest);
+  else if (upscale && longest < MIN_SIDE) scale = Math.min(MAX_UPSCALE, MIN_SIDE / longest);
 
   const canvas = document.createElement("canvas");
   canvas.width = Math.max(1, Math.round(width * scale));
@@ -146,7 +146,7 @@ async function fileToCanvas(file: File): Promise<HTMLCanvasElement> {
   if (typeof createImageBitmap === "function") {
     try {
       const bitmap = await createImageBitmap(file);
-      const canvas = drawToCanvas(bitmap, bitmap.width, bitmap.height);
+      const canvas = drawToCanvas(bitmap, bitmap.width, bitmap.height, false);
       bitmap.close?.();
       return canvas;
     } catch {
@@ -167,7 +167,7 @@ async function fileToCanvas(file: File): Promise<HTMLCanvasElement> {
         );
       element.src = url;
     });
-    return drawToCanvas(image, image.naturalWidth, image.naturalHeight);
+    return drawToCanvas(image, image.naturalWidth, image.naturalHeight, false);
   } finally {
     URL.revokeObjectURL(url);
   }
@@ -1082,7 +1082,10 @@ export async function scanExerciseLocally(
   const isVideo = file.type.startsWith("video/");
   onStatus?.(isVideo ? "Extraction des vues utiles de la vidéo…" : "Préparation de la photo…");
 
-  const canvases = isVideo ? await videoFrames(file, onStatus) : [await fileToCanvas(file)];
+  const photo = isVideo ? null : await fileToCanvas(file);
+  const canvases = photo
+    ? [Math.max(photo.width, photo.height) < MIN_SIDE ? drawToCanvas(photo, photo.width, photo.height) : photo]
+    : await videoFrames(file, onStatus);
   debug.setFrames(canvases.length);
   for (const frame of canvases) debug.addImageSize({ w: frame.width, h: frame.height });
   debug.note(`${canvases.length} image(s) à analyser, ${canvases.map((c) => `${c.width}×${c.height}`).join(", ")}`);
@@ -1132,8 +1135,10 @@ export async function scanExerciseLocally(
       // Single upright paper diagrams: calibrate the basketball markings before
       // looking for strokes. Keep these proposals in the review rather than
       // allowing a high stroke count to promote a false court.
-      if (!isVideo && !labelled.length) {
-        const digital = await debug.time("schéma-couleur", () => readColoredCourtDiagram(canvas)).catch(() => null);
+      if (photo && !labelled.length) {
+        // Upscaling for OCR and shrinking again can join strokes to player
+        // rings, blunt arrowheads and hide the oscillations of a dribble.
+        const digital = await debug.time("schéma-couleur", () => readColoredCourtDiagram(photo)).catch(() => null);
         if (digital) {
           const courtReference = makeCourtReference(digital.canvas, digital.play);
           state.rectifiedImage = courtReference?.url;
