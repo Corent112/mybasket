@@ -153,7 +153,7 @@ export async function readColoredCourtDiagram(source: HTMLCanvasElement) {
       g.fillStyle="#000";
       for(const i of largest.pixels)g.fillRect(22+(i%glyphWidth-largest.x0)*z,22+(Math.floor(i/glyphWidth)-largest.y0)*z,z+.1,z+.1);
       const word=await ocrLandmarkGlyph(crop,false,true);
-      const glyph=word&&word.confidence>=.65?null:await ocrLandmarkGlyph(crop,true,true);
+      const glyph=word&&word.confidence>=.72?null:await ocrLandmarkGlyph(crop,true,true);
       read=glyph&&glyph.confidence>(word?.confidence??0)?glyph:word;
       // The digit 1 is a narrow vertical stem; disambiguate it from a 4
       // when compression changes the OCR result.
@@ -162,8 +162,8 @@ export async function readColoredCourtDiagram(source: HTMLCanvasElement) {
       if(bw/bh<.49&&columns.some(count=>count>bh*.82)) read={text:"1",confidence:.80};
     }
     const n=roster.length+1;
-    const numbered=!!read&&read.confidence>=.5;
-    roster.push({center:p,radius,player:{key:`ring-${n}`,label:read&&read.confidence>=.45?read.text:"",...canonical(p),team:"att",
+    const numbered=!!read&&read.confidence>=.72;
+    roster.push({center:p,radius,player:{key:`ring-${n}`,label:numbered ? read!.text : "",...canonical(p),team:"att",
       type:numbered?"attacker":"unknown",typeConfidence:numbered ? .94 : .35,labelConfident:numbered,confidence:.94,
       source:"Centre du cercle numéroté détecté"}});
   }

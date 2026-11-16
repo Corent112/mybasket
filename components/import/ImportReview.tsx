@@ -21,7 +21,7 @@
  */
 
 import { hasImportedTurnback, importedCurveHandle, sampleImportedArc } from "@/lib/import/curve-handle";
-import { deduplicateDiagramPlayers } from "@/lib/import/diagram-roster";
+import { reconcileDiagramRosters } from "@/lib/import/diagram-roster";
 import { ActionKindDialog } from "./ActionKindDialog";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type {
@@ -159,13 +159,13 @@ export function reviewItemsOfDiagram(diagram: AiExerciseDiagram | undefined): Re
     const type: AiDetectionType = player.type ?? (player.team === "def" ? "defender" : "attacker");
     if (!needsReview(player.typeConfidence, type) && player.labelConfident !== false) return;
     list.push({
-      label: `Joueur ${player.label}`,
+      label: `Joueur ${player.label || "?"}`,
       selection: { kind: "player", index },
       detail:
-        type === "unknown"
+        player.labelConfident === false
+          ? "numéro à confirmer"
+          : type === "unknown"
           ? "attaquant ou défenseur ?"
-          : player.labelConfident === false
-          ? "numéro illisible"
           : `type peu sûr (${Math.round((player.typeConfidence ?? 0) * 100)} %)`,
     });
   });
@@ -221,7 +221,7 @@ export default function ImportReview({
     const detected = diagramsOf(result);
     const source = !detected.length && result.referenceFallback ? [result.referenceFallback] : detected;
     // Copie profonde : on ne modifie jamais le résultat d'import reçu.
-    return source.map(deduplicateDiagramPlayers).map((diagram) => ({
+    return reconcileDiagramRosters(source).map((diagram) => ({
       ...diagram,
       players: diagram.players.map((player) => ({ ...player })),
       objects: diagram.objects.map((object) => ({ ...object })),
@@ -496,7 +496,7 @@ export default function ImportReview({
       ctx.font = `700 ${String(player.label).length > 1 ? 14 : 16}px system-ui, sans-serif`;
       ctx.textAlign = "center";
       ctx.textBaseline = "middle";
-      ctx.fillText(String(player.label || (type === "unknown" ? "?" : "")), 0, 1);
+      ctx.fillText(String(player.label || (doubt ? "?" : "")), 0, 1);
       ctx.restore();
     });
   }, [diagram, courtType, overlay, overlayReady, selection, nativeCourtReady, tracePreview, inkColor, stage, showUncertain]);
