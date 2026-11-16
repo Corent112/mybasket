@@ -191,6 +191,7 @@ export type AiExerciseImport = {
  * imageData.
  */
 export type PlaquettePhase = {
+  photoImported?: boolean;
   players: any[];
   objects: any[];
   lines: any[];

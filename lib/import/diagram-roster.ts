@@ -1,6 +1,6 @@
 import type { AiDiagramPlayer, AiExerciseDiagram } from "./types";
 
-export function numberedPlayerKey(player: AiDiagramPlayer): string | undefined {
+export function numberedPlayerKey(player: Pick<AiDiagramPlayer, "label" | "team" | "coach">): string | undefined {
   const number = /^(?:[AX]\s*)?(\d+)$/i.exec(player.label.trim())?.[1];
   return number && !player.coach ? `${player.team}:${Number(number)}` : undefined;
 }
