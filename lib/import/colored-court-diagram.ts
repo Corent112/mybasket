@@ -396,7 +396,9 @@ export async function readColoredCourtDiagram(source: HTMLCanvasElement) {
       const from=source?.player??canonical(origin),to=canonical(terminal<0?endpoint:shaft[terminal]??endpoint);
       const stroke=sampleStroke(terminal<0?shaft:shaft.slice(0,terminal));
       const kind=returningCut||approach ? "cut" : ballHandler || isZigzag(shaft,unit) ? "dribble" : terminal>=0 ? "screen" : "cut";
-      const bar=approach?.bar??(!returningCut&&kind==="cut" ? screenBreak(shaft,trace) : -1);
+      // Following a bend recovers the arrow tip, but an internal bar can
+      // still end a screen before the arrow starts a separate cut.
+      const bar=approach?.bar??(kind==="cut" ? screenBreak(shaft,trace) : -1);
       const split=bar>=0&&distance(shaft[bar],endpoint)>=unit*.075 ? bar : -1;
       const departure=split<0 ? from : canonical(shaft[split]);
       if(split>=0){
