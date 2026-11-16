@@ -790,7 +790,7 @@ useEffect(() => {
   const [selection, setSelection] = useState<SelItem[]>([]);
   const [past, setPast] = useState<{ phases: Phase[]; current: number }[]>([]);
   const [future, setFuture] = useState<{ phases: Phase[]; current: number }[]>([]);
-  const [editingLine, setEditingLine] = useState<{ id: string; phase: number; action: string } | null>(null);
+  const [editingLine, setEditingLine] = useState<{ id: string; phase: number } | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [linkOpen, setLinkOpen] = useState(false);
   const [linkQuery, setLinkQuery] = useState('');
@@ -3432,7 +3432,7 @@ const owners=ownersAtClock(sched,ballEventsRef.current,clock);
       const line = phasesRef.current[phase]?.lines.find(item => item.id === id);
       if (line && ACTION_KINDS.includes(line.action)) {
         setSelection([{ type: 'line', id: line.id }]);
-        setEditingLine({ id: line.id, phase, action: line.action });
+        setEditingLine({ id: line.id, phase });
         return;
       }
     }
@@ -5124,6 +5124,59 @@ const exportJson = () => {
   const playerLabelById = (id?: string) => { if (!id || !ph) return '?'; const p = ph.players.find((z) => z.id === id); return p ? p.label : ph.objects.some(o=>o.id===id&&o.kind==='shootingMachine')?'Machine':'?'; };
   const actionIcon = (a: string) => (a === 'pass' ? '→' : a === 'dribble' ? '~' : a === 'cut' ? '↗' : a === 'screen' ? '⊥' : a === 'shoot' ? '◎' : '•');
   const actionName = (a: string) => (a === 'pass' ? 'Passe' : a === 'dribble' ? 'Dribble' : a === 'cut' ? 'Cut' : a === 'screen' ? 'Écran' : a === 'shoot' ? 'Tir' : a);
+  const editedPhase = editingLine ? phases[editingLine.phase] : undefined;
+  const editedAction = editedPhase?.lines.find(line => line.id === editingLine?.id);
+  const editedReceiver = editedAction?.targetPlayerId
+    ?? (editedAction?.targetMachineId ? `machine:${editedAction.targetMachineId}` : '');
+  const applyActionEdit = (action: string, receiver: string) => {
+    setEditingLine(null);
+    if (!editingLine || !editedPhase || !editedAction) return;
+    const changingKind = action !== editedAction.action;
+    const changingReceiver = action === 'pass' && receiver !== editedReceiver;
+    if (!changingKind && !changingReceiver) return;
+    const playerId = action === 'pass' && receiver && !receiver.startsWith('machine:') ? receiver : undefined;
+    const machineId = action === 'pass' && receiver.startsWith('machine:') ? receiver.slice(8) : undefined;
+    const updateEndpoint = changingReceiver || (changingKind && editedAction.action === 'pass');
+    const oldTo = updateEndpoint ? resolveTo(editedAction) : editedAction.to;
+    const arrival = buildPhaseActionSched(editingLine.phase).find(entry => entry.line.id === editedAction.id)?.end;
+    const to = changingReceiver && playerId
+      ? (arrival !== undefined ? getPlayerPositionAtTime(editingLine.phase, playerId, arrival) : null)
+        ?? simulatePhase(editedPhase, editedAction.id).pos[playerId] ?? oldTo
+      : oldTo;
+    const shift = (point: Pt, weight: number) => ({
+      x: point.x + (to.x - editedAction.to.x) * weight,
+      y: point.y + (to.y - editedAction.to.y) * weight,
+    });
+    pushHistory();
+    setPhases(previous => previous.map((phase, index) => index !== editingLine.phase ? phase : {
+      ...phase,
+      lines: phase.lines.map(line => {
+        if (line.id !== editedAction.id) return line;
+        const moving = ['cut', 'dribble', 'screen'].includes(action);
+        return {
+          ...line, action,
+          ...(updateEndpoint ? {
+            to,
+            ctrls: line.ctrls?.map((point, i, controls) => shift(point, (i + 1) / (controls.length + 1))),
+            ctrl: line.ctrl ? shift(line.ctrl, .5) : undefined,
+          } : {}),
+          points: changingKind && (line.action === 'dribble' || action === 'dribble') ? undefined
+            : updateEndpoint ? line.points?.map((point, i, points) => shift(point, i / Math.max(1, points.length - 1)))
+            : line.points,
+          target: action === 'shoot' ? 'basket' as const : undefined,
+          targetBasketId: changingKind ? undefined : line.targetBasketId,
+          targetPlayerId: playerId,
+          targetMode: playerId ? changingReceiver ? 'playerCurrentPoint' as const : line.targetMode : undefined,
+          createdTargetPoint: playerId ? changingReceiver ? to : line.createdTargetPoint : undefined,
+          targetMachineId: machineId,
+          sourceMachineId: moving ? undefined : line.sourceMachineId,
+          returnPlayerId: changingKind ? undefined : line.returnPlayerId,
+          returnMachineId: changingKind ? undefined : line.returnMachineId,
+        };
+      }),
+    }));
+  };
+
   const actionWho = (l: Line) => (l.action === 'pass' ? `${playerLabelById(l.sourcePlayerId || l.sourceMachineId)}→${playerLabelById(l.targetPlayerId || l.targetMachineId)}` : playerLabelById(l.sourcePlayerId));
   const toggleActionWith = (lineId: string) => { pushHistory(); updatePhase((p) => ({ ...p, lines: p.lines.map((l) => (l.id === lineId ? { ...l, startMode: l.startMode === 'withPrevious' ? 'afterPrevious' : 'withPrevious' } : l)) })); };
 
@@ -5935,40 +5988,22 @@ const exportJson = () => {
 
 
 
-        {editingLine && (
+        {editedAction && editedPhase && (
           <ActionKindDialog
-            current={editingLine.action}
+            current={editedAction.action}
             choices={[
               { value: 'cut', label: 'Déplacement' }, { value: 'dribble', label: 'Dribble' },
               { value: 'pass', label: 'Passe' }, { value: 'screen', label: 'Écran' },
               { value: 'shoot', label: 'Tir' },
             ]}
+            receiver={editedReceiver}
+            receivers={[
+              ...editedPhase.players.filter(player => player.id !== editedAction.sourcePlayerId)
+                .map(player => ({ value: player.id, label: player.label || 'Sans numéro' })),
+              ...(editedAction.targetMachineId ? [{value: `machine:${editedAction.targetMachineId}`, label: 'Machine à tirs'}] : []),
+            ]}
             onClose={() => setEditingLine(null)}
-            onChange={action => {
-              setEditingLine(null);
-              if (action === editingLine.action) return;
-              pushHistory();
-              setPhases(previous => previous.map((phase, index) => index !== editingLine.phase ? phase : {
-                ...phase,
-                lines: phase.lines.map(line => {
-                  if (line.id !== editingLine.id) return line;
-                  const moving = ['cut', 'dribble', 'screen'].includes(action);
-                  return {
-                    ...line, action,
-                    points: line.action === 'dribble' || action === 'dribble' ? undefined : line.points,
-                    target: action === 'shoot' ? 'basket' : undefined,
-                    targetBasketId: undefined,
-                    targetPlayerId: action === 'pass' ? line.targetPlayerId : undefined,
-                    targetMode: action === 'pass' ? line.targetMode : undefined,
-                    createdTargetPoint: action === 'pass' ? line.createdTargetPoint : undefined,
-                    targetMachineId: action === 'pass' ? line.targetMachineId : undefined,
-                    sourceMachineId: moving ? undefined : line.sourceMachineId,
-                    returnPlayerId: undefined,
-                    returnMachineId: undefined,
-                  };
-                }),
-              }));
-            }}
+            onChange={applyActionEdit}
           />
         )}
 
