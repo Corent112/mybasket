@@ -647,13 +647,16 @@ export async function readColoredCourtDiagram(source: HTMLCanvasElement) {
         kind==="dribble"?"Dribble : oscillations et pointe de flèche":"Trajet continu et pointe de flèche"});
     used.add(trace);
   }
-  for(const pass of actions.filter(action=>action.action==="pass"&&!action.toPlayer)){
-    const landing=actions.filter(action=>action.action==="cut"&&action.fromPlayer&&action.fromPlayer!==pass.fromPlayer)
-      .map(action=>({action,gap:distance(action.to,pass.to)})).sort((a,b)=>a.gap-b.gap);
-    if(landing[0]?.gap<(pass.continuationChoice?.alternate?.03:.021)&&(!landing[1]||landing[1].gap-landing[0].gap>.012)){
-      pass.toPlayer=landing[0].action.fromPlayer;
+  const linkPassLandings=()=>{
+    for(const pass of actions.filter(action=>action.action==="pass"&&!action.toPlayer)){
+      const landing=actions.filter(action=>action.action==="cut"&&action.fromPlayer&&action.fromPlayer!==pass.fromPlayer)
+        .map(action=>({action,gap:distance(action.to,pass.to)})).sort((a,b)=>a.gap-b.gap);
+      if(landing[0]?.gap<(pass.continuationChoice?.alternate?.03:.021)&&(!landing[1]||landing[1].gap-landing[0].gap>.012)){
+        pass.toPlayer=landing[0].action.fromPlayer;
+      }
     }
-  }
+  };
+  linkPassLandings();
   // An unassigned pass can meet a cut that starts at the end of an
   // screen. Look for the intervening solid stroke before linking them.
   for (const pass of actions.filter(action=>action.action==="pass"&&!action.toPlayer)) {
@@ -705,14 +708,7 @@ export async function readColoredCourtDiagram(source: HTMLCanvasElement) {
     const {screen}=closest;
     cut.from=screen.to;
     cut.fromPlayer=screen.fromPlayer;
-    const primary=actions.find(action=>action!==cut&&action.action==="cut"&&action.fromPlayer===screen.fromPlayer
-      &&action.from&&distance(action.from,screen.to)<.008&&!action.continuationChoice?.alternate);
-    if(primary){
-      const group=`screen-${actions.indexOf(screen)}`;
-      primary.continuationChoice={group,alternate:false};
-      cut.continuationChoice={group,alternate:true};
-    }
-    cut.source=primary?"Autre déplacement possible après l’écran":"Déplacement proposé après l’écran : à confirmer";
+    cut.source="Déplacement proposé après l’écran : à confirmer";
     if(cut.points?.length)cut.points=[screen.to,...cut.points.slice(1)];
     if(actions.indexOf(cut)<actions.indexOf(screen)){
       actions.splice(actions.indexOf(cut),1);
@@ -730,6 +726,7 @@ export async function readColoredCourtDiagram(source: HTMLCanvasElement) {
       actions.push(priorCut);
     }
   }
+  linkPassLandings();
   for(const alternative of actions.filter(action=>action.action==="pass"&&action.continuationChoice?.alternate)){
     const primary=actions.find(action=>action.continuationChoice?.group===alternative.continuationChoice?.group
       &&!action.continuationChoice?.alternate);

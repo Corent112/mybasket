@@ -118,5 +118,25 @@ export function reconcileDiagramRosters(diagrams: AiExerciseDiagram[]): AiExerci
     });
     if (!changed) break;
   }
-  return phases;
+  return phases.map((diagram, index) => {
+    const next = phases[index + 1];
+    if (!next || diagram.courtType !== next.courtType) return diagram;
+    const actions = diagram.actions.map((action, actionIndex) => {
+      if (action.action !== "cut" || (action.confidence ?? 1) >= .5 || !action.from || !action.fromPlayer) return action;
+      const player = diagram.players.find(candidate => candidate.key === action.fromPlayer);
+      const number = player && player.labelConfident !== false && numberedPlayerKey(player);
+      if (!number) return action;
+      const previous = diagram.actions.slice(0, actionIndex).findLast(candidate =>
+        candidate.fromPlayer === action.fromPlayer && travels(candidate));
+      if (previous?.action !== "screen" || (previous.confidence ?? 1) < .65
+        || distance(previous.to, action.from) > .012) return action;
+      const arrivals = next.players.filter(candidate => candidate.labelConfident !== false
+        && numberedPlayerKey(candidate) === number && distance(candidate, action.to) < .04);
+      const competing = diagram.actions.some(candidate => candidate !== action && candidate.action === "cut"
+        && candidate.fromPlayer === action.fromPlayer && candidate.from && distance(candidate.from, previous.to) < .015);
+      if (arrivals.length !== 1 || competing) return action;
+      return { ...action, confidence: .78, source: "Coupe après écran confirmée par la position sur la phase suivante" };
+    });
+    return { ...diagram, actions };
+  });
 }

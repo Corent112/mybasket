@@ -21,6 +21,7 @@
  */
 
 import { hasImportedTurnback, importedCurveHandle, sampleImportedArc } from "@/lib/import/curve-handle";
+import { resolveImportPassChoices } from "@/lib/import/import-refiner";
 import { reconcileDiagramRosters } from "@/lib/import/diagram-roster";
 import { ActionKindDialog } from "./ActionKindDialog";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -835,11 +836,11 @@ export default function ImportReview({
         const player = item.players.find(candidate => candidate.key === key);
         if (!player) return end === "from" ? { ...line, fromPlayer: undefined } : { ...line, toPlayer: undefined };
         const previousActions = item.actions.slice(0, index);
-        const primary = line.continuationChoice?.alternate
+        const primary = line.action === "pass" && line.continuationChoice?.alternate
           ? previousActions.findIndex(action => action.continuationChoice?.group === line.continuationChoice?.group
             && !action.continuationChoice?.alternate) : -1;
         const lastMove = previousActions.slice(0, primary >= 0 ? primary : index).findLast(action =>
-          action.fromPlayer === key && !action.continuationChoice?.alternate && ["cut", "screen", "dribble"].includes(action.action));
+          action.fromPlayer === key && ["cut", "screen", "dribble"].includes(action.action));
         const point = lastMove?.to ?? { x: player.x, y: player.y };
         const previous = end === "from" ? line.from ?? line.to : line.to;
         const points = line.points?.map((p, j, all) => {
@@ -916,19 +917,31 @@ export default function ImportReview({
   const omittedCount = diagrams.reduce((n,item) => n+item.actions.filter(action => needsReview(action.confidence) || requiresStartingPlayer(action)).length,0);
   const cleanDiagrams = diagrams.map(item => {
     const accepted = item.actions.filter(action => !needsReview(action.confidence) && !requiresStartingPlayer(action));
-    const chosen = new Map(accepted.flatMap(action => action.continuationChoice?.alternate
-      ? [[action.continuationChoice.group, action] as const] : []));
-    const primaryGroups = new Set(accepted.flatMap(action => action.continuationChoice && !action.continuationChoice.alternate
-      ? [action.continuationChoice.group] : []));
-    const actions = accepted.flatMap(action => {
-      const choice = action.continuationChoice;
-      if (!choice) return [action];
-      const alternate = chosen.get(choice.group);
-      if (!choice.alternate) return [alternate ?? action];
-      return !primaryGroups.has(choice.group) && alternate === action ? [action] : [];
-    });
-    return { ...item, actions };
+    return { ...item, actions: resolveImportPassChoices(accepted) };
   });
+  const passGroups = new Map<string, { action: AiDiagramAction; index: number }[]>();
+  diagram?.actions.forEach((action, index) => {
+    if (action.action !== "pass" || !action.continuationChoice) return;
+    const group = action.continuationChoice.group;
+    const options = passGroups.get(group) ?? [];
+    options.push({ action, index });
+    passGroups.set(group, options);
+  });
+  const choosePass = (group: string, index: number) => {
+    updateDiagram(item => ({
+      ...item,
+      actions: item.actions.map((action, i) => {
+        if (action.action !== "pass" || action.continuationChoice?.group !== group) return action;
+        return {
+          ...action,
+          ...(i === index ? { confidence: 1 } : {}),
+          continuationChoice: { ...action.continuationChoice, selected: i === index },
+        };
+      }),
+    }));
+    setShowUncertain(true);
+    setSelection({ kind: "action", index, end: "to" });
+  };
   const kept = cleanDiagrams.filter(
     (item) => item.players.length > 0 || item.actions.length > 0 || item.objects.length > 0
   );
@@ -1037,6 +1050,23 @@ export default function ImportReview({
       <p style={styles.hint}>{stage === "players"
         ? "Vérifie la position et le rôle des joueurs. Les actions sont masquées à cette étape."
         : "Vérifie le sens et le départ des actions. Les tracés incertains restent à part tant que tu ne les confirmes pas."}</p>
+
+      {stage === "actions" && [...passGroups].filter(([, options]) => options.length > 1).map(([group, options]) => (
+        <div key={group} style={styles.row} role="group" aria-label="Choix de passe">
+          <strong>Choix de passe</strong>
+          {options.map(({ action, index }, optionIndex) => {
+            const receiver = diagram?.players.find(player => player.key === action.toPlayer)?.label;
+            const active = cleanDiagrams[current]?.actions.includes(action) ?? false;
+            return (
+              <button key={index} type="button" aria-pressed={active}
+                style={active ? styles.tabActive : styles.tab}
+                onClick={() => choosePass(group, index)}>
+                {receiver ? `Passe vers le n°${receiver}` : `Passe ${optionIndex + 1} · destinataire à vérifier`}
+              </button>
+            );
+          })}
+        </div>
+      ))}
 
       {result.warnings?.length ? (
         <ul style={styles.warnings}>
@@ -1199,9 +1229,6 @@ export default function ImportReview({
                       Trajectoire détectée : <strong>{selectedAction.action}</strong>. Choisis sa signification MyBasket ;
                       la géométrie du tracé est conservée.
                     </p>
-                    {selectedAction.continuationChoice?.alternate && (
-                      <p style={styles.hint}>Si tu confirmes ce déplacement, il remplace l’autre déplacement après cet écran.</p>
-                    )}
                     {requiresStartingPlayer(selectedAction) && (
                       <p style={styles.hint}>Choisis le joueur de départ pour importer cette action.</p>
                     )}
