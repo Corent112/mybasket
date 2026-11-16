@@ -33,3 +33,19 @@ export function sampleImportedArc(from: AiPoint, to: AiPoint, middle?: AiPoint):
     };
   });
 }
+
+/** A returning run cannot be represented by a single midpoint arc. */
+export function hasImportedTurnback(points: AiPoint[] | undefined): boolean {
+  if (!points || points.length < 4) return false;
+  const from = points[0], to = points[points.length - 1];
+  const dx = to.x - from.x, dy = to.y - from.y;
+  const length = Math.hypot(dx, dy);
+  if (length < .008) return false;
+  let furthest = 0;
+  for (const point of points) {
+    const along = ((point.x - from.x) * dx + (point.y - from.y) * dy) / length;
+    if (furthest - along > Math.max(.018, length * .22)) return true;
+    furthest = Math.max(furthest, along);
+  }
+  return false;
+}

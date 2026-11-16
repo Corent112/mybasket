@@ -1,7 +1,7 @@
 'use client';
 import { ActionKindDialog } from '@/components/import/ActionKindDialog';
 import { linkImportedDrawingPhases } from '@/lib/import/link-drawing-phases';
-import { sampleImportedArc } from '@/lib/import/curve-handle';
+import { hasImportedTurnback, sampleImportedArc } from '@/lib/import/curve-handle';
 import { COURT_FLOOR_PATTERNS, courtFloorProjection, floorPatternShade, isInsideThreePointArc, type CourtFloorPattern } from '@/lib/court-floor-pattern';
 import { resolveSystemDrawingPreview } from "@/lib/system-drawing-preview";
 import {drawingSessionStorage} from '@/lib/drawing-session-storage';
@@ -3830,7 +3830,15 @@ const owners=ownersAtClock(sched,ballEventsRef.current,clock);
           const cur = z.ctrls ?? (z.ctrl ? [z.ctrl] : []);
           const next = cur.slice();
           if (index != null && index < next.length) next[index] = n; else next.push(n);
-          return { ...z, ctrls: next, ctrl: undefined, points: undefined };
+          const anchor = index === undefined ? undefined : cur[index];
+          const points = z.points && anchor && hasImportedTurnback(z.points)
+            ? z.points.map((point, j, path) => {
+                const t = j / (path.length - 1);
+                const weight = 1 - Math.abs(2 * t - 1);
+                return { x: point.x + (n.x - anchor.x) * weight, y: point.y + (n.y - anchor.y) * weight };
+              })
+            : undefined;
+          return { ...z, ctrls: next, ctrl: undefined, points };
         }) };
       }));
       return;

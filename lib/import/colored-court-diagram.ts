@@ -201,7 +201,7 @@ export async function readColoredCourtDiagram(source: HTMLCanvasElement) {
     const contacts=traces.filter(blob=>traceBounds(blob)>unit*.105).flatMap(blob=>{
       const points=blob.pixels.map(dot);
       const entry=points.reduce((best,p)=>distance(p,marker)<distance(best,marker)?p:best);
-      if(distance(entry,marker)>radius+unit*.023)return [];
+      if(distance(entry,marker)>radius+unit*.013)return [];
       const shaft=points.filter(p=>distance(p,entry)>radius*.55&&distance(p,entry)<radius*1.25);
       if(shaft.length<4)return [];
       const tangent={x:shaft.reduce((sum,p)=>sum+p.x-entry.x,0)/shaft.length,
@@ -228,7 +228,7 @@ export async function readColoredCourtDiagram(source: HTMLCanvasElement) {
     traces.push({...a.blob,pixels,x0:Math.min(a.blob.x0,b.blob.x0),y0:Math.min(a.blob.y0,b.blob.y0),
       x1:Math.max(a.blob.x1,b.blob.x1),y1:Math.max(a.blob.y1,b.blob.y1)});
   }
-  const followStroke=(blob:Blob,tip:AiPoint,origin?:AiPoint)=>{
+  const followStroke=(blob:Blob,tip:AiPoint,origin?:AiPoint,followBends=false)=>{
     const pixels=new Set(blob.pixels);
     const seed=Math.round(tip.y)*w+Math.round(tip.x);
     const parents=new Map([[seed,seed]]);
@@ -245,6 +245,7 @@ export async function readColoredCourtDiagram(source: HTMLCanvasElement) {
         queue.push(next);
       }
     }
+    if(followBends&&!origin)start=queue[queue.length-1];
     const path:AiPoint[]=[];
     for(let i=start;i!==seed;i=parents.get(i)!)path.push(dot(i));
     return path;
@@ -332,9 +333,30 @@ export async function readColoredCourtDiagram(source: HTMLCanvasElement) {
       if(!shaft.length)continue;
       let endpoint=tip;
       const distanceToPlayer=(point:AiPoint)=>Math.min(...roster.map(item=>distance(point,item.center)-item.radius));
+      if(distanceToPlayer(shaft[0])>unit*.055&&distanceToPlayer(tip)>unit*.04){
+        const bent=followStroke(trace,tip,undefined,true);
+        if(bent.length&&distanceToPlayer(bent[0])<unit*.035)shaft=bent;
+      }
       if(distanceToPlayer(tip)+unit*.025<distanceToPlayer(shaft[0])){
         endpoint=shaft[0];
         shaft=followStroke(trace,endpoint,tip);
+      }
+      // For a returning cut, the thick bend can look denser than the arrow.
+      // Follow the stroke from its player to the far end along the ink.
+      const bentFrom=roster.filter(item=>distance(shaft[0],item.center)<item.radius+unit*.025)
+        .sort((a,b)=>distance(shaft[0],a.center)-distance(shaft[0],b.center))[0];
+      let returningCut=false;
+      if(bentFrom){
+        const reverse=followStroke(trace,shaft[0],undefined,true);
+        const end=reverse[0];
+        const length=reverse.slice(1).reduce((sum,p,i)=>sum+distance(p,reverse[i]),0);
+        if(end&&distance(end,shaft[0])>unit*.075&&length>distance(end,shaft[0])*1.65
+          &&distanceToPlayer(end)>unit*.035
+          &&head({...trace,pixels:trace.pixels.filter(i=>distance(dot(i),end)<unit*.022)}).peak>=9){
+          endpoint=end;
+          shaft=followStroke(trace,end,shaft[0]);
+          returningCut=true;
+        }
       }
       const nearBall=(point:AiPoint)=>Math.min(...balls.map(ball=>distance(point,ball)));
       if(isZigzag(shaft,unit)&&nearBall(endpoint)+unit*.02<nearBall(shaft[0])){
@@ -342,7 +364,7 @@ export async function readColoredCourtDiagram(source: HTMLCanvasElement) {
         endpoint=shaft[0];
         shaft=followStroke(trace,endpoint,priorEndpoint);
       }
-      const screenApproaches=(isZigzag(shaft,unit)?[]:roster).flatMap(item=>{
+      const screenApproaches=(returningCut||isZigzag(shaft,unit)?[]:roster).flatMap(item=>{
         const path=followStroke(trace,endpoint,item.center);
         const start=path[0];
         if(!start||distance(start,item.center)>item.radius+unit*.025)return [];
@@ -363,8 +385,8 @@ export async function readColoredCourtDiagram(source: HTMLCanvasElement) {
       const source=ballHandler??approach?.item??(candidates[0]?.gap<unit*.055&&(!candidates[1]||candidates[1].gap-candidates[0].gap>unit*.018)
         ?candidates[0].item:undefined);
       if(distance(origin,endpoint)<unit*.075)continue;
-      let terminal=approach||isZigzag(shaft,unit) ? -1 : screenBreak([...shaft,endpoint],trace,true);
-      if(!approach&&terminal<0&&source&&!isZigzag(shaft,unit)&&traceBounds(trace)<unit*.2){
+      let terminal=returningCut||approach||isZigzag(shaft,unit) ? -1 : screenBreak([...shaft,endpoint],trace,true);
+      if(!returningCut&&!approach&&terminal<0&&source&&!isZigzag(shaft,unit)&&traceBounds(trace)<unit*.2){
         const start=shaft[Math.max(0,shaft.length-12)];
         const dx=endpoint.x-start.x,dy=endpoint.y-start.y,length=Math.hypot(dx,dy)||1;
         const across=trace.pixels.map(dot).filter(p=>distance(p,endpoint)<unit*.025)
@@ -373,8 +395,8 @@ export async function readColoredCourtDiagram(source: HTMLCanvasElement) {
       }
       const from=source?.player??canonical(origin),to=canonical(terminal<0?endpoint:shaft[terminal]??endpoint);
       const stroke=sampleStroke(terminal<0?shaft:shaft.slice(0,terminal));
-      const kind=approach ? "cut" : ballHandler || isZigzag(shaft,unit) ? "dribble" : terminal>=0 ? "screen" : "cut";
-      const bar=approach?.bar??(kind==="cut" ? screenBreak(shaft,trace) : -1);
+      const kind=returningCut||approach ? "cut" : ballHandler || isZigzag(shaft,unit) ? "dribble" : terminal>=0 ? "screen" : "cut";
+      const bar=approach?.bar??(!returningCut&&kind==="cut" ? screenBreak(shaft,trace) : -1);
       const split=bar>=0&&distance(shaft[bar],endpoint)>=unit*.075 ? bar : -1;
       const departure=split<0 ? from : canonical(shaft[split]);
       if(split>=0){

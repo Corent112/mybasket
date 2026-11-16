@@ -20,7 +20,7 @@
  */
 
 import { deduplicateDiagramPlayers, numberedPlayerKey } from "./diagram-roster";
-import { importedCurveHandle, sampleImportedArc } from "./curve-handle";
+import { hasImportedTurnback, importedCurveHandle, sampleImportedArc } from "./curve-handle";
 import type {
   AiDiagramPlayer,
   AiExerciseDiagram,
@@ -168,7 +168,7 @@ function diagramToPhase(
       from,
       to,
       rotation: 0,
-      ...(path && (action.action === "dribble" || action.action === "freedraw") ? { points: path } : {}),
+      ...(path && (action.action === "dribble" || action.action === "freedraw" || hasImportedTurnback(action.points)) ? { points: path } : {}),
       ...(control ? { ctrls: [control.point] } : {}),
       ...(action.color ? { color: action.color } : {}),
       ...(sourcePlayerId ? { sourcePlayerId } : {}),

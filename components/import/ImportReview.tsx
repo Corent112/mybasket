@@ -20,7 +20,7 @@
  * en calque sous le dessin pour comparer avec la photo d'origine.
  */
 
-import { importedCurveHandle, sampleImportedArc } from "@/lib/import/curve-handle";
+import { hasImportedTurnback, importedCurveHandle, sampleImportedArc } from "@/lib/import/curve-handle";
 import { deduplicateDiagramPlayers } from "@/lib/import/diagram-roster";
 import { ActionKindDialog } from "./ActionKindDialog";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -124,7 +124,7 @@ function curveHandles(action: AiDiagramAction | undefined) {
 
 function reviewPath(action: AiDiagramAction): AiPoint[] {
   const from = action.from ?? action.to;
-  if (action.action === "dribble" || action.action === "freedraw") {
+  if (action.action === "dribble" || action.action === "freedraw" || hasImportedTurnback(action.points)) {
     return [from, ...(action.points?.slice(1, -1) ?? []), action.to];
   }
   return sampleImportedArc(from, action.to, importedCurveHandle(action.points)?.point);
