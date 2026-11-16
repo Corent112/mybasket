@@ -789,6 +789,33 @@ export async function readColoredCourtDiagram(source: HTMLCanvasElement) {
     const after=Math.max(actions.indexOf(match.screen),feed?actions.indexOf(feed):-1);
     actions.splice(after+1,0,cut,pass);
   }
+  // Surface a visible arrow even when neither end matches a known player.
+  // Keep the proposal editable and require confirmation before conversion.
+  for(const trace of traces.filter(blob=>!used.has(blob)&&traceBounds(blob)>unit*.075)){
+    const seed=dot(trace.pixels[0]);
+    const first=followStroke(trace,seed,undefined,true)[0];
+    const last=first&&followStroke(trace,first,undefined,true)[0];
+    if(!first||!last||distance(first,last)<unit*.072)continue;
+    const ends=[{start:first,end:last},{start:last,end:first}].map(({start,end})=>{
+      const cap={...trace,pixels:trace.pixels.filter(i=>distance(dot(i),end)<unit*.023)};
+      return {start,end,peak:head(cap).peak};
+    }).sort((a,b)=>b.peak-a.peak);
+    const [{start,end,peak},other]=ends;
+    if(peak<8||peak-other.peak<2)continue;
+    const path=followStroke(trace,end,start);
+    if(path.length<unit*.055)continue;
+    if(roster.some(item=>[...path,end].every(point=>distance(point,item.center)<item.radius+unit*.02)))continue;
+    const from=canonical(start),to=canonical(end);
+    const alreadyRead=actions.some(action=>action.from&&(
+      (distance(action.from,from)<.045&&distance(action.to,to)<.035)
+      ||(distance(action.to,from)<.035&&distance(action.from,to)<.045)
+    ));
+    if(alreadyRead)continue;
+    const action=isZigzag(path,unit)?"dribble":"cut";
+    actions.push({action,from,to,points:[from,...sampleStroke(path).map(canonical),to],
+      confidence:.47,source:"Flèche retrouvée : type et départ à confirmer"});
+    used.add(trace);
+  }
   // A small gap after a screen can leave the next arrow without a player.
   // Keep the screen and suggest the visible continuation independently.
   for(const cut of actions.filter(action=>action.action==="cut"&&!action.fromPlayer&&action.from)){
