@@ -153,8 +153,28 @@ export async function readColoredCourtDiagram(source: HTMLCanvasElement) {
       g.fillStyle="#000";
       for(const i of largest.pixels)g.fillRect(22+(i%glyphWidth-largest.x0)*z,22+(Math.floor(i/glyphWidth)-largest.y0)*z,z+.1,z+.1);
       const word=await ocrLandmarkGlyph(crop,false,true);
-      const glyph=word&&word.confidence>=.65?null:await ocrLandmarkGlyph(crop,true,true);
-      read=glyph&&glyph.confidence>(word?.confidence??0)?glyph:word;
+
+      // Read the same digit with its antialiased edges intact. The binary
+      // mask locates it, but alone can erase the short stroke that makes a 5.
+      g.fillStyle="#fff";
+      g.fillRect(0,0,crop.width,crop.height);
+      for(let y=largest.y0-1;y<=largest.y1+1;y++)for(let x=largest.x0-1;x<=largest.x1+1;x++){
+        const dx=x-r,dy=y-r;
+        if(dx*dx+dy*dy>(radius*.74)**2)continue;
+        const i=4*((Math.round(p.y)+dy)*w+Math.round(p.x)+dx);
+        const red=rgba[i],green=rgba[i+1],blue=rgba[i+2];
+        if(blue<red+8||green<red)continue;
+        const gray=Math.round(Math.min(255,red*1.25));
+        g.fillStyle=`rgb(${gray},${gray},${gray})`;
+        g.fillRect(22+(x-largest.x0)*z,22+(y-largest.y0)*z,z+.1,z+.1);
+      }
+      const glyph=await ocrLandmarkGlyph(crop,bw/bh<1.05,true);
+      if(word&&glyph&&word.text!==glyph.text){
+        const best=word.confidence>=glyph.confidence?word:glyph;
+        if(best.confidence>=.85&&Math.abs(word.confidence-glyph.confidence)>=.22)read=best;
+      }else{
+        read=glyph&&glyph.confidence>(word?.confidence??0)?glyph:word;
+      }
       // The digit 1 is a narrow vertical stem; disambiguate it from a 4
       // when compression changes the OCR result.
       const columns=new Uint16Array(bw);
@@ -162,8 +182,8 @@ export async function readColoredCourtDiagram(source: HTMLCanvasElement) {
       if(bw/bh<.49&&columns.some(count=>count>bh*.82)) read={text:"1",confidence:.80};
     }
     const n=roster.length+1;
-    const numbered=!!read&&read.confidence>=.5;
-    roster.push({center:p,radius,player:{key:`ring-${n}`,label:read&&read.confidence>=.45?read.text:"",...canonical(p),team:"att",
+    const numbered=!!read&&read.confidence>=.72;
+    roster.push({center:p,radius,player:{key:`ring-${n}`,label:numbered ? read!.text : "",...canonical(p),team:"att",
       type:numbered?"attacker":"unknown",typeConfidence:numbered ? .94 : .35,labelConfident:numbered,confidence:.94,
       source:"Centre du cercle numéroté détecté"}});
   }

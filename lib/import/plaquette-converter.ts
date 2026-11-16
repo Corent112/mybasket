@@ -19,7 +19,7 @@
  * schemaDataList partageant le même tableau `phases`.
  */
 
-import { deduplicateDiagramPlayers, numberedPlayerKey } from "./diagram-roster";
+import { numberedPlayerKey, reconcileDiagramRosters } from "./diagram-roster";
 import { hasImportedTurnback, importedCurveHandle, sampleImportedArc } from "./curve-handle";
 import type {
   AiDiagramPlayer,
@@ -78,7 +78,12 @@ function diagramToPhase(
 
   const numberedPlayers = new Map<string, { id: string; player: AiDiagramPlayer }>();
   const visibleNumbers = new Set(diagram.players.map(numberedPlayerKey));
-  const carriedPlayers = [...previousRoster].filter(([number]) => !visibleNumbers.has(number))
+  // An unresolved token can already represent a player at the previous
+  // landing point. Avoid drawing a second token over it.
+  const carriedPlayers = [...previousRoster].filter(([number, state]) =>
+    !visibleNumbers.has(number) && !diagram.players.some(player => player.labelConfident === false
+      && (player.team === state.player.team || player.type === "unknown")
+      && Math.hypot(player.x - state.point.x, (player.y - state.point.y) * 1.35) < .045))
     .map(([, state]) => ({ ...state.player, key: `carried-${state.id}`, hasBall: false }));
   const players = [...diagram.players, ...carriedPlayers].map((player) => {
     const numbered = numberedPlayerKey(player);
@@ -221,7 +226,7 @@ export function importToPlaquetteSchema(
     const key = numberedPlayerKey(player);
     if (key && !roster.has(key)) roster.set(key, { id: player.id, point: player, player });
   }
-  const phases = detected.map(diagram => diagramToPhase(deduplicateDiagramPlayers(diagram), courtType, roster));
+  const phases = reconcileDiagramRosters(detected).map(diagram => diagramToPhase(diagram, courtType, roster));
   const schemaGroupId = uid();
   const baseTitle = result.title?.trim() || "Schéma"; // idem L2593
 
