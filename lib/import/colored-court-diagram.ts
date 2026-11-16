@@ -453,16 +453,44 @@ export async function readColoredCourtDiagram(source: HTMLCanvasElement) {
           const dx=(stop.x-source.center.x)/span,dy=(stop.y-source.center.y)/span;
           const opposite=other[0];
           if((opposite.center.x-stop.x)*dx+(opposite.center.y-stop.y)*dy>0){
+            // Use the shaft just before the bar to remove the screen. The
+            // point on the bar itself can be several pixels off its axis.
+            const axisStart=shaft[Math.floor(split*.5)];
+            const axisEnd=shaft[Math.max(Math.floor(split*.5)+1,split-Math.round(unit*.016))];
+            const axisLength=distance(axisStart,axisEnd)||1;
+            const sx=(axisEnd.x-axisStart.x)/axisLength,sy=(axisEnd.y-axisStart.y)/axisLength;
             const separate=new Uint8Array(ink.length);
-            for(let y=Math.max(y0,trace.y0-8);y<=Math.min(y1,trace.y1+8);y++)
-              for(let x=Math.max(x0,trace.x0-8);x<=Math.min(x1,trace.x1+8);x++){
-                const i=y*w+x,side=(y-stop.y)*dx-(x-stop.x)*dy;
-                const offset=(x-stop.x)*dx+(y-stop.y)*dy;
-                if(ink[i]&&(offset>0||Math.abs(side)>Math.max(1.5,unit*.003)))separate[i]=1;
+            const left=Math.max(x0,trace.x0-8),right=Math.min(x1,trace.x1+8);
+            const top=Math.max(y0,trace.y0-8),bottom=Math.min(y1,trace.y1+8);
+            for(let y=top;y<=bottom;y++)for(let x=left;x<=right;x++){
+              const i=y*w+x,side=(y-axisEnd.y)*sx-(x-axisEnd.x)*sy;
+              const offset=(x-stop.x)*dx+(y-stop.y)*dy;
+              if(offset<=0&&Math.abs(side)<unit*.006)continue;
+              const weakInk=rgba[i*4]<90&&rgba[i*4+1]<133&&rgba[i*4+2]<180
+                &&roster.every(item=>distance(item.center,{x,y})>item.radius*1.08);
+              if(ink[i]||weakInk)separate[i]=1;
+            }
+            // Antialiasing across the painted markings can interrupt an
+            // otherwise continuous stroke by a handful of pixels.
+            const bridge=separate.slice();
+            for(let y=top;y<=bottom;y++)for(let x=left;x<=right;x++){
+              if(!separate[y*w+x])continue;
+              for(let step=2;step<=Math.max(3,Math.round(unit*.009));step++){
+                const tx=Math.round(x+sx*step),ty=Math.round(y+sy*step);
+                const end=[0,-1,1].map(n=>({x:Math.round(tx-sy*n),y:Math.round(ty+sx*n)}))
+                  .find(p=>p.x>=left&&p.x<=right&&p.y>=top&&p.y<=bottom&&separate[p.y*w+p.x]);
+                if(!end)continue;
+                for(let j=1;j<step;j++){
+                  const px=Math.round(x+(end.x-x)*j/step),py=Math.round(y+(end.y-y)*j/step);
+                  bridge[py*w+px]=1;
+                }
+                break;
               }
-            const paths=components(separate,w,Math.round(unit*.04)).flatMap(blob=>{
-              const tip=blob.pixels.map(dot)
+            }
+            const paths=components(bridge,w,Math.round(unit*.04)).flatMap(blob=>{
+              const tip=blob.pixels.map(dot).filter(point=>distance(point,source.center)>source.radius+unit*.007)
                 .sort((a,b)=>(a.x-b.x)*dx+(a.y-b.y)*dy)[0];
+              if(!tip)return [];
               const path=followStroke(blob,tip,opposite.center);
               return path.length>unit*.15&&distance(path[0],opposite.center)<opposite.radius+unit*.045
                 &&head({...blob,pixels:blob.pixels.filter(i=>distance(dot(i),tip)<unit*.024)}).peak>=8?[{tip,path}]:[];
@@ -471,7 +499,7 @@ export async function readColoredCourtDiagram(source: HTMLCanvasElement) {
               const from=opposite.player,to=canonical(paths[0].tip);
               actions.push({action:"cut",from,to,fromPlayer:from.key,
                 points:[from,...sampleStroke(paths[0].path).map(canonical),to],
-                confidence:.47,source:"Flèche croisant un écran : arrivée à vérifier"});
+                confidence:distance(paths[0].tip,source.center)<unit*.075?.78:.47,source:"Flèche distincte croisant un écran"});
               used.add(trace);
               continue;
             }
