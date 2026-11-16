@@ -425,12 +425,24 @@ export async function readColoredCourtDiagram(source: HTMLCanvasElement) {
         ?candidates[0].item:undefined);
       if(distance(origin,endpoint)<unit*.075)continue;
       let terminal=returningCut||approach||isZigzag(shaft,unit) ? -1 : screenBreak([...shaft,endpoint],trace,true);
-      if(!returningCut&&!approach&&terminal<0&&source&&!isZigzag(shaft,unit)&&traceBounds(trace)<unit*.2){
-        const start=shaft[Math.max(0,shaft.length-12)];
-        const dx=endpoint.x-start.x,dy=endpoint.y-start.y,length=Math.hypot(dx,dy)||1;
-        const across=trace.pixels.map(dot).filter(p=>distance(p,endpoint)<unit*.025)
-          .map(p=>((p.y-endpoint.y)*dx-(p.x-endpoint.x)*dy)/length);
-        if(across.length&&Math.max(...across)-Math.min(...across)>unit*.022)terminal=shaft.length-1;
+      if(!returningCut&&!approach&&terminal<0&&source&&!isZigzag(shaft,unit)){
+        // The graph can finish at one end of the screen bar. Measure the
+        // approach before it turns onto the bar, then look across that axis.
+        const reach=Math.max(5,Math.round(unit*.015));
+        const points=trace.pixels.map(dot).filter(p=>distance(p,endpoint)<unit*.045);
+        for(let i=Math.max(reach,shaft.length-2*reach);i<shaft.length;i++){
+          const p=shaft[i],a=shaft[i-reach];
+          const length=distance(a,p);
+          if(length<reach*.7)continue;
+          const dx=(p.x-a.x)/length,dy=(p.y-a.y)/length;
+          const across=points.filter(q=>Math.abs((q.x-p.x)*dx+(q.y-p.y)*dy)<unit*.005)
+            .map(q=>(q.y-p.y)*dx-(q.x-p.x)*dy);
+          if(across.length&&Math.min(...across)<-unit*.009&&Math.max(...across)>unit*.009
+            &&Math.max(...across)-Math.min(...across)>unit*.026){
+            terminal=i;
+            break;
+          }
+        }
       }
       const from=source?.player??canonical(origin),to=canonical(terminal<0?endpoint:shaft[terminal]??endpoint);
       const stroke=sampleStroke(terminal<0?shaft:shaft.slice(0,terminal));
@@ -518,7 +530,7 @@ export async function readColoredCourtDiagram(source: HTMLCanvasElement) {
       const remainder=split<0 ? stroke : sampleStroke(shaft.slice(split+1));
       const points=[departure,...remainder.map(canonical),to];
       actions.push({action:kind,from:departure,to,points,fromPlayer:source?.player.key,confidence:source && !ambiguousApproach ? .84 : .47,
-        source:kind==="dribble" ? "Dribble : oscillations et pointe de flèche" : "Trajet continu et pointe de flèche"});
+        source:kind==="dribble" ? "Dribble : oscillations et pointe de flèche" : kind==="screen" ? "Écran : barre perpendiculaire au tracé" : "Trajet continu et pointe de flèche"});
       if(split>=0){
         // A second arrow can touch the same screen bar. Search the ink left
         // outside the two recorded shafts and keep it as a review proposal.
@@ -673,6 +685,36 @@ export async function readColoredCourtDiagram(source: HTMLCanvasElement) {
       fromPlayer:source?.player.key,confidence:source ? .84 : .47,
       source:kind==="screen"?"Écran : barre perpendiculaire au tracé":
         kind==="dribble"?"Dribble : oscillations et pointe de flèche":"Trajet continu et pointe de flèche"});
+    used.add(trace);
+  }
+  // A detached cut can start at a screen bar instead of a player ring.
+  // Recognize it even when the pass is missing or a different pass is chosen.
+  for(const trace of traces.filter(blob=>!used.has(blob)&&traceBounds(blob)>unit*.065)){
+    const candidates=actions.flatMap((screen,index)=>{
+      if(screen.action!=="screen"||!screen.fromPlayer||(screen.confidence??1)<.65)return [];
+      const stop=toImage(screen.to);
+      const pixels=trace.pixels.map(dot);
+      const entry=pixels.reduce((closest,p)=>distance(p,stop)<distance(closest,stop)?p:closest);
+      const gap=distance(entry,stop);
+      if(gap>unit*.029)return [];
+      if(roster.some(item=>distance(item.center,entry)<item.radius+gap+unit*.008))return [];
+      const far=pixels.reduce((best,p)=>distance(p,stop)>distance(best,stop)?p:best);
+      const length=distance(far,stop);
+      if(length<unit*.10)return [];
+      const {p:arrow,peak}=head(trace,stop,length*.76);
+      if(peak<8||distance(arrow,far)>unit*.025)return [];
+      const path=followStroke(trace,arrow,entry);
+      if(path.length<length*.62||distance(path[0],entry)>unit*.012||isZigzag(path,unit))return [];
+      const to=canonical(far);
+      if(actions.some(action=>action.action==="cut"&&distance(action.to,to)<.035))return [];
+      return [{screen,index,gap,to,path}];
+    }).sort((a,b)=>a.gap-b.gap);
+    const match=candidates[0];
+    if(!match||(candidates[1]&&candidates[1].gap-match.gap<unit*.014))continue;
+    const {screen,index,to,path}=match;
+    actions.splice(index+1,0,{action:"cut",from:screen.to,to,fromPlayer:screen.fromPlayer,
+      points:[screen.to,...sampleStroke(path).map(canonical),to],confidence:.77,
+      source:"Déplacement après écran : trait distinct terminé par une flèche"});
     used.add(trace);
   }
   const linkPassLandings=()=>{
