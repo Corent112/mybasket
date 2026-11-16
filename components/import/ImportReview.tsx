@@ -817,6 +817,8 @@ export default function ImportReview({
           ? {
               ...line,
               action,
+              toPlayer: action === "pass" ? line.toPlayer : undefined,
+              continuationChoice: action === "pass" ? line.continuationChoice : undefined,
               points: line.action === "dribble" && action !== "dribble" && line.from
                 ? [line.from, ...(importedCurveHandle(line.points, true)?.point ? [importedCurveHandle(line.points, true)!.point] : []), line.to]
                 : line.points,
@@ -840,7 +842,7 @@ export default function ImportReview({
           ? previousActions.findIndex(action => action.continuationChoice?.group === line.continuationChoice?.group
             && !action.continuationChoice?.alternate) : -1;
         const lastMove = previousActions.slice(0, primary >= 0 ? primary : index).findLast(action =>
-          action.fromPlayer === key && ["cut", "screen", "dribble"].includes(action.action));
+          action.fromPlayer === key && !needsReview(action.confidence) && ["cut", "screen", "dribble"].includes(action.action));
         const point = lastMove?.to ?? { x: player.x, y: player.y };
         const previous = end === "from" ? line.from ?? line.to : line.to;
         const points = line.points?.map((p, j, all) => {
@@ -1341,11 +1343,16 @@ export default function ImportReview({
         <ActionKindDialog
           current={diagram.actions[actionTypeIndex].action}
           choices={actionChoices}
+          receiver={diagram.actions[actionTypeIndex].toPlayer}
+          receivers={diagram.players.filter(player => player.key !== diagram.actions[actionTypeIndex].fromPlayer)
+            .map(player => ({ value: player.key, label: player.label || "Sans numéro" }))}
           onClose={() => setActionTypeIndex(null)}
-          onChange={value => {
-            setActionKind(actionTypeIndex, value as AiDiagramActionKind);
+          onChange={(value, receiver) => {
+            const line = diagram.actions[actionTypeIndex];
+            if (value !== line.action) setActionKind(actionTypeIndex, value as AiDiagramActionKind);
+            if (value === "pass" && receiver !== (line.toPlayer ?? "")) setActionPlayer(actionTypeIndex, "to", receiver);
             setActionTypeIndex(null);
-            if (value !== "freedraw" && !diagram.actions[actionTypeIndex].fromPlayer) setLinkStart(true);
+            if (value !== "freedraw" && !line.fromPlayer) setLinkStart(true);
           }}
         />
       )}
