@@ -130,3 +130,16 @@ export function refineImportedExercise(input: AiExerciseImport): AiExerciseImpor
     warnings: uniqueWarnings,
   };
 }
+
+/** Apply choices only to competing passes. Every accepted movement stays in order. */
+export function resolveImportPassChoices(actions: AiDiagramAction[]): AiDiagramAction[] {
+  const chosen = new Map<string, AiDiagramAction>();
+  for (const action of actions) {
+    const choice = action.action === "pass" ? action.continuationChoice : undefined;
+    if (!choice) continue;
+    const current = chosen.get(choice.group)?.continuationChoice;
+    if (!current || (!current.selected && (choice.selected || choice.alternate))) chosen.set(choice.group, action);
+  }
+  return actions.filter(action => action.action !== "pass" || !action.continuationChoice
+    || chosen.get(action.continuationChoice.group) === action);
+}

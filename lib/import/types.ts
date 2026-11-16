@@ -101,7 +101,7 @@ export type AiDiagramActionKind =
   | "freedraw";
 
 export type AiDiagramAction = {
-  continuationChoice?: { group: string; alternate: boolean };
+  continuationChoice?: { group: string; alternate: boolean; selected?: boolean };
   action: AiDiagramActionKind;
   fromPlayer?: string;
   toPlayer?: string;
