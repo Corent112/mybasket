@@ -71,7 +71,7 @@ export async function readColoredCourtDiagram(source: HTMLCanvasElement) {
   for(let y=key.y0-1;y<=key.y1+1;y++)for(let x=key.x0-1;x<=key.x1+1;x++){
     if(x<0||x>=w||y<0||y>=h)continue;
     const i=y*w+x,r=rgba[i*4],g=rgba[i*4+1],b=rgba[i*4+2];
-    if(r<72&&g<105&&b<151)ink[i]=1;
+    if(r<90&&g<112&&b<171)ink[i]=1;
   }
   const rows=new Uint16Array(h);
   for(let y=0;y<h;y++)for(let x=0;x<w;x++)rows[y]+=floor[y*w+x];
@@ -93,7 +93,7 @@ export async function readColoredCourtDiagram(source: HTMLCanvasElement) {
     const arcs=new Set<number>();
     for (const i of b.pixels) {
       const dx=i%w-p.x, dy=Math.floor(i/w)-p.y, r=Math.hypot(dx,dy);
-      if (r>=radius*.74 && r<=radius*1.15) arcs.add(Math.floor((Math.atan2(dy,dx)+Math.PI)*6/Math.PI)%12);
+      if (r>=radius*.80 && r<=radius*1.15) arcs.add(Math.floor((Math.atan2(dy,dx)+Math.PI)*6/Math.PI)%12);
     }
     if (arcs.size<9) return false;
     let white=0,total=0;
@@ -112,17 +112,35 @@ export async function readColoredCourtDiagram(source: HTMLCanvasElement) {
       ||p.x<x0||p.x>x1||p.y<y0||p.y>y1
       ||tokens.some(token=>distance(center(token),p)<unit*.045)) continue;
     const radius=(bw+bh)/4;
-    const sectors=Array.from({length:16},(_,i)=>{
-      const angle=i*Math.PI/8;
-      return [1,1.12,1.25,1.38,1.51].some(scale=>{
-        const x=Math.round(p.x+Math.cos(angle)*radius*scale);
-        const y=Math.round(p.y+Math.sin(angle)*radius*scale);
-        return blue[y*w+x]===1;
-      });
-    });
-    if(sectors.filter(Boolean).length<12)continue;
-    const r=Math.round(radius*1.24);
-    tokens.push({...interior,x0:p.x-r,x1:p.x+r,y0:p.y-r,y1:p.y+r});
+    // White can be split in two by the digit or covered by the ball.
+    // Fit the dark outline around the white seed before reading the glyph.
+    let fit: {x:number;y:number;r:number;score:number} | undefined;
+    for(let y=Math.round(p.y-radius*.5);y<=p.y+radius*.5;y++)
+      for(let x=Math.round(p.x-radius*.5);x<=p.x+radius*.5;x++)
+        for(let r=Math.round(radius);r<=radius*1.6;r++){
+          if(r<unit*.025||r>unit*.048)continue;
+          let sectors=0;
+          for(let j=0;j<24;j++){
+            const angle=j*Math.PI/12;
+            if([-1,0,1].some(offset=>blue[Math.round(y+Math.sin(angle)*(r+offset))*w
+              +Math.round(x+Math.cos(angle)*(r+offset))]===1))sectors++;
+          }
+          const score=sectors-Math.hypot(x-p.x,y-p.y)*.08;
+          if(sectors>=19&&(!fit||score>fit.score))fit={x,y,r,score};
+        }
+    if (!fit) {
+      let sectors=0;
+      for(let i=0;i<16;i++){
+        const angle=i*Math.PI/8;
+        if([1,1.12,1.25,1.38,1.51].some(scale=>blue[
+          Math.round(p.y+Math.sin(angle)*radius*scale)*w+Math.round(p.x+Math.cos(angle)*radius*scale)]===1))sectors++;
+      }
+      if(sectors>=12)fit={...p,r:Math.round(radius*1.24),score:sectors};
+    }
+    if(!fit)continue;
+    const {x,y,r}=fit;
+    if(tokens.some(token=>distance(center(token),{x,y})<unit*.045))continue;
+    tokens.push({...interior,x0:x-r,x1:x+r,y0:y-r,y1:y+r});
   }
   // The court is already proven. If some rings are unreadable, keep this
   // crop for review rather than asking the generic scanner to invent players.
@@ -135,11 +153,11 @@ export async function readColoredCourtDiagram(source: HTMLCanvasElement) {
   for(const token of tokens){
     const p=center(token),radius=(width(token)+height(token))/4;
     const crop=document.createElement("canvas");
-    const r=Math.round(radius*.72), glyphWidth=2*r+1;
+    const r=Math.round(radius*.79), glyphWidth=2*r+1;
     const glyphMask=new Uint8Array(glyphWidth*glyphWidth);
     for(let dy=-r;dy<=r;dy++)for(let dx=-r;dx<=r;dx++){
       const i=4*((Math.round(p.y)+dy)*w+Math.round(p.x)+dx);
-      if(dx*dx+dy*dy<=(radius*.72)**2&&rgba[i]<120&&rgba[i+1]<154&&rgba[i+2]>rgba[i]+12){
+      if(dx*dx+dy*dy<=(radius*.79)**2&&rgba[i]<163&&rgba[i+1]<178){
         glyphMask[(dy+r)*glyphWidth+dx+r]=1;
       }
     }
@@ -160,10 +178,10 @@ export async function readColoredCourtDiagram(source: HTMLCanvasElement) {
       g.fillRect(0,0,crop.width,crop.height);
       for(let y=largest.y0-1;y<=largest.y1+1;y++)for(let x=largest.x0-1;x<=largest.x1+1;x++){
         const dx=x-r,dy=y-r;
-        if(dx*dx+dy*dy>(radius*.74)**2)continue;
+        if(dx*dx+dy*dy>(radius*.80)**2)continue;
         const i=4*((Math.round(p.y)+dy)*w+Math.round(p.x)+dx);
         const red=rgba[i],green=rgba[i+1],blue=rgba[i+2];
-        if(blue<red+8||green<red)continue;
+        if(green>210||blue+55<red)continue;
         const gray=Math.round(Math.min(255,red*1.25));
         g.fillStyle=`rgb(${gray},${gray},${gray})`;
         g.fillRect(22+(x-largest.x0)*z,22+(y-largest.y0)*z,z+.1,z+.1);
@@ -179,7 +197,7 @@ export async function readColoredCourtDiagram(source: HTMLCanvasElement) {
       // when compression changes the OCR result.
       const columns=new Uint16Array(bw);
       for(const i of largest.pixels)columns[i%glyphWidth-largest.x0]++;
-      if(bw/bh<.49&&columns.some(count=>count>bh*.82)) read={text:"1",confidence:.80};
+      if(bw/bh<.55&&columns.some(count=>count>bh*.74)) read={text:"1",confidence:.80};
     }
     const n=roster.length+1;
     const numbered=!!read&&read.confidence>=.72;
@@ -200,7 +218,7 @@ export async function readColoredCourtDiagram(source: HTMLCanvasElement) {
   for(let y=0;y<h;y++)for(let x=0;x<w;x++){
     const i=y*w+x;
     if(ink[i]&&(x<x0||x>x1||y<y0||y>y1||
-      roster.some(({center:p,radius})=>(p.x-x)**2+(p.y-y)**2<(radius*.99)**2)))ink[i]=0;
+      balls.some(ball=>distance(ball,{x,y})<Math.max(width(ball),height(ball))*.52)||roster.some(({center:p,radius})=>(p.x-x)**2+(p.y-y)**2<(radius*1.08)**2)))ink[i]=0;
   }
   const traces=components(ink.slice(),w,Math.max(6,Math.round(unit*.013)));
   const dot=(i:number)=>({x:i%w,y:Math.floor(i/w)});
@@ -353,9 +371,10 @@ export async function readColoredCourtDiagram(source: HTMLCanvasElement) {
       if(!shaft.length)continue;
       let endpoint=tip;
       const distanceToPlayer=(point:AiPoint)=>Math.min(...roster.map(item=>distance(point,item.center)-item.radius));
-      if(distanceToPlayer(shaft[0])>unit*.055&&distanceToPlayer(tip)>unit*.04){
+      if(distanceToPlayer(tip)>unit*.04){
         const bent=followStroke(trace,tip,undefined,true);
-        if(bent.length&&distanceToPlayer(bent[0])<unit*.035)shaft=bent;
+        if(bent.length&&distanceToPlayer(bent[0])<unit*.035
+          &&distanceToPlayer(bent[0])+unit*.012<distanceToPlayer(shaft[0]))shaft=bent;
       }
       if(distanceToPlayer(tip)+unit*.025<distanceToPlayer(shaft[0])){
         endpoint=shaft[0];
@@ -426,6 +445,48 @@ export async function readColoredCourtDiagram(source: HTMLCanvasElement) {
           points:[from,...sampleStroke(shaft.slice(0,split)).map(canonical),departure],
           confidence:source ? .79 : .47,source:"Écran : fin du tracé à la barre"});
       }
+      if(split>=0&&source){
+        const stop=shaft[split];
+        const other=roster.filter(item=>item!==source&&distance(item.center,stop)<item.radius+unit*.045);
+        const span=distance(source.center,stop);
+        if(other.length===1&&span>unit*.17){
+          const dx=(stop.x-source.center.x)/span,dy=(stop.y-source.center.y)/span;
+          const opposite=other[0];
+          if((opposite.center.x-stop.x)*dx+(opposite.center.y-stop.y)*dy>0){
+            const separate=new Uint8Array(ink.length);
+            for(let y=Math.max(y0,trace.y0-8);y<=Math.min(y1,trace.y1+8);y++)
+              for(let x=Math.max(x0,trace.x0-8);x<=Math.min(x1,trace.x1+8);x++){
+                const i=y*w+x,side=(y-stop.y)*dx-(x-stop.x)*dy;
+                const offset=(x-stop.x)*dx+(y-stop.y)*dy;
+                if(ink[i]&&(offset>0||Math.abs(side)>Math.max(1.5,unit*.003)))separate[i]=1;
+              }
+            const paths=components(separate,w,Math.round(unit*.04)).flatMap(blob=>{
+              const tip=blob.pixels.map(dot)
+                .sort((a,b)=>(a.x-b.x)*dx+(a.y-b.y)*dy)[0];
+              const path=followStroke(blob,tip,opposite.center);
+              return path.length>unit*.15&&distance(path[0],opposite.center)<opposite.radius+unit*.045
+                &&head({...blob,pixels:blob.pixels.filter(i=>distance(dot(i),tip)<unit*.024)}).peak>=8?[{tip,path}]:[];
+            });
+            if(paths.length===1){
+              const from=opposite.player,to=canonical(paths[0].tip);
+              actions.push({action:"cut",from,to,fromPlayer:from.key,
+                points:[from,...sampleStroke(paths[0].path).map(canonical),to],
+                confidence:.47,source:"Flèche croisant un écran : arrivée à vérifier"});
+              used.add(trace);
+              continue;
+            }
+            // The bar is close to another player and the remaining ink
+            // reverses direction. Keep the screen, and let the coach assign
+            // the crossing arrow when we cannot isolate its starting stroke.
+            if((endpoint.x-stop.x)*dx+(endpoint.y-stop.y)*dy<-unit*.04){
+              actions.push({action:"cut",from:departure,to,points:[departure,...sampleStroke(shaft.slice(split+1)).map(canonical),to],
+                confidence:.47,source:"Flèche croisant un écran : joueur et arrivée à vérifier"});
+              used.add(trace);
+              continue;
+            }
+          }
+        }
+      }
       const remainder=split<0 ? stroke : sampleStroke(shaft.slice(split+1));
       const points=[departure,...remainder.map(canonical),to];
       actions.push({action:kind,from:departure,to,points,fromPlayer:source?.player.key,confidence:source && !ambiguousApproach ? .84 : .47,
@@ -470,7 +531,7 @@ export async function readColoredCourtDiagram(source: HTMLCanvasElement) {
       const end=projected.filter(p=>p.t>max-unit*.017);
       const stem=projected.filter(p=>p.t<max-unit*.019);
       const spread=(a:typeof projected)=>a.length?Math.max(...a.map(p=>p.s))-Math.min(...a.map(p=>p.s)):0;
-      if(end.length>=8&&stem.length>=4&&spread(end)>unit*.020&&spread(end)>spread(stem)*1.45){
+      if(length>source.radius+unit*.020&&end.length>=8&&stem.length>=4&&spread(end)>unit*.020&&spread(end)>spread(stem)*1.45){
         const to=canonical({x:end.reduce((sum,p)=>sum+p.p.x,0)/end.length,y:end.reduce((sum,p)=>sum+p.p.y,0)/end.length});
         const bar=end.reduce((best,item)=>distance(item.p,far)<distance(best.p,far)?item:best).p;
         const points=[source.player,...sampleStroke(followStroke(trace,bar,origin)).map(canonical),to];
@@ -518,19 +579,32 @@ export async function readColoredCourtDiagram(source: HTMLCanvasElement) {
         const dx=b.x-origin.x,dy=b.y-origin.y;
         return {t:dx*ux+dy*uy,cross:Math.abs(dy*ux-dx*uy)};
       }).filter(b=>b.t>source.radius*.65&&b.t<length-unit*.017&&b.cross<unit*.014).sort((a,b)=>a.t-b.t);
-      if(dashes.length<4||dashes[0].t>source.radius+unit*.055||length-dashes.at(-1)!.t>unit*.09)return [];
+      if(dashes.length<4||length-dashes.at(-1)!.t>unit*.09)return [];
+      const detachedStart=dashes[0].t>source.radius+unit*.055;
+      // A crossing at the end of a dribble can hide the first dashes.
+      // Require a longer, regularly spaced series before suggesting a pass.
+      if(detachedStart&&(!dribbleEnds.has(source.player.key)||dashes.length<7||dashes[0].t>unit*.145))return [];
       const gaps=dashes.slice(1).filter((b,i)=>b.t-dashes[i].t>unit*.014&&b.t-dashes[i].t<unit*.064);
       return gaps.length>=3&&gaps.length>=(dashes.length-1)*.75?[{
-        end,score:gaps.length,
+        end,score:gaps.length,detachedStart,
         receiver:roster.find(item=>item!==source&&distance(item.center,end)<item.radius+unit*.045),
       }]:[];
-    }).sort((a,b)=>b.score-a.score);
+    }).sort((a,b)=>Number(a.detachedStart)-Number(b.detachedStart)||b.score-a.score);
     const accepted: AiPoint[]=[];
+    let primary: AiDiagramAction | undefined;
     for (const candidate of candidates) {
       if (accepted.some(end=>distance(end,candidate.end)<unit*.055)) continue;
       accepted.push(candidate.end);
-      actions.push({action:"pass",from:canonical(dribbleEnds.get(source.player.key) ?? source.center),to:canonical(candidate.end),fromPlayer:source.player.key,
-        toPlayer:candidate.receiver?.player.key,confidence:.85,source:"Passe : pointillés alignés et pointe de flèche"});
+      const pass:AiDiagramAction={action:"pass",from:canonical(dribbleEnds.get(source.player.key) ?? source.center),to:canonical(candidate.end),fromPlayer:source.player.key,
+        toPlayer:candidate.receiver?.player.key,confidence:candidate.detachedStart?.47:.85,
+        source:candidate.detachedStart?"Passe en pointillés : départ partiellement masqué":"Passe : pointillés alignés et pointe de flèche"};
+      if(!candidate.detachedStart)primary??=pass;
+      if(candidate.detachedStart&&primary&&!primary.continuationChoice){
+        const group=`pass-${source.player.key}`;
+        primary.continuationChoice={group,alternate:false};
+        pass.continuationChoice={group,alternate:true};
+      }
+      actions.push(pass);
     }
   }
   for(const trace of traces.filter(b=>!used.has(b)&&traceBounds(b)>unit*.043&&b.pixels.length>unit*.062)){
@@ -576,7 +650,7 @@ export async function readColoredCourtDiagram(source: HTMLCanvasElement) {
   for(const pass of actions.filter(action=>action.action==="pass"&&!action.toPlayer)){
     const landing=actions.filter(action=>action.action==="cut"&&action.fromPlayer&&action.fromPlayer!==pass.fromPlayer)
       .map(action=>({action,gap:distance(action.to,pass.to)})).sort((a,b)=>a.gap-b.gap);
-    if(landing[0]?.gap<.021&&(!landing[1]||landing[1].gap-landing[0].gap>.012)){
+    if(landing[0]?.gap<(pass.continuationChoice?.alternate?.03:.021)&&(!landing[1]||landing[1].gap-landing[0].gap>.012)){
       pass.toPlayer=landing[0].action.fromPlayer;
     }
   }
@@ -655,6 +729,17 @@ export async function readColoredCourtDiagram(source: HTMLCanvasElement) {
       actions.splice(actions.indexOf(priorCut),1);
       actions.push(priorCut);
     }
+  }
+  for(const alternative of actions.filter(action=>action.action==="pass"&&action.continuationChoice?.alternate)){
+    const primary=actions.find(action=>action.continuationChoice?.group===alternative.continuationChoice?.group
+      &&!action.continuationChoice?.alternate);
+    if(!primary)continue;
+    const arrival=actions.findLast(action=>action.action==="cut"&&action.fromPlayer===alternative.toPlayer
+      &&distance(action.to,alternative.to)<.03);
+    if(!arrival||actions.indexOf(arrival)<actions.indexOf(primary))continue;
+    actions.splice(actions.indexOf(alternative),1);
+    actions.splice(actions.indexOf(primary),1);
+    actions.splice(actions.indexOf(arrival)+1,0,primary,alternative);
   }
   return {canvas,play,players:roster.map(item=>item.player),objects,actions};
 }
