@@ -78,6 +78,8 @@ type SavedCourtPreset = {
   style: CourtStyle;
   branding: CourtBranding;
   playerColors: PlayerBaseColors;
+  courtType?: 'half' | 'full';
+  preview?: string;
   createdAt: number;
 };
 
@@ -386,6 +388,8 @@ const resetPlaquette = () => {
   const [courtBrandingOpen, setCourtBrandingOpen] = useState(false);
   const [savedCourtPresets, setSavedCourtPresets] = useState<SavedCourtPreset[]>([]);
   const [savedCourtPresetsLoading, setSavedCourtPresetsLoading] = useState(false);
+  const [courtPresetSaving, setCourtPresetSaving] = useState(false);
+  const [courtPresetStatus, setCourtPresetStatus] = useState('');
   const [playerBaseColors, setPlayerBaseColors] = useState<PlayerBaseColors>({ attacker: '#D4A24C', defender: '#D62828' });
   const playerBaseColorsRef = useRef<PlayerBaseColors>({ attacker: '#D4A24C', defender: '#D62828' });
   const courtBrandingRef = useRef<CourtBranding>(DEFAULT_COURT_BRANDING);
@@ -426,6 +430,27 @@ const resetPlaquette = () => {
     }
   };
 
+  const readSavedCourtPreset = (item: {
+    id: unknown; name?: string; style?: unknown; branding?: unknown;
+    player_colors?: Partial<PlayerBaseColors>; created_at?: string;
+  }): SavedCourtPreset => {
+    const storedStyle = item.style as { courtType?: unknown; preview?: unknown } | null | undefined;
+    return {
+      id: String(item.id),
+      name: item.name?.trim().slice(0, 40) || 'Terrain personnalisé',
+      style: normalizeCourtStyle(storedStyle),
+      branding: normalizeCourtBranding(item.branding),
+      playerColors: {
+        attacker: item.player_colors?.attacker || '#D4A24C',
+        defender: item.player_colors?.defender || '#D62828',
+      },
+      courtType: storedStyle?.courtType === 'half' || storedStyle?.courtType === 'full' ? storedStyle.courtType : undefined,
+      preview: typeof storedStyle?.preview === 'string' && /^data:image\/(webp|png);base64,/.test(storedStyle.preview)
+        ? storedStyle.preview : undefined,
+      createdAt: item.created_at ? new Date(item.created_at).getTime() : Date.now(),
+    };
+  };
+
   useEffect(() => {
     let cancelled = false;
 
@@ -447,15 +472,7 @@ const resetPlaquette = () => {
         if (error) throw error;
         if (cancelled) return;
 
-        const clean = (Array.isArray(data) ? data : []).map((item: any): SavedCourtPreset => ({
-          id: String(item.id),
-          name: typeof item?.name === 'string' && item.name.trim() ? item.name.trim().slice(0, 40) : 'Terrain personnalisé',
-          style: normalizeCourtStyle(item?.style),
-          branding: normalizeCourtBranding(item?.branding),
-          playerColors: { attacker: item?.player_colors?.attacker || '#D4A24C', defender: item?.player_colors?.defender || '#D62828' },
-          createdAt: item?.created_at ? new Date(item.created_at).getTime() : Date.now(),
-        }));
-        setSavedCourtPresets(clean);
+        setSavedCourtPresets((Array.isArray(data) ? data : []).map(readSavedCourtPreset));
       } catch (error) {
         console.warn('Chargement des terrains personnels impossible :', error);
       } finally {
@@ -468,45 +485,48 @@ const resetPlaquette = () => {
   }, []);
 
   const saveCurrentCourtPreset = async () => {
+    if (courtPresetSaving) return;
     const proposed = window.prompt('Nom du terrain à sauvegarder :', `Mon terrain ${savedCourtPresets.length + 1}`);
     const name = proposed?.trim();
     if (!name) return;
 
+    const format = courtRef.current;
+    const style = normalizeCourtStyle(courtStyleRef.current);
+    const branding = normalizeCourtBranding(courtBrandingRef.current);
+    const playerColors = { ...playerBaseColorsRef.current };
+    const preview = captureCourtPresetPreview(format);
+
+    setCourtPresetSaving(true);
+    setCourtPresetStatus('');
     try {
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) {
-        alert('Connecte-toi à ton compte MyBasket pour sauvegarder ce terrain.');
+        setCourtPresetStatus('Connecte-toi à MyBasket pour sauvegarder ton terrain.');
         return;
       }
 
-      const style = normalizeCourtStyle(courtStyleRef.current);
-      const branding = normalizeCourtBranding(courtBrandingRef.current);
       const { data, error } = await supabase
         .from('plaquette_court_presets')
         .insert({
           user_id: user.id,
           name: name.slice(0, 40),
-          style,
+          style: { ...style, courtType: format, preview },
           branding,
-          player_colors: playerBaseColorsRef.current,
+          player_colors: playerColors,
         })
         .select('id, name, style, branding, player_colors, created_at')
         .single();
 
       if (error) throw error;
 
-      const preset: SavedCourtPreset = {
-        id: String(data.id),
-        name: String(data.name || name).slice(0, 40),
-        style: normalizeCourtStyle(data.style),
-        branding: normalizeCourtBranding(data.branding),
-        playerColors: { attacker: data?.player_colors?.attacker || playerBaseColorsRef.current.attacker, defender: data?.player_colors?.defender || playerBaseColorsRef.current.defender },
-        createdAt: data.created_at ? new Date(data.created_at).getTime() : Date.now(),
-      };
+      const preset = readSavedCourtPreset(data);
       setSavedCourtPresets((currentItems) => [preset, ...currentItems]);
+      setCourtPresetStatus(`« ${preset.name} » sauvegardé.`);
     } catch (error) {
       console.warn('Sauvegarde du terrain en base impossible :', error);
-      alert('Impossible de sauvegarder ce terrain sur ton compte. Vérifie que la migration Supabase des terrains personnels a bien été exécutée.');
+      setCourtPresetStatus('Impossible de sauvegarder ce terrain sur ton compte.');
+    } finally {
+      setCourtPresetSaving(false);
     }
   };
 
@@ -559,7 +579,7 @@ const resetPlaquette = () => {
       render();
       refreshPhaseCourtThumbnail();
     }).catch((error) => console.warn('Police locale terrain non chargée :', error));
-    return () => { cancelled = true; };
+    return () => { cancelled = true; document.fonts.delete(face); };
   }, [courtBranding.customFontDataUrl]);
 
   const applyCourtStyle = (value: unknown) => {
@@ -570,9 +590,14 @@ const resetPlaquette = () => {
   };
 
   const loadSavedCourtPreset = (preset: SavedCourtPreset) => {
+    if (preset.courtType) {
+      courtRef.current = preset.courtType;
+      setCourtType(preset.courtType);
+    }
     applyCourtStyle(preset.style);
     applyCourtBranding(preset.branding);
-    updatePlayerBaseColors(preset.playerColors || { attacker: '#D4A24C', defender: '#D62828' });
+    updatePlayerBaseColors(preset.playerColors);
+    setCourtPresetStatus(`« ${preset.name} » chargé.`);
   };
 
   const deleteSavedCourtPreset = async (id: string) => {
@@ -1472,6 +1497,23 @@ const currentRef = useRef(current);
     }
 
     setPhaseCourtThumbnailUrl(MYBASKET_DEMI_URL);
+  };
+
+  const captureCourtPresetPreview = (format: 'half' | 'full') => {
+    const imageReady = format === 'half' ? readyRef.current.demi : readyRef.current.full;
+    const logo = courtBrandingLogoRef.current;
+    if (!imageReady || (logo && !logo.complete)) return undefined;
+    const preview = document.createElement('canvas');
+    preview.width = format === 'half' ? 320 : 205;
+    preview.height = format === 'half' ? 250 : 320;
+    const context = preview.getContext('2d');
+    if (!context) return undefined;
+    try {
+      drawBackground(context, preview);
+      return preview.toDataURL('image/webp', .76);
+    } catch {
+      return undefined;
+    }
   };
 
   const drawBackground = (ctx: CanvasRenderingContext2D, canvas: HTMLCanvasElement) => {
@@ -5249,6 +5291,54 @@ const exportJson = () => {
 
   const hasResizableSelection = selection.some((item) => item.type === 'object' || item.type === 'player');
 
+  const courtPresetControls = (
+    <div style={{ marginTop: '1rem', paddingTop: '.85rem', borderTop: '1px solid #ECECEC' }}>
+      <button
+        type="button"
+        className="btn"
+        onClick={saveCurrentCourtPreset}
+        disabled={courtPresetSaving}
+        style={{ width: '100%', background: 'var(--bordeaux, #6B1A2C)', color: '#fff', fontWeight: 900 }}
+      >
+        {courtPresetSaving ? 'Sauvegarde…' : 'Sauvegarder ce terrain'}
+      </button>
+      <div style={{ fontSize: '.7rem', color: '#777', marginTop: '.35rem', lineHeight: 1.35 }}>
+        Enregistre le format, les couleurs, le parquet, les logos, le texte et les couleurs de base des joueurs sur ton compte.
+      </div>
+
+      {courtPresetStatus && <p role="status" style={{ fontSize: '.76rem', margin: '.5rem 0 0' }}>{courtPresetStatus}</p>}
+      {savedCourtPresetsLoading && (
+        <div style={{ fontSize: '.7rem', color: '#777', marginTop: '.55rem' }}>Chargement de mes terrains…</div>
+      )}
+
+      {savedCourtPresets.length > 0 && (
+        <div style={{ marginTop: '.8rem' }}>
+          <div style={{ fontSize: '.72rem', fontWeight: 900, color: '#555', textTransform: 'uppercase', letterSpacing: '.04em', marginBottom: '.4rem' }}>
+            Mes terrains
+          </div>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0,1fr))', gap: '.55rem' }}>
+            {savedCourtPresets.map((preset) => (
+              <div key={preset.id} style={{ position: 'relative', border: '1px solid #DDD', borderRadius: 10, background: '#fff', padding: '.45rem' }}>
+                <button type="button" onClick={() => loadSavedCourtPreset(preset)} style={{ width: '100%', border: 0, background: 'transparent', padding: 0, cursor: 'pointer', textAlign: 'left', fontWeight: 800, fontSize: '.76rem' }}>
+                  {preset.preview ? (
+                    <img src={preset.preview} alt="" style={{ display:'block', width:'100%', height:96, objectFit:'contain', borderRadius:7, marginBottom:'.4rem', background:'#F6F3EE' }} />
+                  ) : <span aria-hidden="true" style={{ display: 'block', position: 'relative', height: 78, overflow: 'hidden', borderRadius: 7, marginBottom: '.4rem', background: preset.style.floorColor, border: `5px solid ${preset.style.borderColor}` }}>
+                    <span style={{ position: 'absolute', left: '27%', right: '27%', top: 0, height: '45%', background: preset.style.paintColor, border: `2px solid ${preset.style.lineColor}`, borderTop: 0 }} />
+                    <span style={{ position: 'absolute', left: '50%', bottom: -28, width: 56, height: 56, transform: 'translateX(-50%)', border: `2px solid ${preset.style.lineColor}`, borderRadius: '50%' }} />
+                    <span style={{ position: 'absolute', left: '8%', right: '8%', top: '70%', borderTop: `2px solid ${preset.style.lineColor}` }} />
+                  </span>}
+                  {preset.name}
+                  {preset.courtType && <small style={{ display:'block', fontWeight:500 }}>{preset.courtType === 'full' ? 'Terrain entier' : 'Demi-terrain'}</small>}
+                </button>
+                <button type="button" onClick={() => deleteSavedCourtPreset(preset.id)} title={`Supprimer ${preset.name}`} aria-label={`Supprimer ${preset.name}`} style={{ position: 'absolute', right: 7, top: 7, width: 25, height: 25, border: '1px solid #E5C6CB', borderRadius: 7, background: '#fff', color: '#9F1F37', cursor: 'pointer', fontWeight: 900 }}>×</button>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+
   return (
     <div className="mb-screen">
       <style>{CSS}</style>
@@ -6009,7 +6099,7 @@ const exportJson = () => {
 
         {courtBrandingOpen && (
           <div onClick={() => setCourtBrandingOpen(false)} style={{ position:'fixed', inset:0, background:'rgba(15,15,18,.56)', display:'flex', alignItems:'center', justifyContent:'center', zIndex:4200, padding:'1rem' }}>
-            <div onClick={(e) => e.stopPropagation()} style={{ width:520, maxWidth:'96vw', background:'#fff', borderRadius:14, boxShadow:'0 18px 60px rgba(0,0,0,.36)', padding:'1rem 1.1rem 1.1rem' }}>
+            <div onClick={(e) => e.stopPropagation()} style={{ width:520, maxWidth:'96vw', maxHeight:'90dvh', overflowY:'auto', background:'#fff', borderRadius:14, boxShadow:'0 18px 60px rgba(0,0,0,.36)', padding:'1rem 1.1rem 1.1rem' }}>
               <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', gap:'.8rem', marginBottom:'.8rem' }}>
                 <div style={{ fontWeight:900, fontSize:'1.05rem', color:'#1f1f1f' }}>✨ Personnaliser le terrain</div>
                 <button type="button" onClick={() => setCourtBrandingOpen(false)} style={{ border:0, background:'transparent', fontSize:'1.35rem', cursor:'pointer' }}>×</button>
@@ -6126,6 +6216,7 @@ const exportJson = () => {
                 <label style={{ fontSize:'.74rem', fontWeight:800 }}>Position horizontale <input type="range" min="-0.3" max="0.3" step="0.01" value={courtBranding.offsetX} onChange={(e) => applyCourtBranding({ ...courtBrandingRef.current, offsetX:Number(e.target.value), useCustomBranding:true })} style={{ width:'100%' }} /></label>
                 <label style={{ fontSize:'.74rem', fontWeight:800 }}>Position verticale <input type="range" min="-0.3" max="0.3" step="0.01" value={courtBranding.offsetY} onChange={(e) => applyCourtBranding({ ...courtBrandingRef.current, offsetY:Number(e.target.value), useCustomBranding:true })} style={{ width:'100%' }} /></label>
               </div>
+              {courtPresetControls}
               <div style={{ display:'flex', gap:'.55rem', marginTop:'.7rem' }}>
                 <button type="button" className="btn btn-outline" style={{ flex:1 }} onClick={() => applyCourtBranding(DEFAULT_COURT_BRANDING)}>↺ Logo / texte original</button>
                 <button type="button" className="btn" style={{ flex:1, background:'var(--or, #D4A24C)', color:'#20160A', fontWeight:800 }} onClick={() => setCourtBrandingOpen(false)}>Fermer</button>
@@ -6358,46 +6449,7 @@ const exportJson = () => {
                 </div>
               </div>
 
-              <div style={{ marginTop: '1rem', paddingTop: '.85rem', borderTop: '1px solid #ECECEC' }}>
-                <button
-                  type="button"
-                  className="btn"
-                  onClick={saveCurrentCourtPreset}
-                  style={{ width: '100%', background: 'var(--bordeaux, #6B1A2C)', color: '#fff', fontWeight: 900 }}
-                >
-                  💾 Sauvegarder ce terrain
-                </button>
-                <div style={{ fontSize: '.7rem', color: '#777', marginTop: '.35rem', lineHeight: 1.35 }}>
-                  Sauvegarde sur ton compte MyBasket : terrain, branding et couleurs de base attaquants/défenseurs. Tu peux créer autant de terrains personnels que nécessaire.
-                </div>
-
-                {savedCourtPresetsLoading && (
-                  <div style={{ fontSize: '.7rem', color: '#777', marginTop: '.55rem' }}>Chargement de mes terrains…</div>
-                )}
-
-                {savedCourtPresets.length > 0 && (
-                  <div style={{ marginTop: '.8rem' }}>
-                    <div style={{ fontSize: '.72rem', fontWeight: 900, color: '#555', textTransform: 'uppercase', letterSpacing: '.04em', marginBottom: '.4rem' }}>
-                      Mes terrains
-                    </div>
-                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0,1fr))', gap: '.55rem' }}>
-                      {savedCourtPresets.map((preset) => (
-                        <div key={preset.id} style={{ position: 'relative', border: '1px solid #DDD', borderRadius: 10, background: '#fff', padding: '.45rem' }}>
-                          <button type="button" onClick={() => loadSavedCourtPreset(preset)} style={{ width: '100%', border: 0, background: 'transparent', padding: 0, cursor: 'pointer', textAlign: 'left', fontWeight: 800, fontSize: '.76rem' }}>
-                            <span aria-hidden="true" style={{ display: 'block', position: 'relative', height: 78, overflow: 'hidden', borderRadius: 7, marginBottom: '.4rem', background: preset.style.floorColor, border: `5px solid ${preset.style.borderColor}` }}>
-                              <span style={{ position: 'absolute', left: '27%', right: '27%', top: 0, height: '45%', background: preset.style.paintColor, border: `2px solid ${preset.style.lineColor}`, borderTop: 0 }} />
-                              <span style={{ position: 'absolute', left: '50%', bottom: -28, width: 56, height: 56, transform: 'translateX(-50%)', border: `2px solid ${preset.style.lineColor}`, borderRadius: '50%' }} />
-                              <span style={{ position: 'absolute', left: '8%', right: '8%', top: '70%', borderTop: `2px solid ${preset.style.lineColor}` }} />
-                            </span>
-                            {preset.name}
-                          </button>
-                          <button type="button" onClick={() => deleteSavedCourtPreset(preset.id)} title={`Supprimer ${preset.name}`} aria-label={`Supprimer ${preset.name}`} style={{ position: 'absolute', right: 7, top: 7, width: 25, height: 25, border: '1px solid #E5C6CB', borderRadius: 7, background: '#fff', color: '#9F1F37', cursor: 'pointer', fontWeight: 900 }}>×</button>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                )}
-              </div>
+              {courtPresetControls}
 
               <div style={{ display: 'flex', gap: '.55rem', marginTop: '1rem' }}>
                 <button
