@@ -388,6 +388,8 @@ const resetPlaquette = () => {
   const [courtBrandingOpen, setCourtBrandingOpen] = useState(false);
   const [savedCourtPresets, setSavedCourtPresets] = useState<SavedCourtPreset[]>([]);
   const [savedCourtPresetsLoading, setSavedCourtPresetsLoading] = useState(false);
+  const [selectedCourtPresetId, setSelectedCourtPresetId] = useState<string | null>(null);
+  const courtPresetOwner = useRef<string | null>(null);
   const [courtPresetSaving, setCourtPresetSaving] = useState(false);
   const [courtPresetStatus, setCourtPresetStatus] = useState('');
   const [playerBaseColors, setPlayerBaseColors] = useState<PlayerBaseColors>({ attacker: '#D4A24C', defender: '#D62828' });
@@ -452,41 +454,62 @@ const resetPlaquette = () => {
   };
 
   useEffect(() => {
-    let cancelled = false;
+    let loadTimer: number | undefined;
+    let request: AbortController | undefined;
 
-    const loadSavedCourtPresetsFromDatabase = async () => {
-      setSavedCourtPresetsLoading(true);
-      try {
-        const { data: { user } } = await supabase.auth.getUser();
-        if (!user) {
-          if (!cancelled) setSavedCourtPresets([]);
-          return;
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event: string, session: { user: { id: string } } | null) => {
+      const owner = session?.user.id ?? null;
+      if (owner === courtPresetOwner.current) return;
+      courtPresetOwner.current = owner;
+      window.clearTimeout(loadTimer);
+      request?.abort();
+      setSavedCourtPresets([]);
+      setSelectedCourtPresetId(null);
+      setCourtPresetStatus('');
+      setSavedCourtPresetsLoading(Boolean(owner));
+      if (!owner) return;
+
+      const controller = new AbortController();
+      request = controller;
+      // Run the database request after the auth callback releases its lock.
+      loadTimer = window.setTimeout(async () => {
+        try {
+          const { data, error } = await supabase
+            .from('plaquette_court_presets')
+            .select('id, name, style, branding, player_colors, created_at')
+            .eq('user_id', owner)
+            .order('created_at', { ascending: false })
+            .abortSignal(controller.signal);
+          if (controller.signal.aborted) return;
+          if (error) throw error;
+          const presets = (Array.isArray(data) ? data : []).map(readSavedCourtPreset);
+          setSavedCourtPresets(current => [
+            ...current,
+            ...presets.filter(preset => !current.some(item => item.id === preset.id)),
+          ]);
+        } catch (error) {
+          if (!controller.signal.aborted) {
+            console.warn('Chargement des terrains personnels impossible :', error);
+            setCourtPresetStatus('Impossible de charger tes terrains. Recharge la page pour réessayer.');
+          }
+        } finally {
+          if (!controller.signal.aborted) setSavedCourtPresetsLoading(false);
         }
-
-        const { data, error } = await supabase
-          .from('plaquette_court_presets')
-          .select('id, name, style, branding, player_colors, created_at')
-          .eq('user_id', user.id)
-          .order('created_at', { ascending: false });
-
-        if (error) throw error;
-        if (cancelled) return;
-
-        setSavedCourtPresets((Array.isArray(data) ? data : []).map(readSavedCourtPreset));
-      } catch (error) {
-        console.warn('Chargement des terrains personnels impossible :', error);
-      } finally {
-        if (!cancelled) setSavedCourtPresetsLoading(false);
-      }
+      }, 0);
+    });
+    return () => {
+      window.clearTimeout(loadTimer);
+      request?.abort();
+      courtPresetOwner.current = null;
+      subscription.unsubscribe();
     };
+  }, [supabase]);
 
-    void loadSavedCourtPresetsFromDatabase();
-    return () => { cancelled = true; };
-  }, []);
-
-  const saveCurrentCourtPreset = async () => {
+  const saveCurrentCourtPreset = async (existing?: SavedCourtPreset) => {
     if (courtPresetSaving) return;
-    const proposed = window.prompt('Nom du terrain à sauvegarder :', `Mon terrain ${savedCourtPresets.length + 1}`);
+    const ownerAtStart = courtPresetOwner.current;
+    const proposed = window.prompt(existing ? 'Nom du terrain à mettre à jour' : 'Nom du terrain à sauvegarder',
+      existing?.name ?? `Mon terrain ${savedCourtPresets.length + 1}`);
     const name = proposed?.trim();
     if (!name) return;
 
@@ -499,7 +522,9 @@ const resetPlaquette = () => {
     setCourtPresetSaving(true);
     setCourtPresetStatus('');
     const slowSave = window.setTimeout(() => {
-      setCourtPresetStatus('L’enregistrement sur ton compte prend plus de temps que prévu…');
+      if (courtPresetOwner.current === ownerAtStart) {
+        setCourtPresetStatus('L’enregistrement sur ton compte prend plus de temps que prévu…');
+      }
     }, 5000);
     try {
       const { data: { session }, error: sessionError } = await supabase.auth.getSession();
@@ -510,6 +535,7 @@ const resetPlaquette = () => {
         return;
       }
 
+      if (courtPresetOwner.current !== ownerAtStart || (existing && user.id !== ownerAtStart)) return;
       const row = {
         user_id: user.id,
         name: name.slice(0, 40),
@@ -517,20 +543,26 @@ const resetPlaquette = () => {
         branding,
         player_colors: playerColors,
       };
-      const { data, error } = await supabase
-        .from('plaquette_court_presets')
-        .insert(row)
-        .select('id, created_at')
-        .single();
+      const table = supabase.from('plaquette_court_presets');
+      const write = existing
+        ? table.update({ name: row.name, style: row.style, branding: row.branding, player_colors: row.player_colors })
+          .eq('id', existing.id).eq('user_id', user.id)
+        : table.insert(row);
+      const { data, error } = await write.select('id, created_at').single();
 
       if (error) throw error;
-
+      if (courtPresetOwner.current !== ownerAtStart) return;
       const preset = readSavedCourtPreset({ ...row, ...data });
-      setSavedCourtPresets((currentItems) => [preset, ...currentItems]);
-      setCourtPresetStatus(`« ${preset.name} » sauvegardé.`);
+      setSavedCourtPresets(items => existing
+        ? items.map(item => item.id === preset.id ? preset : item)
+        : [preset, ...items.filter(item => item.id !== preset.id)]);
+      setSelectedCourtPresetId(preset.id);
+      setCourtPresetStatus(existing ? `« ${preset.name} » mis à jour.` : `« ${preset.name} » sauvegardé.`);
     } catch (error) {
       console.warn('Sauvegarde du terrain en base impossible :', error);
-      setCourtPresetStatus('Impossible de sauvegarder ce terrain sur ton compte.');
+      if (courtPresetOwner.current === ownerAtStart) {
+        setCourtPresetStatus(existing ? 'Impossible de mettre à jour ce terrain.' : 'Impossible de sauvegarder ce terrain sur ton compte.');
+      }
     } finally {
       window.clearTimeout(slowSave);
       setCourtPresetSaving(false);
@@ -604,6 +636,7 @@ const resetPlaquette = () => {
     applyCourtStyle(preset.style);
     applyCourtBranding(preset.branding);
     updatePlayerBaseColors(preset.playerColors);
+    setSelectedCourtPresetId(preset.id);
     setCourtPresetStatus(`« ${preset.name} » chargé.`);
   };
 
@@ -618,6 +651,7 @@ const resetPlaquette = () => {
         .eq('user_id', user.id);
       if (error) throw error;
       setSavedCourtPresets((currentItems) => currentItems.filter((preset) => preset.id !== id));
+      setSelectedCourtPresetId(selected => selected === id ? null : selected);
     } catch (error) {
       console.warn('Suppression du terrain personnel impossible :', error);
       alert('Impossible de supprimer ce terrain pour le moment.');
@@ -625,6 +659,7 @@ const resetPlaquette = () => {
   };
 
   const resetCourtAppearance = () => {
+    setSelectedCourtPresetId(null);
     applyCourtStyle(DEFAULT_COURT_STYLE);
     applyCourtBranding(DEFAULT_COURT_BRANDING);
   };
@@ -5298,17 +5333,25 @@ const exportJson = () => {
 
   const hasResizableSelection = selection.some((item) => item.type === 'object' || item.type === 'player');
 
+  const selectedCourtPreset = savedCourtPresets.find(preset => preset.id === selectedCourtPresetId);
   const courtPresetControls = (
     <div style={{ marginTop: '1rem', paddingTop: '.85rem', borderTop: '1px solid #ECECEC' }}>
       <button
         type="button"
         className="btn"
-        onClick={saveCurrentCourtPreset}
+        onClick={() => void saveCurrentCourtPreset()}
         disabled={courtPresetSaving}
         style={{ width: '100%', background: 'var(--bordeaux, #6B1A2C)', color: '#fff', fontWeight: 900 }}
       >
         {courtPresetSaving ? 'Sauvegarde…' : 'Sauvegarder ce terrain'}
       </button>
+      {selectedCourtPreset && (
+        <button type="button" className="btn btn-outline"
+          disabled={courtPresetSaving} onClick={() => void saveCurrentCourtPreset(selectedCourtPreset)}
+          style={{ width: '100%', marginTop: '.45rem' }}>
+          Mettre à jour « {selectedCourtPreset.name} »
+        </button>
+      )}
       <div style={{ fontSize: '.7rem', color: '#777', marginTop: '.35rem', lineHeight: 1.35 }}>
         Enregistre le format, les couleurs, le parquet, les logos, le texte et les couleurs de base des joueurs sur ton compte.
       </div>
@@ -5325,8 +5368,8 @@ const exportJson = () => {
           </div>
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0,1fr))', gap: '.55rem' }}>
             {savedCourtPresets.map((preset) => (
-              <div key={preset.id} style={{ position: 'relative', border: '1px solid #DDD', borderRadius: 10, background: '#fff', padding: '.45rem' }}>
-                <button type="button" onClick={() => loadSavedCourtPreset(preset)} style={{ width: '100%', border: 0, background: 'transparent', padding: 0, cursor: 'pointer', textAlign: 'left', fontWeight: 800, fontSize: '.76rem' }}>
+              <div key={preset.id} style={{ position: 'relative', border: `1px solid ${preset.id === selectedCourtPresetId ? '#6B1A2C' : '#DDD'}`, borderRadius: 10, background: '#fff', padding: '.45rem' }}>
+                <button type="button" onClick={() => loadSavedCourtPreset(preset)} aria-pressed={preset.id === selectedCourtPresetId} style={{ width: '100%', border: 0, background: 'transparent', padding: 0, cursor: 'pointer', textAlign: 'left', fontWeight: 800, fontSize: '.76rem' }}>
                   {preset.preview ? (
                     <img src={preset.preview} alt="" style={{ display:'block', width:'100%', height:96, objectFit:'contain', borderRadius:7, marginBottom:'.4rem', background:'#F6F3EE' }} />
                   ) : <span aria-hidden="true" style={{ display: 'block', position: 'relative', height: 78, overflow: 'hidden', borderRadius: 7, marginBottom: '.4rem', background: preset.style.floorColor, border: `5px solid ${preset.style.borderColor}` }}>
@@ -5337,7 +5380,7 @@ const exportJson = () => {
                   {preset.name}
                   {preset.courtType && <small style={{ display:'block', fontWeight:500 }}>{preset.courtType === 'full' ? 'Terrain entier' : 'Demi-terrain'}</small>}
                 </button>
-                <button type="button" onClick={() => deleteSavedCourtPreset(preset.id)} title={`Supprimer ${preset.name}`} aria-label={`Supprimer ${preset.name}`} style={{ position: 'absolute', right: 7, top: 7, width: 25, height: 25, border: '1px solid #E5C6CB', borderRadius: 7, background: '#fff', color: '#9F1F37', cursor: 'pointer', fontWeight: 900 }}>×</button>
+                <button type="button" onClick={() => deleteSavedCourtPreset(preset.id)} disabled={courtPresetSaving || savedCourtPresetsLoading} title={`Supprimer ${preset.name}`} aria-label={`Supprimer ${preset.name}`} style={{ position: 'absolute', right: 7, top: 7, width: 25, height: 25, border: '1px solid #E5C6CB', borderRadius: 7, background: '#fff', color: '#9F1F37', cursor: 'pointer', fontWeight: 900 }}>×</button>
               </div>
             ))}
           </div>
