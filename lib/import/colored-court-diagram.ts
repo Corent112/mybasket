@@ -84,12 +84,16 @@ export async function readColoredCourtDiagram(source: HTMLCanvasElement) {
   const play={x0,y0,x1,y1};
   const unit=x1-x0;
   if(unit<width(key)*2.45||unit>width(key)*4||Math.abs(center(key).x-(x0+x1)/2)>unit*.06)return null;
-  const nearSidelines=(x:number)=>x>=x0-unit*.12&&x<=x1+unit*.12;
+  // The printed margin can contain the inbounder. Measure it from the
+  // detected court, leaving the half-court line as the bottom of the drawing.
+  const inboundMargin=unit*.12;
+  const nearCourt=({x,y}:AiPoint)=>x>=x0-inboundMargin&&x<=x1+inboundMargin&&y>=y0-inboundMargin&&y<=y1;
+  const inCourt=({x,y}:AiPoint)=>x>=x0&&x<=x1&&y>=y0&&y<=y1;
   const canonical=(p:AiPoint)=>courtToCanonical({x:(p.x-x0)/unit,y:(p.y-y0)/(y1-y0)},"half");
   const tokens=components(blue.slice(),w,Math.max(20,unit*.24)).filter(b=>{
     const bw=width(b),bh=height(b);
     if(bw<unit*.044||bw>unit*.105||bh/bw<.78||bh/bw>1.23||b.pixels.length/(bw*bh)>.42
-      ||!nearSidelines(center(b).x)||b.y0<y0-unit*.012||b.y1>y1+unit*.012)return false;
+      ||!nearCourt(center(b))||b.y1>y1+unit*.012)return false;
     const p=center(b),radius=(bw+bh)/4;
     const arcs=new Set<number>();
     for (const i of b.pixels) {
@@ -110,7 +114,7 @@ export async function readColoredCourtDiagram(source: HTMLCanvasElement) {
   for (const interior of components(white,w,Math.max(14,unit*.09))) {
     const bw=width(interior),bh=height(interior),p=center(interior);
     if (bw<unit*.025||bw>unit*.079||bh/bw<.68||bh/bw>1.47
-      ||!nearSidelines(p.x)||p.y<y0||p.y>y1
+      ||!nearCourt(p)
       ||tokens.some(token=>distance(center(token),p)<unit*.045)) continue;
     const radius=(bw+bh)/4;
     // White can be split in two by the digit or covered by the ball.
@@ -208,20 +212,24 @@ export async function readColoredCourtDiagram(source: HTMLCanvasElement) {
   }
   const objects: AiDiagramObject[]=[];
   for (const ball of balls) {
-    if(!nearSidelines(ball.x)||ball.y<y0||ball.y>y1||width(ball)/height(ball)<.65||width(ball)/height(ball)>1.5)continue;
+    if(!nearCourt(ball)||width(ball)/height(ball)<.65||width(ball)/height(ball)>1.5)continue;
     const nearest=roster.filter(item=>distance(item.center,ball)<=item.radius*1.45+Math.max(width(ball),height(ball))/2)
       .sort((a,b)=>distance(a.center,ball)-distance(b.center,ball))[0];
     if(nearest)nearest.player.hasBall=true;
-    else if(ball.x>=x0&&ball.x<=x1)objects.push({kind:"ball",...canonical(ball),confidence:.87,source:"Ballon orange détecté"});
+    else if(inCourt(ball))objects.push({kind:"ball",...canonical(ball),confidence:.87,source:"Ballon orange détecté"});
   }
   // Second pass: remove marker ink before analysing continuous, dashed and
   // T-ended lines, so a player cannot be mistaken for a point on a trajectory.
-  const outside=roster.filter(({center})=>center.x<x0||center.x>x1);
+  const outside=roster.filter(({center})=>!inCourt(center));
   for(let y=0;y<h;y++)for(let x=0;x<w;x++){
     const i=y*w+x;
-    if(ink[i]&&(((x<x0||x>x1)&&!outside.some(({center})=>nearSidelines(x)
-      &&(x<x0)===(center.x<x0)&&Math.abs(y-center.y)<unit*.12))||y<y0||y>y1||
-      balls.some(ball=>distance(ball,{x,y})<Math.max(width(ball),height(ball))*.52)||roster.some(({center:p,radius})=>(p.x-x)**2+(p.y-y)**2<(radius*1.08)**2)))ink[i]=0;
+    if(!ink[i])continue;
+    const p={x,y};
+    const inboundInk=!inCourt(p)&&nearCourt(p)&&outside.some(({center})=>
+      (y<y0 ? center.y<y0&&Math.abs(x-center.x)<inboundMargin
+        : (x<x0 ? center.x<x0 : center.x>x1)&&Math.abs(y-center.y)<inboundMargin));
+    if((!inCourt(p)&&!inboundInk)||balls.some(ball=>distance(ball,p)<Math.max(width(ball),height(ball))*.52)
+      ||roster.some(({center,radius})=>(center.x-x)**2+(center.y-y)**2<(radius*1.08)**2))ink[i]=0;
   }
   const traces=components(ink.slice(),w,Math.max(6,Math.round(unit*.013)));
   const dot=(i:number)=>({x:i%w,y:Math.floor(i/w)});
@@ -325,7 +333,7 @@ export async function readColoredCourtDiagram(source: HTMLCanvasElement) {
   };
   const actions:AiDiagramAction[]=[];
   const used=new Set<Blob>();
-  const sidelineRuns:{trace:Blob;path:AiPoint[]}[]=[];
+  const outsideRuns:{trace:Blob;path:AiPoint[]}[]=[];
   const owner=(blob:Blob)=>{
     const ranked=roster.map(item=>({item,gap:blob.pixels.reduce((gap,i)=>Math.min(gap,distance(dot(i),item.center)),Infinity)-item.radius}))
       .sort((a,b)=>a.gap-b.gap);
@@ -440,8 +448,8 @@ export async function readColoredCourtDiagram(source: HTMLCanvasElement) {
         const {item,path}=sideline[0];
         const from=item.player,to=canonical(endpoint);
         actions.push({action:isZigzag(path,unit)?"dribble":"cut",from,to,fromPlayer:from.key,
-          points:[from,...sampleStroke(path).map(canonical),to],confidence:.84,source:"Déplacement suivi depuis la touche"});
-        sidelineRuns.push({trace,path:[...path,endpoint]});
+          points:[from,...sampleStroke(path).map(canonical),to],confidence:.84,source:"Déplacement suivi depuis l’extérieur du terrain"});
+        outsideRuns.push({trace,path:[...path,endpoint]});
         used.add(trace);
         continue;
       }
@@ -677,7 +685,7 @@ export async function readColoredCourtDiagram(source: HTMLCanvasElement) {
     x:x0+(x-topLeft.x)*unit/(bottomRight.x-topLeft.x),
     y:y0+(y-topLeft.y)*(y1-y0)/(bottomRight.y-topLeft.y),
   });
-  for(const {trace,path} of sidelineRuns){
+  for(const {trace,path} of outsideRuns){
     const residual=new Uint8Array(ink.length);
     const crossing=new Set<number>();
     for(const {x,y} of path)for(let dx=-3;dx<=3;dx++)for(let dy=-3;dy<=3;dy++){
@@ -890,8 +898,9 @@ export async function readColoredCourtDiagram(source: HTMLCanvasElement) {
     let candidates=passCandidates(source,origin);
     if(!candidates.length&&source.player.hasBall&&outside.includes(source)){
       const offset=source.radius*.65;
-      candidates=[...passCandidates(source,{...origin,y:origin.y-offset}),
-        ...passCandidates(source,{...origin,y:origin.y+offset})].sort((a,b)=>b.score-a.score);
+      const axis=source.center.y<y0?"x":"y";
+      candidates=[-offset,offset].flatMap(shift=>passCandidates(source,{...origin,[axis]:origin[axis]+shift}))
+        .sort((a,b)=>b.score-a.score);
     }
     const accepted: AiPoint[]=[];
     let primary: AiDiagramAction | undefined;
