@@ -1091,8 +1091,8 @@ export default function ImportReview({
               if (stage !== "actions" || traceMode || addMode || annotationMode || linkStart) return;
               const { x, y } = pointerPosition(event);
               const hit = hitTest(x, y);
-              if (hit?.kind !== "action") return;
-              setSelection(hit);
+              if (hit?.kind !== "action" || hit.end === "curve" ||
+                  selection?.kind !== "action" || selection.index !== hit.index) return;
               setActionTypeIndex(hit.index);
             }}
             onPointerMove={handlePointerMove}
@@ -1286,20 +1286,6 @@ export default function ImportReview({
                         )}
                       </div>
                     )}
-                    <div style={styles.actionGrid}>
-                      {actionChoices.map((choice) => (
-                        <button
-                          key={choice.value}
-                          type="button"
-                          title={choice.hint}
-                          style={selectedAction.action === choice.value ? styles.actionButtonActive : styles.actionButton}
-                          onClick={() => setActionKind(selection.index, choice.value)}
-                        >
-                          <strong>{choice.label}</strong>
-                          <span style={styles.actionHint}>{choice.hint}</span>
-                        </button>
-                      ))}
-                    </div>
                   </>
                 ) : (
                   <p style={styles.hint}>Objet — glisse pour déplacer.</p>
@@ -1406,10 +1392,6 @@ const styles: Record<string, React.CSSProperties> = {
   fieldLabel: { display: "flex", flexDirection: "column", gap: 5, fontSize: 12, color: "#6B6B6B", fontWeight: 600 },
   input: { width: 82, padding: "7px 9px", borderRadius: 8, border: "1px solid #D8D2C8", fontSize: 13, background: "#fff", color: COLORS.ink },
   legend: { display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: 6, fontSize: 12, color: COLORS.ink },
-  actionGrid: { display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: 7, marginTop: 10 },
-  actionButton: { display: "flex", flexDirection: "column", gap: 2, textAlign: "left", padding: "8px 10px", borderRadius: 8, border: "1px solid #D8D2C8", background: "#fff", cursor: "pointer", color: COLORS.ink },
-  actionButtonActive: { display: "flex", flexDirection: "column", gap: 2, textAlign: "left", padding: "8px 10px", borderRadius: 8, border: "1px solid " + COLORS.bord, background: "#F7ECEF", cursor: "pointer", color: COLORS.bord },
-  actionHint: { fontSize: 10, fontWeight: 400, opacity: 0.72 },
   button: { padding: "7px 12px", borderRadius: 8, border: "1px solid #D8D2C8", background: "#fff", cursor: "pointer", fontSize: 13 },
   buttonPrimary: { padding: "7px 12px", borderRadius: 8, border: "1px solid " + COLORS.bord, background: COLORS.bord, color: "#fff", cursor: "pointer", fontSize: 13 },
   buttonDanger: { padding: "7px 12px", borderRadius: 8, border: "1px solid #D9534F", background: "#fff", color: "#D9534F", cursor: "pointer", fontSize: 13 },
