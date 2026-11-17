@@ -498,34 +498,41 @@ const resetPlaquette = () => {
 
     setCourtPresetSaving(true);
     setCourtPresetStatus('');
+    const slowSave = window.setTimeout(() => {
+      setCourtPresetStatus('L’enregistrement sur ton compte prend plus de temps que prévu…');
+    }, 5000);
     try {
-      const { data: { user } } = await supabase.auth.getUser();
+      const { data: { session }, error: sessionError } = await supabase.auth.getSession();
+      if (sessionError) throw sessionError;
+      const user = session?.user;
       if (!user) {
         setCourtPresetStatus('Connecte-toi à MyBasket pour sauvegarder ton terrain.');
         return;
       }
 
+      const row = {
+        user_id: user.id,
+        name: name.slice(0, 40),
+        style: { ...style, courtType: format, preview },
+        branding,
+        player_colors: playerColors,
+      };
       const { data, error } = await supabase
         .from('plaquette_court_presets')
-        .insert({
-          user_id: user.id,
-          name: name.slice(0, 40),
-          style: { ...style, courtType: format, preview },
-          branding,
-          player_colors: playerColors,
-        })
-        .select('id, name, style, branding, player_colors, created_at')
+        .insert(row)
+        .select('id, created_at')
         .single();
 
       if (error) throw error;
 
-      const preset = readSavedCourtPreset(data);
+      const preset = readSavedCourtPreset({ ...row, ...data });
       setSavedCourtPresets((currentItems) => [preset, ...currentItems]);
       setCourtPresetStatus(`« ${preset.name} » sauvegardé.`);
     } catch (error) {
       console.warn('Sauvegarde du terrain en base impossible :', error);
       setCourtPresetStatus('Impossible de sauvegarder ce terrain sur ton compte.');
     } finally {
+      window.clearTimeout(slowSave);
       setCourtPresetSaving(false);
     }
   };
