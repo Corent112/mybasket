@@ -22,7 +22,9 @@ export function ActionKindDialog({
   }, []);
   return (
     <dialog ref={ref} aria-label="Modifier l’action" onCancel={onClose}
-      style={{ border: "1px solid #e1dad3", borderRadius: 14, padding: "1rem", width: "min(360px, 90vw)", color: "#271b1e" }}>
+      style={{ position: "fixed", inset: 0, margin: "auto", height: "fit-content", maxHeight: "90dvh",
+        overflowY: "auto", border: "1px solid #e1dad3", borderRadius: 14, padding: "1rem",
+        width: "min(360px, 90vw)", background: "#fff", color: "#271b1e" }}>
       <h3 style={{ margin: "0 0 .75rem", color: "#6B1A2C" }}>Modifier l’action</h3>
       <div style={{ display: "grid", gridTemplateColumns: "repeat(2, 1fr)", gap: ".45rem" }}>
         {choices.map(choice => (

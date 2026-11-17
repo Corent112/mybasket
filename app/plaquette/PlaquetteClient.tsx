@@ -1014,7 +1014,7 @@ const currentRef = useRef(current);
     activeOptionRef.current = null;
     setActiveOptionId(null);
     setSelection([]);
-    setTool({ kind: 'none' });
+    setTool({ kind: 'action', action: 'select' });
     setPhotoImportOpen(false);
     showHint(`${drawing.phases.length} phase(s) importée(s) · modifiables sur le terrain`);
   };
@@ -1722,12 +1722,18 @@ const currentRef = useRef(current);
     else owners.delete(id);
   };
   // actions ordonnées d'une phase (par order de création, sinon ordre du tableau)
-  const orderedActions = (ph: Phase): Line[] =>
-    ph.lines
+  const orderedActionsCache = useRef(new WeakMap<Line[], Line[]>());
+  const orderedActions = (ph: Phase): Line[] => {
+    const cached = orderedActionsCache.current.get(ph.lines);
+    if (cached) return cached;
+    const ordered = ph.lines
       .map((l, i) => ({ l, i }))
       .filter((x) => ACTION_KINDS.includes(x.l.action))
       .sort((a, b) => ((a.l.order ?? a.i) - (b.l.order ?? b.i)) || (a.i - b.i))
       .map((x) => x.l);
+    orderedActionsCache.current.set(ph.lines, ordered);
+    return ordered;
+  };
   // simule la phase action par action : positions des joueurs, porteur et position du ballon
   // (s'arrête AVANT l'action uptoId si fournie)
   const simulatePhase = (ph: Phase, uptoId?: string): { pos: Record<string, Pt>; owner: string | null; ballPt: Pt | null } => {
@@ -2698,43 +2704,7 @@ const currentRef = useRef(current);
       drawActionNumber(ctx, m.x, m.y, i + 1);
     });
 
-    ph.objects.forEach((o) => {
-      if (o.kind === 'handoff') {
-        const HANDOFF_LINK_N = 0.14;
-        const moveLines = ph.lines.filter(
-          (line) =>
-            MOVE_KINDS.includes(line.action) &&
-            !!line.sourcePlayerId
-        );
-
-        const linked = ph.players
-          .filter((player) => player.team === 'att' && !player.coach)
-          .map((player) => {
-            let best = Math.hypot(player.x - o.x, player.y - o.y);
-
-            moveLines
-              .filter((line) => line.sourcePlayerId === player.id)
-              .forEach((line) => {
-                const samples = 80;
-                for (let i = 0; i <= samples; i += 1) {
-                  const pt = actionPointN(line.from, line, i / samples);
-                  best = Math.min(best, Math.hypot(pt.x - o.x, pt.y - o.y));
-                }
-              });
-
-            return { id: player.id, distance: best };
-          })
-          .filter((entry) => entry.distance <= HANDOFF_LINK_N)
-          .sort((a, b) => a.distance - b.distance)
-          .slice(0, 2);
-
-        // Aucun cercle automatique n'est dessiné autour du H.
-        // Le repère de sélection ne doit apparaître que lorsque l'utilisateur clique sur le H.
-      }
-
-      // Le H reste visible. Sa zone logique de main-à-main n'est jamais dessinée.
-      drawObject(ctx, canvas, o);
-    });
+    ph.objects.forEach(object => drawObject(ctx, canvas, object));
     const roster = anim ? rosterRef.current : ph.players;
     roster.forEach((p) => {
   const ap = anim ? anim.players[p.id] : null;
@@ -3420,10 +3390,14 @@ const owners=ownersAtClock(sched,ballEventsRef.current,clock);
     selectionRef.current = selection;
     courtStyleRef.current = courtStyle;
     courtBrandingRef.current = courtBranding;
-    refreshPhaseCourtThumbnail();
     render();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [phases, current, courtType, selection, courtStyle, courtBranding]);
+
+  useEffect(() => {
+    refreshPhaseCourtThumbnail();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [courtStyle, courtBranding]);
 
   // Raccourcis clavier : Undo/Redo, suppression, rotation (r / Shift+r), z-order ( [ ] et Shift pour 1er/arrière-plan )
   useEffect(() => {
@@ -3504,18 +3478,19 @@ const owners=ownersAtClock(sched,ballEventsRef.current,clock);
     }
   };
   const onDoubleClick = (e: React.MouseEvent) => {
+    if (placeMode || animPosRef.current || e.shiftKey) return;
     const canvas = canvasRef.current; if (!canvas) return;
     const rect = canvas.getBoundingClientRect();
     const P = { x: ((e.clientX - rect.left) / rect.width) * canvas.width, y: ((e.clientY - rect.top) / rect.height) * canvas.height };
     const hit = hitTest(canvas, P);
     const lh = lineHandles(canvas);
-    const controlHit = lh?.ctrls.some(point => Math.hypot(P.x - point.x, P.y - point.y) < 12);
-    if (!e.altKey && !animPosRef.current && (hit?.type === 'line' || controlHit)) {
+    const onControl = lh?.ctrls.some(point => Math.hypot(P.x - point.x, P.y - point.y) < 12);
+    const selected = selectionRef.current.length === 1 ? selectionRef.current[0] : null;
+    if (!e.altKey && !onControl && tool.kind === 'action' && tool.action === 'select' &&
+        hit?.type === 'line' && selected?.type === 'line' && selected.id === hit.id) {
       const phase = currentRef.current;
-      const id = hit?.type === 'line' ? hit.id : lh?.id;
-      const line = phasesRef.current[phase]?.lines.find(item => item.id === id);
+      const line = phasesRef.current[phase]?.lines.find(item => item.id === hit.id);
       if (line && ACTION_KINDS.includes(line.action)) {
-        setSelection([{ type: 'line', id: line.id }]);
         setEditingLine({ id: line.id, phase });
         return;
       }
@@ -4225,6 +4200,22 @@ const captureAllPhaseImages = async () => {
   }
 };
 
+const uploadPhaseImages = async (images: string[], folder: string) => {
+  const urls: string[] = [];
+  // Each phase has its own file. Keep the saved order while limiting simultaneous uploads.
+  for (let start = 0; start < images.length; start += 3) {
+    const batch = images.slice(start, start + 3);
+    const uploaded = await Promise.allSettled(batch.map((image, offset) =>
+      uploadSchemaImage(image, folder, `phase-${start + offset + 1}.png`)
+    ));
+    for (const result of uploaded) {
+      if (result.status === 'rejected') throw result.reason;
+      urls.push(result.value);
+    }
+  }
+  return urls;
+};
+
 const exportPng = () => {
   render();
 
@@ -4372,19 +4363,10 @@ const buildPlaquetteResult = async (opts: {
     ? `exercices/systemes-${targetId}/schemas/${schemaGroupId}`
     : `exercices/${targetId}/schemas/${schemaGroupId}`;
 
-  const uploadedUrls: string[] = [];
   // La fiche exercice sait déjà envoyer ses images au clic Sauvegarder.
   // Insérer reste donc un transfert local, sans attendre le réseau/Supabase.
   const localFormInsert = ["exercise", "systeme"].includes(new URLSearchParams(window.location.search).get("return") || "");
-  for (let i = 0; i < phaseImagesBase64.length; i += 1) {
-    if (localFormInsert) { uploadedUrls.push(phaseImagesBase64[i]); continue; }
-    const url = await uploadSchemaImage(
-      phaseImagesBase64[i],
-      folder,
-      `phase-${i + 1}.png`
-    );
-    uploadedUrls.push(url);
-  }
+  const uploadedUrls = localFormInsert ? phaseImagesBase64 : await uploadPhaseImages(phaseImagesBase64, folder);
 
   let schemaVideo: string | null = null;
   if (isSysteme && captureVideo) {
@@ -4660,13 +4642,7 @@ const saveOpenedLibrarySystem = async (resolvedSystemId?: string | null) => {
 
     const schemaGroupId = crypto.randomUUID();
     const folder = `exercices/systemes-${targetSystemId}/schemas/${schemaGroupId}`;
-    const uploadedUrls: string[] = [];
-
-    for (let i = 0; i < phaseImagesBase64.length; i += 1) {
-      uploadedUrls.push(
-        await uploadSchemaImage(phaseImagesBase64[i], folder, `phase-${i + 1}.png`)
-      );
-    }
+    const uploadedUrls = await uploadPhaseImages(phaseImagesBase64, folder);
 
     const savedTitle = savedTitleAtClick || existingSystem.title || "Système";
     const schemaDataList = uploadedUrls.map((url, phaseIndex) => ({
@@ -5169,8 +5145,7 @@ const exportJson = () => {
       const images = await captureAllPhaseImages();
       if (images.length !== savedPhases.length) throw new Error('La capture des phases est incomplète.');
       const groupId = crypto.randomUUID();
-      const urls: string[] = [];
-      for (let index = 0; index < images.length; index++) urls.push(await uploadSchemaImage(images[index], `exercices/${source.id}/schemas/${groupId}`, `phase-${index + 1}.png`));
+      const urls = await uploadPhaseImages(images, `exercices/${source.id}/schemas/${groupId}`);
       const replacement = urls.map((url, index) => ({title:`${savedTitle} - Phase ${index + 1}`,schemaGroupId:groupId,phaseIndex:index,current:index,
         courtType:savedCourt,courtStyle:savedStyle,courtBranding:savedBranding,sheet:savedSheet,phases:savedPhases,imageData:url,phaseImages:urls,editable:true}));
       const updated = await updateExercise(source.id, {title:savedTitle,...replaceExerciseDrawingGroup(existing,source.index,replacement)});
@@ -5222,7 +5197,9 @@ const exportJson = () => {
     const machineId = action === 'pass' && receiver.startsWith('machine:') ? receiver.slice(8) : undefined;
     const updateEndpoint = changingReceiver || (changingKind && editedAction.action === 'pass');
     const oldTo = updateEndpoint ? resolveTo(editedAction) : editedAction.to;
-    const arrival = buildPhaseActionSched(editingLine.phase).find(entry => entry.line.id === editedAction.id)?.end;
+    const arrival = changingReceiver && playerId
+      ? buildPhaseActionSched(editingLine.phase).find(entry => entry.line.id === editedAction.id)?.end
+      : undefined;
     const to = changingReceiver && playerId
       ? (arrival !== undefined ? getPlayerPositionAtTime(editingLine.phase, playerId, arrival) : null)
         ?? simulatePhase(editedPhase, editedAction.id).pos[playerId] ?? oldTo
