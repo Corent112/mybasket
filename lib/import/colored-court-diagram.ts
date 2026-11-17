@@ -378,7 +378,12 @@ export async function readColoredCourtDiagram(source: HTMLCanvasElement) {
       }
       if(distanceToPlayer(tip)+unit*.025<distanceToPlayer(shaft[0])){
         endpoint=shaft[0];
-        shaft=followStroke(trace,endpoint,tip);
+        const contacts=roster.flatMap(item=>{
+          const path=followStroke(trace,endpoint,item.center);
+          const gap=path.length?distance(path[0],item.center)-item.radius:Infinity;
+          return gap<unit*.025?[{path,gap}]:[];
+        }).sort((a,b)=>a.gap-b.gap);
+        shaft=contacts.length===1?contacts[0].path:followStroke(trace,endpoint,tip);
       }
       // For a returning cut, the thick bend can look denser than the arrow.
       // Follow the stroke from its player to the far end along the ink.
@@ -424,6 +429,7 @@ export async function readColoredCourtDiagram(source: HTMLCanvasElement) {
       const source=ballHandler??approach?.item??(candidates[0]?.gap<unit*.055&&(!candidates[1]||candidates[1].gap-candidates[0].gap>unit*.018)
         ?candidates[0].item:undefined);
       if(distance(origin,endpoint)<unit*.075)continue;
+      let terminalPoint: AiPoint | undefined;
       let terminal=returningCut||approach||isZigzag(shaft,unit) ? -1 : screenBreak([...shaft,endpoint],trace,true);
       if(!returningCut&&!approach&&terminal<0&&source&&!isZigzag(shaft,unit)){
         // The graph can finish at one end of the screen bar. Measure the
@@ -435,16 +441,23 @@ export async function readColoredCourtDiagram(source: HTMLCanvasElement) {
           const length=distance(a,p);
           if(length<reach*.7)continue;
           const dx=(p.x-a.x)/length,dy=(p.y-a.y)/length;
-          const across=points.filter(q=>Math.abs((q.x-p.x)*dx+(q.y-p.y)*dy)<unit*.005)
-            .map(q=>(q.y-p.y)*dx-(q.x-p.x)*dy);
-          if(across.length&&Math.min(...across)<-unit*.009&&Math.max(...across)>unit*.009
-            &&Math.max(...across)-Math.min(...across)>unit*.026){
-            terminal=i;
-            break;
+          // Test across the extrapolated shaft, since the shortest pixel
+          // path can turn onto one side before it reaches the bar centre.
+          for(let ahead=0;ahead<=Math.round(unit*.013);ahead++){
+            const center={x:p.x+dx*ahead,y:p.y+dy*ahead};
+            const across=points.filter(q=>Math.abs((q.x-center.x)*dx+(q.y-center.y)*dy)<1.25)
+              .map(q=>(q.y-center.y)*dx-(q.x-center.x)*dy);
+            if(across.length>=8&&Math.min(...across)<-unit*.009&&Math.max(...across)>unit*.009
+              &&Math.max(...across)-Math.min(...across)>unit*.026){
+              terminal=i;
+              terminalPoint=center;
+              break;
+            }
           }
+          if(terminal>=0)break;
         }
       }
-      const from=source?.player??canonical(origin),to=canonical(terminal<0?endpoint:shaft[terminal]??endpoint);
+      const from=source?.player??canonical(origin),to=canonical(terminal<0?endpoint:terminalPoint??shaft[terminal]??endpoint);
       const stroke=sampleStroke(terminal<0?shaft:shaft.slice(0,terminal));
       const kind=returningCut||approach ? "cut" : ballHandler || isZigzag(shaft,unit) ? "dribble" : terminal>=0 ? "screen" : "cut";
       // Following a bend recovers the arrow tip, but an internal bar can
@@ -773,8 +786,10 @@ export async function readColoredCourtDiagram(source: HTMLCanvasElement) {
     const match=continuations[0];
     const competitor=continuations.find(candidate=>candidate.screen!==match?.screen);
     if(!match||(competitor&&competitor.score-match.score<unit*.015))continue;
-    const existing=actions.find(action=>action.action==="cut"&&action.from&&distance(action.from,match.screen.to)<.035
-      &&distance(action.to,pass.to)<.035);
+    const existing=actions.find(action=>action.action==="cut"&&action.from&&(
+      (distance(action.from,match.screen.to)<.035&&distance(action.to,pass.to)<.035)
+      ||((action.confidence??1)<.5&&distance(action.to,match.screen.to)<.035&&distance(action.from,pass.to)<.035)
+    ));
     if(existing&&(existing.confidence??1)>=.65&&existing.fromPlayer!==match.screen.fromPlayer)continue;
     if(existing)actions.splice(actions.indexOf(existing),1);
     used.add(match.blob);
