@@ -81,6 +81,8 @@ type SavedCourtPreset = {
   courtType?: 'half' | 'full';
   preview?: string;
   createdAt: number;
+  pendingSync?: true;
+  pendingCreate?: true;
 };
 
 
@@ -453,15 +455,21 @@ const resetPlaquette = () => {
     };
   };
 
+  const courtDraftKey = (owner: string) => `mybasket-court-drafts:${owner}`;
+  const storeCourtDraft = async (owner: string, id: string, draft?: SavedCourtPreset) => {
+    const key = courtDraftKey(owner);
+    const current = await getPlaquetteTransfer<SavedCourtPreset[]>(key) ?? [];
+    const remaining = current.filter(item => item.id !== id);
+    await setPlaquetteTransfer(key, draft ? [draft, ...remaining] : remaining);
+  };
+
   useEffect(() => {
-    let loadTimer: number | undefined;
     let request: AbortController | undefined;
 
     const { data: { subscription } } = supabase.auth.onAuthStateChange((_event: string, session: { user: { id: string } } | null) => {
       const owner = session?.user.id ?? null;
       if (owner === courtPresetOwner.current) return;
       courtPresetOwner.current = owner;
-      window.clearTimeout(loadTimer);
       request?.abort();
       setSavedCourtPresets([]);
       setSelectedCourtPresetId(null);
@@ -471,100 +479,102 @@ const resetPlaquette = () => {
 
       const controller = new AbortController();
       request = controller;
-      // Run the database request after the auth callback releases its lock.
-      loadTimer = window.setTimeout(async () => {
+      void (async () => {
+        const drafts = await getPlaquetteTransfer<SavedCourtPreset[]>(courtDraftKey(owner)).catch(() => null);
+        if (controller.signal.aborted) return;
+        if (drafts) setSavedCourtPresets(current => [...current, ...drafts.filter(draft => !current.some(item => item.id === draft.id))]);
         try {
-          const { data, error } = await supabase
-            .from('plaquette_court_presets')
-            .select('id, name, style, branding, player_colors, created_at')
-            .eq('user_id', owner)
-            .order('created_at', { ascending: false })
-            .abortSignal(controller.signal);
-          if (controller.signal.aborted) return;
-          if (error) throw error;
-          const presets = (Array.isArray(data) ? data : []).map(readSavedCourtPreset);
+          const response = await fetch('/api/plaquette/court-presets', {
+            cache: 'no-store', signal: AbortSignal.any([controller.signal, AbortSignal.timeout(6500)]),
+          });
+          if (!response.ok) throw new Error(`HTTP ${response.status}`);
+          const { owner: remoteOwner, items } = await response.json();
+          if (controller.signal.aborted || remoteOwner !== owner) return;
+          const presets = (Array.isArray(items) ? items : []).map(readSavedCourtPreset);
           setSavedCourtPresets(current => [
             ...current,
             ...presets.filter(preset => !current.some(item => item.id === preset.id)),
           ]);
-        } catch (error) {
-          if (!controller.signal.aborted) {
-            console.warn('Chargement des terrains personnels impossible :', error);
-            setCourtPresetStatus('Impossible de charger tes terrains. Recharge la page pour réessayer.');
-          }
+        } catch {
+          if (!controller.signal.aborted) setCourtPresetStatus('Les terrains du compte sont momentanément indisponibles.');
         } finally {
           if (!controller.signal.aborted) setSavedCourtPresetsLoading(false);
         }
-      }, 0);
+      })();
     });
     return () => {
-      window.clearTimeout(loadTimer);
       request?.abort();
       courtPresetOwner.current = null;
       subscription.unsubscribe();
     };
   }, [supabase]);
 
-  const saveCurrentCourtPreset = async (existing?: SavedCourtPreset) => {
+  const saveCurrentCourtPreset = async (existing?: SavedCourtPreset, retry = false) => {
     if (courtPresetSaving) return;
-    const ownerAtStart = courtPresetOwner.current;
-    const proposed = window.prompt(existing ? 'Nom du terrain à mettre à jour' : 'Nom du terrain à sauvegarder',
+    const owner = courtPresetOwner.current;
+    if (!owner) {
+      setCourtPresetStatus('Connecte-toi à MyBasket pour sauvegarder ton terrain.');
+      return;
+    }
+    const proposed = retry && existing ? existing.name : window.prompt(
+      existing ? 'Nom du terrain à mettre à jour' : 'Nom du terrain à sauvegarder',
       existing?.name ?? `Mon terrain ${savedCourtPresets.length + 1}`);
-    const name = proposed?.trim();
+    const name = proposed?.trim().slice(0, 40);
     if (!name) return;
 
-    const format = courtRef.current;
-    const style = normalizeCourtStyle(courtStyleRef.current);
-    const branding = normalizeCourtBranding(courtBrandingRef.current);
-    const playerColors = { ...playerBaseColorsRef.current };
-    const preview = captureCourtPresetPreview(format);
+    const format = retry ? existing?.courtType : courtRef.current;
+    const row = {
+      id: existing?.id ?? crypto.randomUUID(),
+      name,
+      style: {
+        ...(retry && existing ? existing.style : normalizeCourtStyle(courtStyleRef.current)),
+        courtType: format,
+        preview: retry ? existing?.preview : captureCourtPresetPreview(courtRef.current),
+      },
+      branding: retry && existing ? existing.branding : normalizeCourtBranding(courtBrandingRef.current),
+      player_colors: retry && existing ? existing.playerColors : { ...playerBaseColorsRef.current },
+      created_at: new Date(existing?.createdAt ?? Date.now()).toISOString(),
+    };
+    const create = !existing || existing.pendingCreate === true;
+    const draft: SavedCourtPreset = { ...readSavedCourtPreset(row), pendingSync: true, ...(create ? { pendingCreate: true } : {}) };
+    const display = (preset: SavedCourtPreset) => {
+      setSavedCourtPresets(items => items.some(item => item.id === preset.id)
+        ? items.map(item => item.id === preset.id ? preset : item) : [preset, ...items]);
+      if (!retry) setSelectedCourtPresetId(preset.id);
+    };
 
     setCourtPresetSaving(true);
-    setCourtPresetStatus('');
-    const slowSave = window.setTimeout(() => {
-      if (courtPresetOwner.current === ownerAtStart) {
-        setCourtPresetStatus('L’enregistrement sur ton compte prend plus de temps que prévu…');
+    setCourtPresetStatus('Enregistrement en cours…');
+    const local = storeCourtDraft(owner, draft.id, draft).then(() => {
+      if (courtPresetOwner.current === owner) {
+        display(draft);
+        setCourtPresetStatus('Copie conservée dans ce navigateur. Envoi sur ton compte…');
       }
-    }, 5000);
+      return true;
+    }).catch(() => false);
+
     try {
-      const { data: { session }, error: sessionError } = await supabase.auth.getSession();
-      if (sessionError) throw sessionError;
-      const user = session?.user;
-      if (!user) {
-        setCourtPresetStatus('Connecte-toi à MyBasket pour sauvegarder ton terrain.');
-        return;
-      }
-
-      if (courtPresetOwner.current !== ownerAtStart || (existing && user.id !== ownerAtStart)) return;
-      const row = {
-        user_id: user.id,
-        name: name.slice(0, 40),
-        style: { ...style, courtType: format, preview },
-        branding,
-        player_colors: playerColors,
-      };
-      const table = supabase.from('plaquette_court_presets');
-      const write = existing
-        ? table.update({ name: row.name, style: row.style, branding: row.branding, player_colors: row.player_colors })
-          .eq('id', existing.id).eq('user_id', user.id)
-        : table.insert(row);
-      const { data, error } = await write.select('id, created_at').single();
-
-      if (error) throw error;
-      if (courtPresetOwner.current !== ownerAtStart) return;
-      const preset = readSavedCourtPreset({ ...row, ...data });
-      setSavedCourtPresets(items => existing
-        ? items.map(item => item.id === preset.id ? preset : item)
-        : [preset, ...items.filter(item => item.id !== preset.id)]);
-      setSelectedCourtPresetId(preset.id);
-      setCourtPresetStatus(existing ? `« ${preset.name} » mis à jour.` : `« ${preset.name} » sauvegardé.`);
+      const response = await fetch('/api/plaquette/court-presets', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ...row, owner, create }),
+        signal: AbortSignal.timeout(6500),
+      });
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      const data = await response.json();
+      if (await local) await storeCourtDraft(owner, draft.id).catch(() => {});
+      if (courtPresetOwner.current !== owner) return;
+      display(readSavedCourtPreset({ ...row, ...data }));
+      setCourtPresetStatus(`« ${name} » enregistré sur ton compte.`);
     } catch (error) {
-      console.warn('Sauvegarde du terrain en base impossible :', error);
-      if (courtPresetOwner.current === ownerAtStart) {
-        setCourtPresetStatus(existing ? 'Impossible de mettre à jour ce terrain.' : 'Impossible de sauvegarder ce terrain sur ton compte.');
+      const savedLocally = await local;
+      console.warn('Sauvegarde du terrain sur le compte impossible :', error);
+      if (courtPresetOwner.current === owner) {
+        setCourtPresetStatus(savedLocally
+          ? 'Terrain conservé dans ce navigateur. Tu peux réessayer la synchronisation depuis Mes terrains.'
+          : 'Enregistrement impossible. Le terrain reste ouvert dans Dessin.');
       }
     } finally {
-      window.clearTimeout(slowSave);
       setCourtPresetSaving(false);
     }
   };
@@ -641,20 +651,24 @@ const resetPlaquette = () => {
   };
 
   const deleteSavedCourtPreset = async (id: string) => {
+    const owner = courtPresetOwner.current;
+    if (!owner || courtPresetSaving) return;
+    setCourtPresetSaving(true);
     try {
-      const { data: { user } } = await supabase.auth.getUser();
-      if (!user) return;
-      const { error } = await supabase
-        .from('plaquette_court_presets')
-        .delete()
-        .eq('id', id)
-        .eq('user_id', user.id);
-      if (error) throw error;
-      setSavedCourtPresets((currentItems) => currentItems.filter((preset) => preset.id !== id));
+      const params = new URLSearchParams({ id, owner });
+      const response = await fetch(`/api/plaquette/court-presets?${params}`, {
+        method: 'DELETE', signal: AbortSignal.timeout(6500),
+      });
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      await storeCourtDraft(owner, id);
+      if (courtPresetOwner.current !== owner) return;
+      setSavedCourtPresets(items => items.filter(preset => preset.id !== id));
       setSelectedCourtPresetId(selected => selected === id ? null : selected);
     } catch (error) {
       console.warn('Suppression du terrain personnel impossible :', error);
-      alert('Impossible de supprimer ce terrain pour le moment.');
+      if (courtPresetOwner.current === owner) setCourtPresetStatus('Impossible de supprimer ce terrain pour le moment.');
+    } finally {
+      setCourtPresetSaving(false);
     }
   };
 
@@ -5380,6 +5394,10 @@ const exportJson = () => {
                   {preset.name}
                   {preset.courtType && <small style={{ display:'block', fontWeight:500 }}>{preset.courtType === 'full' ? 'Terrain entier' : 'Demi-terrain'}</small>}
                 </button>
+                {preset.pendingSync && (
+                  <button type="button" className="btn btn-outline btn-small" disabled={courtPresetSaving}
+                    onClick={() => void saveCurrentCourtPreset(preset, true)}>Synchroniser</button>
+                )}
                 <button type="button" onClick={() => deleteSavedCourtPreset(preset.id)} disabled={courtPresetSaving || savedCourtPresetsLoading} title={`Supprimer ${preset.name}`} aria-label={`Supprimer ${preset.name}`} style={{ position: 'absolute', right: 7, top: 7, width: 25, height: 25, border: '1px solid #E5C6CB', borderRadius: 7, background: '#fff', color: '#9F1F37', cursor: 'pointer', fontWeight: 900 }}>×</button>
               </div>
             ))}
