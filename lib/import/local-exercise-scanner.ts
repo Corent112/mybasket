@@ -51,6 +51,7 @@ import {
 } from "./court-geometry";
 import { readColoredCourtDiagram } from "./colored-court-diagram";
 import { registerMarkedCourt } from "./marked-court";
+import { readSketchDiagram } from "./sketch-diagram";
 import { traceLandmarkArrows } from "./landmark-arrows";
 import { readLandmarkPlayers } from "./landmark-players";
 import { isolateLandmarkInk, locateFilledLandmarkCourt, registerLandmarkCourt } from "./landmark-court";
@@ -1147,6 +1148,17 @@ export async function scanExerciseLocally(
           continue;
         }
         const marked = registerMarkedCourt(canvas);
+        const sketch = !marked && !isVideo
+          ? await debug.time("croquis-papier", () => readSketchDiagram(photo)).catch(() => null)
+          : null;
+        if (sketch && sketch.actions.length) {
+          const courtReference = makeCourtReference(sketch.canvas, sketch.play);
+          debug.note("Croquis calé sur ses quatre coins et son arc à trois points.");
+          state.rectifiedImage = courtReference?.url;
+          diagrams.push({ detected: true, courtType: "half", players: sketch.players,
+            objects: [], actions: sketch.actions, notes: "", courtReference, rectified: true, confidence: .73 });
+          continue;
+        }
         const direct = marked ? null : registerLandmarkCourt(canvas);
         const cropped = !marked && (!direct?.anchors.painted || !direct.anchors.corners)
           ? locateFilledLandmarkCourt(canvas) : null;
