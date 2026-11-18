@@ -7,9 +7,11 @@ export default function manifest(): MetadataRoute.Manifest {
     short_name: "mybasket.fr",
     description: "Les outils des coachs de basket",
     lang: "fr",
-    start_url: "/",
+    start_url: "/application",
     scope: "/",
     display: "standalone",
+    orientation: "any",
+    shortcuts: [{ name: "Messages", url: "/mon-compte?tab=messagerie" }, { name: "Montage", url: "/montages" }, { name: "Coach IA", url: "/assistant" }],
     background_color: "#fff8ef",
     theme_color: "#6b1a2c",
     icons: [

@@ -70,7 +70,10 @@ const drop=async(target,payload,clientX=0)=>{const event=new Event('drop',{bubbl
  queue.enqueueIncomingClip('user','team',{actionId:'a',matchId:'m1',clipStart:11,clipEnd:15,title:'NZAPAKETE · 3PTS'});
  queue.enqueueIncomingClip('user','team',{actionId:'b',matchId:'m2',clipStart:41,clipEnd:47,title:'ONDZE · Interception'});
  await act(async()=>{root.render(React.createElement(Studio,{initialTeamId:'team'}))});await flush();await flush();
- assert.equal(count(),0,'Reception must not insert into the film');
+ assert.equal(count(),2,'Send to montage inserts both received clips directly into the film');
+ await click(document.querySelector('.mp-story-card b'));
+ await click(document.querySelector('.mp-story-card b'));
+ assert.equal(count(),0,'Deleting film segments preserves their reusable received sources');
  assert.equal(document.querySelectorAll('.mp-match-clip').length,2,'Two matches received in the same playlist');
  assert.equal(playlistItems.length,2,'Existing source references persisted in existing playlist tables');
  const pending=queue.readIncomingClips('user','team');
@@ -104,8 +107,8 @@ const drop=async(target,payload,clientX=0)=>{const event=new Event('drop',{bubbl
  assert.equal([...document.querySelectorAll('button')].find(el=>el.textContent.includes('Exporter')).disabled,false,'Export unlocks after failed preflight');
  await click(document.querySelector('.mp-story-card b'));assert.equal(count(),1);
  assert.equal(queue.readIncomingClips('user','team').length,2,'Film deletion never deletes received sources');
- // Repeated send updates its received source but cannot append another film segment.
- queue.enqueueIncomingClip('user','team',{actionId:'a',matchId:'m1',clipStart:12,clipEnd:14,title:'NZAPAKETE · Nouveau trim'});
+ // Explicit library-only sends update the received source without appending film segments.
+ queue.enqueueIncomingClip('user','team',{actionId:'a',matchId:'m1',clipStart:12,clipEnd:14,title:'NZAPAKETE · Nouveau trim',destination:'library'});
  await flush();await flush();assert.equal(count(),1);
  assert.ok(document.body.textContent.includes('Nouveau trim'));
  await drop(document.querySelector('.mp-story-card'),{'text/mybasket-action':'a'});

@@ -1,5 +1,6 @@
 export const MONTAGE_INCOMING_EVENT = "mybasket:montage-incoming";
 export type IncomingMontageClip = {
+  destination?: "timeline" | "library";
   playlist?: { id: string; name: string };
   transferId: string; actionId: string; matchId?: string | null;
   clipStart: number | null; clipEnd: number | null; title?: string; note?: string;
@@ -21,7 +22,7 @@ export function enqueueIncomingClip(userId: string, teamId: string, clip: Omit<I
   // Repeated clicks before the receiving window opens update the same request.
   const previous = rows.find(row => row.actionId === clip.actionId);
   const received = previous && target.getItem(`${incomingMontageKey(userId, teamId)}:received:${previous.transferId}`) === "1";
-  const next = { ...clip, transferId: previous && !received ? previous.transferId : crypto.randomUUID() };
+  const next = { destination: "timeline" as const, ...clip, transferId: previous && !received ? previous.transferId : crypto.randomUUID() };
   if (!storage) window.localStorage.removeItem(`${incomingMontageKey(userId, teamId)}:received:${next.transferId}`);
   target.setItem(incomingMontageKey(userId, teamId), JSON.stringify([...rows.filter(row => row.actionId !== clip.actionId), next]));
   if (!storage) window.dispatchEvent(new Event(MONTAGE_INCOMING_EVENT));

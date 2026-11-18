@@ -36,6 +36,7 @@ import type { AiExerciseImport } from "@/lib/import/types";
 import { IMPORT_DEBUG_ENABLED } from "@/lib/import/debug";
 import { scanExerciseLocally } from "@/lib/import/local-exercise-scanner";
 import { scanPlayersFree } from "@/lib/import/free-player-scanner";
+import { scanWithAI, supplementScan } from "@/lib/import/ai-scan-assist";
 import { refineImportedExercise } from "@/lib/import/import-refiner";
 import ImportReview, { countReviewItems, diagramsOf } from "@/components/import/ImportReview";
 
@@ -59,6 +60,7 @@ export default function ExercisePhotoImport({ onImported, playersOnly = false, d
   const inputRef = useRef<HTMLInputElement | null>(null);
   const [step, setStep] = useState<Step>("idle");
   const [busy, setBusy] = useState(false);
+  const [assistAI, setAssistAI] = useState(false);
   const [status, setStatus] = useState("");
   const [error, setError] = useState("");
   const [warnings, setWarnings] = useState<string[]>([]);
@@ -128,9 +130,14 @@ export default function ExercisePhotoImport({ onImported, playersOnly = false, d
         const report = (message: string) => setStatus(multiple ? `Photo ${index + 1}/${files.length} · ${message}` : message);
         report("Préparation…");
         try {
-          const result = playersOnly && file.type.startsWith("image/")
+          let result = playersOnly && file.type.startsWith("image/")
             ? await scanPlayersOnly(file)
             : refineImportedExercise(await scanExerciseLocally(file, report, { drawingOnly }));
+          if (assistAI && !playersOnly && file.type.startsWith('image/')) {
+            report('Contrôle IA des joueurs et des actions…');
+            try { result = refineImportedExercise(supplementScan(result, await scanWithAI(file, result.rectifiedImage))); }
+            catch { result = { ...result, warnings: [...result.warnings, 'L’assistance IA n’a pas abouti. La lecture locale est conservée.'] }; }
+          }
           if (!multiple || diagramsOf(result).length || result.referenceFallback) photos.push(result);
           else batchWarnings.push(`Photo ${index + 1} (${file.name}) : aucun terrain retrouvé. Tu peux la joindre comme image.`);
         } catch (cause) {
@@ -247,6 +254,7 @@ export default function ExercisePhotoImport({ onImported, playersOnly = false, d
         </div>
       </div>
 
+      {!playersOnly && <label style={{display:'flex',gap:8,alignItems:'center',fontSize:13}}><input type="checkbox" checked={assistAI} disabled={busy} onChange={event=>setAssistAI(event.target.checked)} /> Compléter la lecture par l’IA (connexion nécessaire)</label>}
       <button type="button" className="ce-ai-btn" disabled={busy} onClick={() => inputRef.current?.click()}>
         {busy ? "Numérisation en cours…" : "📸 Scanner des schémas"}
       </button>
