@@ -2,6 +2,8 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
+import SchemaPreview from "@/components/library/SchemaPreview";
+import { withSessionPreviews } from "@/lib/library/session-previews";
 import { createClient } from "@/lib/supabase/client";
 
 type Session = {
@@ -13,6 +15,7 @@ type Session = {
   end_time: string | null;
   location: string | null;
   pdf_url: string | null;
+  schemaImages?: string[];
 };
 
 export default function MesSeancesPage() {
@@ -47,7 +50,7 @@ export default function MesSeancesPage() {
 
     if (error) console.error(error);
 
-    setSessions((data ?? []) as Session[]);
+    setSessions(await withSessionPreviews(supabase, (data ?? []) as Session[]));
     setLoading(false);
   }
 
@@ -105,6 +108,7 @@ export default function MesSeancesPage() {
         <section className="grid">
           {sessions.map((session) => (
             <article key={session.id} className="card">
+              <Link href={`/seances/${session.id}`} className="session-preview"><SchemaPreview images={session.schemaImages || []} alt={session.title || "Séance"} /></Link>
               <div className="content">
                 <span className="date">{formatDate(session.session_date)}</span>
 
@@ -146,6 +150,7 @@ export default function MesSeancesPage() {
       )}
 
       <style jsx>{`
+        .session-preview { display:block;position:relative;width:100%;height:180px;overflow:hidden;background:#f4f2f3; }
         .page {
           min-height: 100vh;
           background: #fff;

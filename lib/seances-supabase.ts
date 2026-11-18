@@ -1,3 +1,4 @@
+import { withSessionPreviews } from "@/lib/library/session-previews";
 import { createClient } from "@/lib/supabase/client";
 
 export type PracticeSession = {
@@ -14,6 +15,7 @@ export type PracticeSession = {
   duration?: number | null;
   players_count?: number | null;
   material?: string | null;
+  schemaImages?: string[];
   description?: string | null;
   visibility: "public" | "private";
   user_id: string | null;
@@ -33,7 +35,7 @@ export async function listPublicSessions() {
     return [];
   }
 
-  return (data ?? []) as PracticeSession[];
+  return withSessionPreviews(supabase, (data ?? []) as PracticeSession[]);
 }
 
 export async function listMySessions() {
@@ -57,7 +59,7 @@ export async function listMySessions() {
     return [];
   }
 
-  return (data ?? []) as PracticeSession[];
+  return withSessionPreviews(supabase, (data ?? []) as PracticeSession[]);
 }
 
 export async function deleteSession(id: string) {
