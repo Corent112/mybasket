@@ -1,4 +1,6 @@
 'use client';
+import SchemaPreview from '@/components/library/SchemaPreview';
+import { schemaPreviewImages } from '@/lib/library/schema-previews';
 import { useEffect, useMemo, useState } from 'react';
 import { ChevronDown, ChevronRight, FolderOpen, MoreHorizontal, Plus, Search, X } from 'lucide-react';
 import { listMyExercises, getExercise, updateExercise, duplicateExercise, deleteExercise } from '@/lib/exercises';
@@ -86,7 +88,7 @@ export default function DrawingExerciseLibrary({ onOpen, onSave }: {
     const groups=exerciseDrawingGroups(exercise), selectedHere=selected.startsWith(`${exercise.id}:`), opened=menu===exercise.id;
     return <div className="cn-system-wrap" key={exercise.id}>
       <article role="button" tabIndex={0} onKeyDown={e=>{if(e.target===e.currentTarget&&(e.key==='Enter'||e.key===' ')){e.preventDefault();openExercise(exercise);}}} className={`cn-system compact ${selectedHere?'selected':''}`} draggable={!busy} onDragStart={e=>{e.dataTransfer.setData('text/mybasket-exercise',exercise.id);e.dataTransfer.effectAllowed='copy';}} onClick={()=>openExercise(exercise)}>
-        <div className="thumb">{(exercise.schemaImage||exercise.schemaImages?.[0])?<img src={exercise.schemaImage||exercise.schemaImages?.[0]} alt=""/>:'🏀'}</div>
+        <div className="thumb"><SchemaPreview images={schemaPreviewImages(exercise)} alt={exercise.title} showCount={false} /></div>
         <div className="meta"><b>{exercise.title}</b><small>{exercise.tags?.join(' · ')||exercise.theme||'Non classé'}</small></div>
         <button className="more" aria-label={`Actions ${exercise.title}`} aria-expanded={opened} onClick={e=>{e.stopPropagation();setMenu(opened?'':exercise.id);}}><MoreHorizontal size={14}/></button>
       </article>

@@ -1,5 +1,7 @@
 "use client";
 
+import SchemaPreview from '@/components/library/SchemaPreview';
+import { schemaPreviewImages } from '@/lib/library/schema-previews';
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
@@ -37,7 +39,7 @@ function SeanceCard({
   return (
     <article className="mb-seance-card">
       <Link href={detailHref} className="mb-seance-cover">
-        <div className="mb-seance-placeholder">🏀</div>
+        <SchemaPreview images={schemaPreviewImages(item)} alt={item.title || "Séance"} />
       </Link>
 
       <div className="mb-seance-body">

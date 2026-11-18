@@ -1,5 +1,7 @@
 "use client";
 
+import SchemaPreview from '@/components/library/SchemaPreview';
+import { schemaPreviewImages } from '@/lib/library/schema-previews';
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
@@ -111,12 +113,9 @@ function SystemCard({
   isFavorite: boolean;
   onToggleFavorite: (item: SystemItem) => void;
 }) {
-  // Une seule prévisualisation par système :
-  // priorité à l'animation générée dans Dessin, puis à la vidéo du système.
-  // On ne charge plus toute la série de schémas dans la vignette.
+  const previewImages = schemaPreviewImages(item);
   const previewVideo = item.schemaVideo || item.videos?.[0] || "";
-  const poster =
-    item.schemaImages?.[0] || item.schemaImage || item.images?.[0] || "";
+  const poster = previewImages[0] || "";
 
   const firstTempsFort = item.tempsForts?.[0];
   const detailHref = `/systemes/${item.id}`;
@@ -138,7 +137,7 @@ function SystemCard({
         {isFavorite ? "★" : "☆"}
       </button>
       <Link href={detailHref} className="mb-system-cover">
-        {previewVideo ? (
+        {previewImages.length > 1 ? <SchemaPreview images={previewImages} alt={item.title || "Système"} /> : previewVideo ? (
           <video
             className="mb-system-preview-video"
             src={previewVideo}

@@ -1,5 +1,7 @@
 "use client";
 
+import SchemaPreview from '@/components/library/SchemaPreview';
+import { schemaPreviewImages } from '@/lib/library/schema-previews';
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
@@ -383,7 +385,6 @@ export default function MesSystemesPage() {
           ) : (
             <div className="grid">
               {filtered.map((item) => {
-                const thumbnail = getThumbnail(item);
                 const itemStatus = getStatus(item);
                 const canSubmit = itemStatus !== "submitted";
                 const firstTempsFort = item.tempsForts?.[0];
@@ -395,15 +396,7 @@ export default function MesSystemesPage() {
                       className="cover"
                       aria-label={item.title || "Ouvrir le système"}
                     >
-                      {thumbnail ? (
-                        <img
-                          src={thumbnail}
-                          alt={item.title || "Système"}
-                          loading="lazy"
-                        />
-                      ) : (
-                        <div className="placeholder">🏀</div>
-                      )}
+                      <SchemaPreview images={schemaPreviewImages(item)} alt={item.title || "Système"} />
 
                       <span className={`badge ${itemStatus}`}>
                         {STATUS_LABELS[itemStatus] || "Privé"}

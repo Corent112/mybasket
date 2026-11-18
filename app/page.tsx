@@ -5,22 +5,9 @@ import Link from "next/link";
 import { TESTIMONIALS } from "@/lib/mockData";
 import { listExercises } from "@/lib/exercises";
 import type { Exercise } from "@/types/exercise";
-import { createClient } from "@/lib/supabase/client";
+import HomeSlideVisual from "@/components/home/HomeSlideVisual";
+import { DEFAULT_SLIDES, type SliderRow } from "@/lib/home/slider";
 
-type HomeSlide = {
-  id: string;
-  title: string;
-  subtitle: string;
-  imageUrl: string | null;
-  buttonLabel: string | null;
-  buttonHref: string | null;
-};
-
-const FALLBACK_SLIDES: HomeSlide[] = [
-  { id: "fallback-1", title: "LA RÉFÉRENCE DES COACHS", subtitle: "Exercices, systèmes et séances prêts à l'emploi.", imageUrl: null, buttonLabel: null, buttonHref: null },
-  { id: "fallback-2", title: "CRÉE TES SYSTÈMES", subtitle: "Un éditeur de schémas pensé pour le terrain.", imageUrl: null, buttonLabel: null, buttonHref: null },
-  { id: "fallback-3", title: "PARTAGE TON DESSIN", subtitle: "Conçois et diffuse tes dessins en quelques clics.", imageUrl: null, buttonLabel: null, buttonHref: null },
-];
 
 const BIG_CARDS = [
   { href: "/bibliotheque", label: "BIBLIOTHÈQUE", image: "/images/home-bibliotheque.png" },
@@ -68,39 +55,44 @@ const getLatestImage = (item: Exercise) => {
 
 export default function Home() {
   const [current, setCurrent] = useState(0);
-  const [slides, setSlides] = useState<HomeSlide[]>(FALLBACK_SLIDES);
+  const [slides, setSlides] = useState<SliderRow[]>([]);
+  const [sliderLoading, setSliderLoading] = useState(true);
   const latestSliderRef = useRef<HTMLDivElement | null>(null);
   const n = slides.length;
 
-  const go = (i: number) => setCurrent((i + n) % n);
+  const go = (i: number) => { if (n) setCurrent((i + n) % n); };
 
   const [latest, setLatest] = useState<Exercise[]>([]);
 
-useEffect(() => {
-  listExercises().then((items) => {
-    setLatest(items.slice(0, 6));
-  });
+  useEffect(() => {
+    listExercises().then(items => setLatest(items.slice(0, 6)));
+  }, []);
 
-  const supabase = createClient();
-  supabase
-    .from("admin_slider")
-    .select("id,title,subtitle,image_url,button_label,button_href")
-    .eq("status", "active")
-    .in("placement", ["home", "global"])
-    .order("sort_order", { ascending: true })
-    .then(({ data, error }: { data: any[] | null; error: any }) => {
-      if (error || !data?.length) return;
-      setSlides(data.map((slide: any) => ({
-        id: String(slide.id),
-        title: String(slide.title || "MYBASKET"),
-        subtitle: String(slide.subtitle || ""),
-        imageUrl: slide.image_url ? String(slide.image_url) : null,
-        buttonLabel: slide.button_label ? String(slide.button_label) : null,
-        buttonHref: slide.button_href ? String(slide.button_href) : null,
-      })));
-      setCurrent(0);
-    });
-}, []);
+  useEffect(() => {
+    let alive = true;
+    const controller = new AbortController();
+    let requestVersion = 0;
+    async function refreshSlider() {
+      const version = ++requestVersion;
+      try {
+        const response = await fetch('/api/home/slider', { cache: 'no-store', signal: controller.signal });
+        if (!response.ok) throw new Error('Slider indisponible');
+        const data = await response.json();
+        if (!alive || version !== requestVersion) return;
+        setSlides(data.configured ? data.slides : DEFAULT_SLIDES);
+        setCurrent(0);
+      } catch {
+        // Preserve the last known state, including an intentionally empty slider.
+      } finally { if (alive && version === requestVersion) setSliderLoading(false); }
+    }
+    void refreshSlider();
+    const visible = () => { if (document.visibilityState === 'visible') void refreshSlider(); };
+    const changed = (event: StorageEvent) => { if (event.key === 'mybasket:slider-updated') void refreshSlider(); };
+    document.addEventListener('visibilitychange', visible);
+    window.addEventListener('storage', changed);
+    return () => { alive = false; controller.abort(); document.removeEventListener('visibilitychange', visible); window.removeEventListener('storage', changed); };
+  }, []);
+
 
   const scrollLatest = (direction: "prev" | "next") => {
     const el = latestSliderRef.current;
@@ -116,32 +108,22 @@ useEffect(() => {
   return (
     <>
       <main>
-        <section className="hero-slider">
+        {(sliderLoading || slides.length > 0) && <section className="hero-slider" aria-label="À la une">
           <div
             className="slides-wrap"
             style={{ transform: `translateX(-${current * 100}%)` }}
           >
-            {slides.map((slide, index) => (
-              <div
-                className={`slide slide-bg-${(index % 3) + 1}`}
-                key={slide.id}
-                style={slide.imageUrl ? { backgroundImage: `linear-gradient(90deg, rgba(35, 5, 17, .82), rgba(107, 26, 44, .5)), url("${slide.imageUrl}")` } : undefined}
-              >
-                <div>
-                  <h1>{slide.title}</h1>
-                  <p>{slide.subtitle}</p>
-                  {slide.buttonLabel && slide.buttonHref && (
-                    <Link href={slide.buttonHref} className="hero-slide-button">{slide.buttonLabel}</Link>
-                  )}
-                </div>
+            {slides.map((slide) => (
+              <div className="slide slide-studio" key={slide.id} aria-hidden={slides[current]?.id !== slide.id} inert={slides[current]?.id !== slide.id}>
+                <HomeSlideVisual slide={slide} />
               </div>
             ))}
           </div>
 
-          <div className="slider-arrows">
+          {slides.length > 1 && <div className="slider-arrows">
             <button className="slider-arrow" onClick={() => go(current - 1)} aria-label="Précédent">‹</button>
             <button className="slider-arrow" onClick={() => go(current + 1)} aria-label="Suivant">›</button>
-          </div>
+          </div>}
 
           <div className="slider-dots">
             {slides.map((_, index) => (
@@ -150,10 +132,11 @@ useEffect(() => {
                 className={`slider-dot ${index === current ? "active" : ""}`}
                 onClick={() => go(index)}
                 aria-label={`Slide ${index + 1}`}
+                aria-pressed={index === current}
               />
             ))}
           </div>
-        </section>
+        </section>}
 
         <div className="container">
           <div className="access-grid">
@@ -222,10 +205,11 @@ useEffect(() => {
       </main>
 
       <style jsx>{`
-        .slide {
-          background-size: cover;
-          background-position: center;
-        }
+        .hero-slider { height: clamp(320px, 31.25vw, 520px); }
+        .slide-studio { display: block; padding: 0 !important; }
+        .slider-arrows { pointer-events: none; }
+        .slider-arrow { pointer-events: auto; }
+        @media (max-width: 600px) { .hero-slider { height: 330px; min-height: 0; } }
 
         .hero-slide-button {
           display: inline-flex;
