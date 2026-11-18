@@ -1,3 +1,4 @@
+import { DiagramReadError, type DiagramStage } from './errors';
 import { applyHomography, solveHomography } from '../../import/homography';
 import { courtToCanonical } from '../../import/court-geometry';
 import { changeImportedActionKind } from '../../import/action-kind';
@@ -16,21 +17,21 @@ export const point=(value:unknown):AiPoint|undefined=>{
  return x!==undefined&&y!==undefined&&x>=0&&x<=1&&y>=0&&y<=1?{x,y}:undefined;
 };
 const distance=(a:AiPoint,b:AiPoint)=>Math.hypot(a.x-b.x,(a.y-b.y)*1.4);
-export function parseVisionJson(value:string):unknown{
+export function parseVisionJson(value:string,stage:DiagramStage="inventory"):unknown{
  const clean=value.trim().replace(/^```(?:json)?\s*/i,'').replace(/\s*```$/,'');
  const start=clean.indexOf('{'),end=clean.lastIndexOf('}');
- if(start<0||end<=start)throw Error('Réponse du lecteur de schémas illisible.');
- return JSON.parse(clean.slice(start,end+1));
+ if(start<0||end<=start)throw new DiagramReadError('invalid_json',stage);
+ try{return JSON.parse(clean.slice(start,end+1))}catch{throw new DiagramReadError('invalid_json',stage)}
 }
 export type Scene = {courtType:'half'|'full';players:AiDiagramPlayer[];terminals:ScanTerminal[];warnings:string[];map:(p:AiPoint)=>AiPoint;sourceCorners?:AiPoint[];sourceInventory:unknown};
 export function readScene(raw:unknown,calibrated:boolean,expectedCourt?:'half'|'full'):Scene{
  const row=record(raw),court=record(row.court),courtType=expectedCourt??(court.type==='full'?'full':'half');
- if(list(row.players).length>20||list(row.terminals).length>60)throw Error('Schéma trop dense : utilise une image par phase.');
+ if(list(row.players).length>20||list(row.terminals).length>60)throw new DiagramReadError('too_dense','inventory');
  const warnings=list(row.warnings).map(v=>text(v,240)).filter(Boolean);
  const corners=list(court.corners).map(point).filter((p):p is AiPoint=>!!p);
  const homography=!calibrated&&corners.length===4&&score(court.confidence)>=.5
   ?solveHomography(corners,[{x:0,y:0},{x:1,y:0},{x:1,y:1},{x:0,y:1}]):null;
- if(!calibrated&&!homography)throw Error('Les coins du terrain restent incertains. Recadre une seule phase, avec les limites du terrain visibles.');
+ if(!calibrated&&!homography)throw new DiagramReadError('invalid_geometry','inventory');
  const map=(p:AiPoint):AiPoint=>calibrated?{x:p.x,y:p.y*(courtType==='half'?.5:1)}:courtToCanonical(applyHomography(homography!,p),courtType);
  const inventoryPlayers:unknown[]=[],inventoryTerminals:unknown[]=[];
  const players:AiDiagramPlayer[]=[],keys=new Set<string>(),labels=new Set<string>();
@@ -44,7 +45,7 @@ export function readScene(raw:unknown,calibrated:boolean,expectedCourt?:'half'|'
   players.push({...map(at),key,label,team,hasBall:p.hasBall===true,confidence,labelConfident:label!=='?'&&confidence>=.75,
    type:team==='def'?'defender':'attacker',typeConfidence:confidence,source:'Assistant schémas MyBasket · inventaire'});
  }
- if(!players.length)throw Error('Aucun joueur repéré avec une position exploitable.');
+ if(!players.length)throw new DiagramReadError('no_players','inventory');
  const terminals:ScanTerminal[]=[],ids=new Set<string>();
  for(const [index,value] of list(row.terminals).slice(0,60).entries()){
   const t=record(value),at=point(t);if(!at||!['bar','arrow'].includes(String(t.kind)))continue;
@@ -66,13 +67,13 @@ export function assembleDiagram(scene:Scene,raw:unknown,passes:number):AiExercis
   if(terminals.some(other=>other.kind===kind&&distance(other,at)<.007))continue;
   terminals.push({...at,id,kind,confidence:score(t.confidence)});terminalIds.add(id);
  }
- if(list(row.actions).length>60)throw Error('Trop de trajectoires dans une seule phase.');
+ if(list(row.actions).length>60)throw new DiagramReadError('too_dense','paths');
  const nodes=list(row.actions).slice(0,60).map(value=>({...record(value)})),byTerminal=new Map<string,Json>();
  for(const [index,node] of nodes.entries()){
   const id=text(node.terminalId,40)||`untracked-${index+1}`;
   if(!terminalIds.has(id)){
    const at=point(node.to);
-   if(!at)throw Error('Un trait proposé ne possède aucun repère de destination exploitable.');
+   if(!at)throw new DiagramReadError('invalid_geometry','paths');
    terminals.push({...scene.map(at),id,kind:node.action==='screen'?'bar':'arrow',confidence:.3});terminalIds.add(id);
    warnings.push(`Trait ${id} : terminaison supplémentaire à confirmer.`);
   }

@@ -18,7 +18,7 @@ const inferred=assembleDiagram(scene,{actions:[screen,{...cut,previousTerminalId
 const bad=assembleDiagram(scene,{actions:[screen,{...cut,fromPlayer:'unknown',previousTerminalId:null}]},2);assert.equal(bad.actions[1].fromPlayer,undefined);assert.ok(bad.actions[1].confidence<.5,'Ambiguous ownership remains explicit');
 assert.equal(coverage(assembleDiagram(scene,{actions:[{...screen,to:{x:.1,y:.1}}]},2)).missing.length,2,'A claimed terminal with a mismatched arrival is not considered covered');
 assert.equal(readScene({...inventory,players:inventory.players.map(p=>({...p,label:'9'}))},true).players[1].label,'?','Duplicate numbers do not invent duplicate identities');
-assert.throws(()=>readScene(inventory,false),/coins/,'No uncalibrated guessed positions');assert.equal(parseVisionJson('```json\n{"ok":true}\n```').ok,true);
+assert.throws(()=>readScene(inventory,false),error=>error.code==='invalid_geometry','No uncalibrated guessed positions');assert.equal(parseVisionJson('```json\n{"ok":true}\n```').ok,true);
 const perspective=readScene({...inventory,court:{type:'half',corners:[{x:.1,y:.2},{x:.8,y:.1},{x:.9,y:.9},{x:.2,y:.8}],confidence:.95}},false);const p=perspective.map({x:.1,y:.2});assert.ok(Math.abs(p.x-.1387)<1e-7&&Math.abs(p.y-.0655)<1e-7);
 const hints=previousPhaseHints(diagram);assert.deepEqual({x:hints[0].x,y:hints[0].y},diagram.actions.at(-1).to);assert.equal(previousPhaseHints({players:[{key:'x',label:'?',x:.2,y:.2}]}).length,0);
 (async()=>{

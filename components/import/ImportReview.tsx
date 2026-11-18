@@ -310,7 +310,7 @@ export default function ImportReview({
   }, [courtType]);
 
   useEffect(() => {
-    setOverlay(result.referenceFallback ? .65 : 0);
+    setOverlay(result.referenceFallback || result.assistantResult?.status==='failed' ? .65 : 0);
     setOverlayReady(false);
     overlayImage.current = null;
     if (!diagram?.courtReference?.url) return;
@@ -321,7 +321,7 @@ export default function ImportReview({
     };
     image.src = diagram.courtReference.url;
     return () => { image.onload = null; };
-  }, [diagram?.courtReference?.url, result.referenceFallback]);
+  }, [diagram?.courtReference?.url, result.referenceFallback, result.assistantResult?.status]);
 
   /* ------------------------------------------------------------- rendu */
 
@@ -955,7 +955,7 @@ export default function ImportReview({
     : reviewItems;
   const missingTerminals=unresolvedScanTerminals(diagram);
   const auditBlockCount=diagrams.reduce((sum,item)=>sum+unresolvedScanTerminals(item).length,0);
-  const rosterBlockCount=diagrams.reduce((sum,item)=>sum+(item.scanAudit?item.players.filter(player=>!player.label||player.label==='?'||player.labelConfident===false).length:0),0);
+  const rosterBlockCount=diagrams.reduce((sum,item)=>sum+(item.scanAudit||result.assistantResult?.status==='failed'?item.players.filter(player=>!player.label||player.label==='?'||player.labelConfident===false).length:0),0);
   const omittedCount = rosterBlockCount+auditBlockCount+diagrams.reduce((n,item) => n+resolveImportPassChoices(item.actions).filter(action => needsReview(action.confidence) || requiresStartingPlayer(action)).length,0);
   const cleanDiagrams = diagrams.map(item => {
     return { ...item, actions: resolveImportPassChoices(item.actions) };
@@ -1269,6 +1269,7 @@ export default function ImportReview({
 
           {diagram.scanAudit && <section className="import-scan-audit" aria-label="Contrôle des traits MyBasket">
             <h3 style={styles.sectionTitle}>Assistant MyBasket</h3>
+            {diagram.scanAudit.failure && <p role="status" style={{...styles.hint,color:"#a13747"}}>Lecture incomplète : {diagram.scanAudit.failure.message}</p>}
             <p style={styles.hint}>{diagram.scanAudit.terminals.length-missingTerminals.length-(diagram.scanAudit.dismissed?.length??0)} / {diagram.scanAudit.terminals.length} repères reliés{diagram.scanAudit.dismissed?.length?` · ${diagram.scanAudit.dismissed.length} écarté(s)`:""}</p>
             {!diagram.scanAudit.terminals.length && <p style={styles.hint}>Aucune terminaison repérée : compare avec la photo avant de valider.</p>}
             {missingTerminals.map(terminal=><div className="import-missing-trace" key={terminal.id}>

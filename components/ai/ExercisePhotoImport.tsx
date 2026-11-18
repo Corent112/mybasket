@@ -142,13 +142,20 @@ export default function ExercisePhotoImport({ onImported, playersOnly = false, d
             try {
               const diagram=result.diagrams?.[0]??(result.diagram.detected?result.diagram:result.referenceFallback);
               result = refineImportedExercise(reconcileScan(result, await scanWithAI(file, diagram?.courtReference, diagram?.courtType, photos.at(-1)?.diagrams?.at(-1)??photos.at(-1)?.diagram)));
+              const read=result.assistantResult;
+              if(read?.status==='partial'){
+                setAssistantNotice(`Lecture IA incomplète. ${read.message??'Des repères restent à vérifier.'}${read.reference?` Référence : ${read.reference}.`:''}`);
+                if(read.retryable===false)assistantUnavailable=true;
+              }
             }
             catch (cause) {
               const message=cause instanceof Error?cause.message:'Lecture IA indisponible.';
-              const code=(cause as {status?:number})?.status;
-              if(code&&[401,403,429,503].includes(code))assistantUnavailable=true;
-              setAssistantNotice(`${message} Le résultat affiché provient du scan local ; l’assistant n’a pas terminé sa lecture.`);
-              result = { ...result, warnings: [...result.warnings, message] };
+              const failure=cause as {status?:number;diagnostic?:{reference?:string;code?:string;stage?:string;retryable?:boolean}};
+              const code=failure?.status;
+              const diagnostic=failure?.diagnostic;
+              if(code&&[401,403,429,503].includes(code)||diagnostic?.retryable===false)assistantUnavailable=true;
+              setAssistantNotice(`${message}${diagnostic?.reference?` Référence : ${diagnostic.reference}.`:''} Brouillon local uniquement : la lecture IA a échoué.`);
+              result = { ...result, assistantResult:{status:'failed',reference:diagnostic?.reference,code:diagnostic?.code,stage:diagnostic?.stage,message,retryable:diagnostic?.retryable},warnings: [...result.warnings, message] };
             }
           }
           if (!multiple || diagramsOf(result).length || result.referenceFallback) photos.push(result);
@@ -280,7 +287,7 @@ export default function ExercisePhotoImport({ onImported, playersOnly = false, d
       {step === "summary" && pending && (
         <div style={summaryStyles.panel}>
           <div style={summaryStyles.head}>
-            <strong style={summaryStyles.title}>Analyse terminée</strong>
+            <strong style={summaryStyles.title}>{pending.assistantResult?.status==='failed'?"Lecture IA échouée — brouillon local":pending.assistantResult?.status==='partial'?"Lecture IA incomplète":"Résultat à vérifier"}</strong>
             <span style={summaryStyles.line}>
               {diagramCount === 0
                 ? pending.referenceFallback && (pending.referenceFallback.players.length || pending.referenceFallback.actions.length)
@@ -361,7 +368,7 @@ export default function ExercisePhotoImport({ onImported, playersOnly = false, d
         </div>
       )}
 
-      {assistantNotice && step === "review" && <p role="status" style={{padding:"12px 14px",borderRadius:12,background:"#fff5df",color:"#6b471d",fontSize:13}}>{assistantNotice}</p>}
+      {assistantNotice && (step === "review" || step === "summary") && <p role="status" style={{padding:"12px 14px",borderRadius:12,background:"#fff5df",color:"#6b471d",fontSize:13}}>{assistantNotice}</p>}
       {/* ------------------------------------------------------- correction manuelle */}
       {step === "review" && pending && (
         <div style={summaryStyles.reviewHost}>

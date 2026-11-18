@@ -29,3 +29,9 @@ L’inventaire visuel peut lui-même oublier une flèche : « tous les repères 
 - Potrace FAQ : différence entre conversion des contours et suivi de ligne médiane — https://potrace.sourceforge.net/faq.html
 
 L’implémentation de suivi guidé est propre au projet ; elle n’utilise pas Potrace ni le code de cette publication.
+
+## Diagnostic des échecs
+
+Chaque appel de lecture reçoit une référence. Les erreurs d’accès, de modèle, de quota, de débit, de délai, de format JSON et de géométrie sont distinguées, ainsi que les réponses interrompues par la limite de génération. Le journal associe cette référence à l’étape en cause et aux informations de statut autorisées, sans texte brut du fournisseur, image, prompt ou clé. Les écritures du journal sont différées après la réponse. Une lecture partielle n’est plus journalisée comme un succès complet.
+
+L’interface conserve le diagnostic en révision et au retour au résumé. Un résultat local après échec est présenté comme un brouillon, avec le calque d’origine visible, et ses numéros inconnus doivent être corrigés avant validation. Ces corrections améliorent le diagnostic et la transparence ; elles n’établissent pas à elles seules la cause d’un incident de production ni la qualité de reconnaissance du modèle.
