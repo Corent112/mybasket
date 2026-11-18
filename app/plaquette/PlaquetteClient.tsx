@@ -889,8 +889,8 @@ useEffect(() => {
   const [selectionPanelOpen, setSelectionPanelOpen] = useState(true);
   const [exportOpen, setExportOpen] = useState(false);
   const [photoImportOpen, setPhotoImportOpen] = useState(false);
-  const [photoImportAI,setPhotoImportAI]=useState(false);
-  useEffect(()=>{const query=new URLSearchParams(window.location.search);if(query.get("scan")==="1"){setPhotoImportAI(query.get("ai")==="1");setPhotoImportOpen(true)}},[]);
+  const [photoImportAI,setPhotoImportAI]=useState(true);
+  useEffect(()=>{const query=new URLSearchParams(window.location.search);if(query.get("scan")==="1"){setPhotoImportAI(query.get("ai")!=="0");setPhotoImportOpen(true)}},[]);
   const [saving, setSaving] = useState<null | 'systeme' | 'exercice' | 'library-system' | 'library-exercise'>(null);
   const insertionPending = useRef(false);
   const [insertionStatus, setInsertionStatus] = useState('');
@@ -6506,7 +6506,7 @@ const exportJson = () => {
         {photoImportOpen && (
           <div style={{ position: 'fixed', inset: 0, zIndex: 4000, background: '#0009', display: 'grid', placeItems: 'center', padding: '1rem' }}>
             <section role="dialog" aria-modal="true" aria-label="Importer une photo sur la Plaquette"
-              style={{ background: '#fff', color: '#17151c', borderRadius: 22, width: 'min(1220px, 100%)', maxHeight: '94dvh', overflow: 'auto', padding: '1.25rem' }}>
+              style={{ background: '#fff', color: '#17151c', borderRadius: 22, width: 'min(1380px, 100%)', maxHeight: '94dvh', overflow: 'auto', padding: '1rem' }}>
               <header style={{ display: 'flex', justifyContent: 'space-between', gap: 12, marginBottom: 12 }}>
                 <strong style={{ color: '#6b1a2c', fontSize: 18 }}>Importer des schémas</strong>
                 <button type="button" className="btn btn-outline btn-small" onClick={() => setPhotoImportOpen(false)}>Fermer</button>

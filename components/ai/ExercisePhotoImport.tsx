@@ -36,7 +36,7 @@ import type { AiExerciseImport } from "@/lib/import/types";
 import { IMPORT_DEBUG_ENABLED } from "@/lib/import/debug";
 import { scanExerciseLocally } from "@/lib/import/local-exercise-scanner";
 import { scanPlayersFree } from "@/lib/import/free-player-scanner";
-import { scanWithAI, supplementScan } from "@/lib/import/ai-scan-assist";
+import { scanWithAI, reconcileScan } from "@/lib/import/ai-scan-assist";
 import { refineImportedExercise } from "@/lib/import/import-refiner";
 import ImportReview, { countReviewItems, diagramsOf } from "@/components/import/ImportReview";
 
@@ -57,7 +57,7 @@ const rect = (r: { x0: number; y0: number; x1: number; y1: number }) =>
 
 const plural = (count: number, one: string, many: string) => (count > 1 ? many : one);
 
-export default function ExercisePhotoImport({ onImported, playersOnly = false, drawingOnly = false, phaseRoom = 50, initialAssistAI = false }: Props) {
+export default function ExercisePhotoImport({ onImported, playersOnly = false, drawingOnly = false, phaseRoom = 50, initialAssistAI = true }: Props) {
   const inputRef = useRef<HTMLInputElement | null>(null);
   const [step, setStep] = useState<Step>("idle");
   const [busy, setBusy] = useState(false);
@@ -134,9 +134,12 @@ export default function ExercisePhotoImport({ onImported, playersOnly = false, d
           let result = playersOnly && file.type.startsWith("image/")
             ? await scanPlayersOnly(file)
             : refineImportedExercise(await scanExerciseLocally(file, report, { drawingOnly }));
-          if (assistAI && !playersOnly && file.type.startsWith('image/')) {
+          if (assistAI && !playersOnly && file.type.startsWith('image/') && (result.diagrams?.length??0)<=1) {
             report('Contrôle IA des joueurs et des actions…');
-            try { result = refineImportedExercise(supplementScan(result, await scanWithAI(file, result.rectifiedImage))); }
+            try {
+              const diagram=result.diagrams?.[0]??(result.diagram.detected?result.diagram:result.referenceFallback);
+              result = refineImportedExercise(reconcileScan(result, await scanWithAI(file, diagram?.courtReference, diagram?.courtType)));
+            }
             catch { result = { ...result, warnings: [...result.warnings, 'L’assistance IA n’a pas abouti. La lecture locale est conservée.'] }; }
           }
           if (!multiple || diagramsOf(result).length || result.referenceFallback) photos.push(result);
@@ -233,7 +236,7 @@ export default function ExercisePhotoImport({ onImported, playersOnly = false, d
 
   return (
     <div
-      className="ce-ai-import"
+      className={`ce-ai-import${step === "review" ? " ce-ai-import-review" : ""}`}
       onDragOver={(event) => { event.preventDefault(); setDragging(true); }}
       onDragLeave={() => setDragging(false)}
       onDrop={(event) => {
@@ -248,7 +251,7 @@ export default function ExercisePhotoImport({ onImported, playersOnly = false, d
         <span className="scan-upload-icon">↥</span><h2>Importe tes schémas</h2>
         <p>Glisse tes photos ici, une par phase.</p>
         <button type="button" className="scan-upload-button" disabled={busy} onClick={() => inputRef.current?.click()}>{busy ? "Analyse en cours…" : "Choisir mes photos"}</button>
-        {!playersOnly && <label className="scan-ai-option"><input type="checkbox" checked={assistAI} disabled={busy} onChange={event=>setAssistAI(event.target.checked)} /> Aide IA</label>}
+        {!playersOnly && <label className="scan-ai-option"><input type="checkbox" checked={assistAI} disabled={busy} onChange={event=>setAssistAI(event.target.checked)} /> Analyse approfondie IA</label>}
       </div>}
 
       <input

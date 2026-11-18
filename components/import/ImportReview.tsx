@@ -276,6 +276,8 @@ export default function ImportReview({
   },[]);
 
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const viewportRef = useRef<HTMLDivElement | null>(null);
+  const [canvasDisplay, setCanvasDisplay] = useState<{width:number;height:number}|null>(null);
   const overlayImage = useRef<HTMLImageElement | null>(null);
   const [overlayReady, setOverlayReady] = useState(false);
   const nativeCourtImage = useRef<HTMLImageElement | null>(null);
@@ -284,6 +286,20 @@ export default function ImportReview({
   const diagram = diagrams[current];
   const courtType: "half" | "full" = diagram?.courtType ?? "half";
   const size = courtType === "full" ? { w: 560, h: 880 } : { w: 720, h: 564 };
+
+  useEffect(() => {
+    const viewport=viewportRef.current;
+    if(!viewport || typeof ResizeObserver==='undefined')return;
+    const resize=()=>{
+      const {width,height}=viewport.getBoundingClientRect();
+      if(width<1||height<1)return;
+      const scale=Math.min(width/size.w,height/size.h,1);
+      const next={width:Math.floor(size.w*scale),height:Math.floor(size.h*scale)};
+      setCanvasDisplay(previous=>previous?.width===next.width && previous?.height===next.height?previous:next);
+    };
+    const observer=new ResizeObserver(resize);observer.observe(viewport);resize();
+    return()=>observer.disconnect();
+  },[size.w,size.h]);
 
   useEffect(() => {
     const court = new Image();
@@ -1080,11 +1096,12 @@ export default function ImportReview({
 
       <div className="import-workspace" style={styles.main}>
         <div className="import-court">
+          <div className="import-court-viewport" ref={viewportRef}>
           <canvas
             ref={canvasRef}
             width={size.w}
             height={size.h}
-            style={styles.canvas}
+            style={{...styles.canvas,...canvasDisplay}}
             onPointerDown={handlePointerDown}
             onDoubleClick={event => {
               if (stage !== "actions" || traceMode || addMode || annotationMode || linkStart) return;
@@ -1098,6 +1115,7 @@ export default function ImportReview({
             onPointerUp={handlePointerUp}
             onPointerCancel={() => { endGesture(); traceRef.current = null; setTracePreview([]); setDragging(false); }}
           />
+          </div>
           {diagram.courtReference ? (
             <label style={styles.slider}>
               Photo d’origine
@@ -1113,7 +1131,7 @@ export default function ImportReview({
           ) : null}
         </div>
 
-        <div style={styles.panel}>
+        <div className="import-inspector" style={styles.panel}>
           <section>
             <h3 style={styles.sectionTitle}>{selectedAction ? `Action ${selection!.index + 1}` : selectedPlayer ? `Joueur ${selectedPlayer.label}` : "Sélection"}</h3>
             {selection ? (
@@ -1136,6 +1154,12 @@ export default function ImportReview({
                           {type === "attacker" ? "Attaquant" : type === "defender" ? "Défenseur" : "Incertain"}
                         </button>
                       ))}
+                    </div>
+                    <div className="import-player-numbers" role="group" aria-label="Numéro du joueur">
+                      {[1,2,3,4,5].map(number=><button type="button" key={number}
+                        aria-pressed={selectedPlayer.label===String(number)}
+                        disabled={diagram.players.some((p,i)=>i!==selection.index && p.team===selectedPlayer.team && p.label===String(number))}
+                        onClick={()=>setPlayerLabel(selection.index,String(number))}>{number}</button>)}
                     </div>
                     <div style={styles.fieldRow}>
                       <label style={styles.fieldLabel}>
@@ -1354,7 +1378,7 @@ export default function ImportReview({
         </button>
         </>}
       </div>
-      <style>{`.import-top-tools{display:flex;gap:12px;flex-wrap:wrap;align-items:center;justify-content:space-between}.import-history{display:flex;gap:6px;padding:5px;border-radius:13px;background:#f6f2f5;border:1px solid #eee5eb}.import-history button{display:flex;align-items:center;gap:6px;padding:9px 12px;border:0;border-radius:9px;background:white;color:#6b1a2c;font-size:12px;font-weight:750;cursor:pointer}.import-history button:disabled{opacity:.35;cursor:default}.import-control{padding:12px;background:#faf7f9;border:1px solid #ece3e9;border-radius:12px;margin:0!important;min-width:0}.import-control>span{display:flex;gap:6px;align-items:center;font-size:11px;color:#866e7c}.import-control select{width:100%!important;min-height:42px;background:white!important;border:1px solid #e2d4dd!important;color:#4b283a!important;font-weight:750;font-size:14px!important;border-radius:10px!important}.import-edit-tools{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:9px;margin:12px 0}.import-tool-tile{display:flex;align-items:center;justify-content:center;flex-direction:column;gap:9px;min-height:82px;padding:12px 8px;border:1px solid #e3d3dc;border-radius:13px;background:linear-gradient(145deg,#fff,#fbf5f8);color:#6b1a2c;cursor:pointer;font-size:12px;font-weight:750;text-align:center;line-height:1.4}.import-tool-tile:hover{background:#f3e7ee;border-color:#b78c9e}.import-tool-tile[aria-pressed=true]{background:#6b1a2c;color:white;border-color:#6b1a2c}.import-owner-fields{display:grid;gap:10px}.import-owner-fields .link-player{min-height:52px;flex-direction:row}.import-selection-actions{display:flex;gap:8px;margin-top:14px}.import-selection-actions button{display:flex;align-items:center;justify-content:center;gap:6px;flex:1;min-height:42px;border:0;border-radius:10px;font-size:12px;font-weight:750;cursor:pointer}.import-confirm{background:#6b1a2c;color:white}.import-delete{background:#fff0f0;color:#a13747}.import-review{color:#302631}.import-review .import-workspace{display:grid!important;grid-template-columns:minmax(0,1fr) 280px;gap:20px}.import-court{min-width:0;background:#f7f4f6;border-radius:16px;padding:10px}.import-court canvas{width:100%;height:auto;display:block}.import-review section,.import-tools{padding:16px;background:#fff;border:1px solid #e9e0e5;border-radius:14px}.import-tools summary,.import-details summary{font-size:13px;font-weight:700;color:#6b1a2c;cursor:pointer}.import-tools[open] summary{margin-bottom:14px}.import-details{padding:10px 14px;border-radius:10px;background:#f8f5f7}.import-action-list{display:grid;gap:7px}.import-action-list button{display:flex;align-items:center;gap:9px;background:#faf7f9;border:1px solid #eee5eb;border-radius:10px;text-align:left;padding:9px;color:#352b35;cursor:pointer}.import-action-list button[aria-pressed=true]{border-color:#6b1a2c;background:#f5eaf0}.import-action-list b{display:grid;place-items:center;background:#6b1a2c;color:white;border-radius:50%;width:24px;height:24px;font-size:12px}.import-action-list small{margin-left:auto;color:#6b1a2c;font-weight:800}.import-validation{position:sticky;bottom:-1px;background:#fff;z-index:3;padding:16px!important;box-shadow:0 -8px 25px #37202d08;align-items:center;flex-wrap:wrap;border-radius:12px}.import-validation button{min-height:42px}.import-validation button:disabled{opacity:.45;cursor:not-allowed}.import-review button:focus-visible,.import-review select:focus-visible{outline:3px solid #d4a24c;outline-offset:2px}@media(max-width:850px){.import-review .import-workspace{grid-template-columns:1fr}.import-review .import-court{padding:6px}.import-validation{bottom:0}}`}</style>
+      <style>{`.ce-ai-import-review{min-height:0}.import-review{max-height:calc(94dvh - 92px);min-height:0;gap:10px!important}.import-review>div:not(.import-workspace){flex-shrink:0}.import-review .import-workspace{flex:1;min-height:140px;overflow:hidden;align-items:stretch!important}.import-review .import-court{display:flex;flex-direction:column;align-items:center;min-height:0}.import-court-viewport{flex:1;min-height:120px;width:100%;display:grid;place-items:center;overflow:hidden}.import-review .import-court canvas{max-width:100%;display:block}.import-review .import-court>label{flex-shrink:0;align-self:stretch}.import-inspector{min-height:0;overflow-y:auto;overscroll-behavior:contain;scrollbar-gutter:stable;padding-right:4px}.import-review .import-inspector select{box-sizing:border-box;appearance:none;-webkit-appearance:none;display:block;padding:10px 32px 10px 12px!important;min-height:42px;height:auto!important;background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8'%3E%3Cpath d='m1 1 5 5 5-5' fill='none' stroke='%236b1a2c' stroke-width='2'/%3E%3C/svg%3E")!important;background-repeat:no-repeat!important;background-position:right 12px center!important}.import-player-numbers{display:flex;gap:7px;margin:12px 0}.import-player-numbers button{border-radius:10px;border:1px solid #dfcbd6;background:white;color:#6b1a2c;min-width:36px;min-height:36px;font-weight:800;cursor:pointer}.import-player-numbers button[aria-pressed=true]{background:#6b1a2c;color:white}.import-player-numbers button:disabled{opacity:.25;cursor:default}.import-top-tools{display:flex;gap:12px;flex-wrap:wrap;align-items:center;justify-content:space-between}.import-history{display:flex;gap:6px;padding:5px;border-radius:13px;background:#f6f2f5;border:1px solid #eee5eb}.import-history button{display:flex;align-items:center;gap:6px;padding:9px 12px;border:0;border-radius:9px;background:white;color:#6b1a2c;font-size:12px;font-weight:750;cursor:pointer}.import-history button:disabled{opacity:.35;cursor:default}.import-control{padding:12px;background:#faf7f9;border:1px solid #ece3e9;border-radius:12px;margin:0!important;min-width:0}.import-control>span{display:flex;gap:6px;align-items:center;font-size:11px;color:#866e7c}.import-control select{width:100%!important;min-height:42px;background:white!important;border:1px solid #e2d4dd!important;color:#4b283a!important;font-weight:750;font-size:14px!important;border-radius:10px!important}.import-edit-tools{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:9px;margin:12px 0}.import-tool-tile{display:flex;align-items:center;justify-content:center;flex-direction:column;gap:9px;min-height:82px;padding:12px 8px;border:1px solid #e3d3dc;border-radius:13px;background:linear-gradient(145deg,#fff,#fbf5f8);color:#6b1a2c;cursor:pointer;font-size:12px;font-weight:750;text-align:center;line-height:1.4}.import-tool-tile:hover{background:#f3e7ee;border-color:#b78c9e}.import-tool-tile[aria-pressed=true]{background:#6b1a2c;color:white;border-color:#6b1a2c}.import-owner-fields{display:grid;gap:10px}.import-owner-fields .link-player{min-height:52px;flex-direction:row}.import-selection-actions{display:flex;gap:8px;margin-top:14px}.import-selection-actions button{display:flex;align-items:center;justify-content:center;gap:6px;flex:1;min-height:42px;border:0;border-radius:10px;font-size:12px;font-weight:750;cursor:pointer}.import-confirm{background:#6b1a2c;color:white}.import-delete{background:#fff0f0;color:#a13747}.import-review{color:#302631}.import-review .import-workspace{display:grid!important;grid-template-columns:minmax(0,1fr) 280px;gap:20px}.import-court{min-width:0;background:#f7f4f6;border-radius:16px;padding:10px}.import-court canvas{width:100%;height:auto;display:block}.import-review section,.import-tools{padding:16px;background:#fff;border:1px solid #e9e0e5;border-radius:14px}.import-tools summary,.import-details summary{font-size:13px;font-weight:700;color:#6b1a2c;cursor:pointer}.import-tools[open] summary{margin-bottom:14px}.import-details{padding:10px 14px;border-radius:10px;background:#f8f5f7}.import-action-list{display:grid;gap:7px}.import-action-list button{display:flex;align-items:center;gap:9px;background:#faf7f9;border:1px solid #eee5eb;border-radius:10px;text-align:left;padding:9px;color:#352b35;cursor:pointer}.import-action-list button[aria-pressed=true]{border-color:#6b1a2c;background:#f5eaf0}.import-action-list b{display:grid;place-items:center;background:#6b1a2c;color:white;border-radius:50%;width:24px;height:24px;font-size:12px}.import-action-list small{margin-left:auto;color:#6b1a2c;font-weight:800}.import-validation{position:sticky;bottom:-1px;background:#fff;z-index:3;padding:16px!important;box-shadow:0 -8px 25px #37202d08;align-items:center;flex-wrap:wrap;border-radius:12px}.import-validation button{min-height:42px}.import-validation button:disabled{opacity:.45;cursor:not-allowed}.import-review button:focus-visible,.import-review select:focus-visible{outline:3px solid #d4a24c;outline-offset:2px}@media(max-width:850px){.import-review{max-height:none}.import-review .import-workspace{grid-template-columns:1fr;overflow:visible}.import-inspector{overflow:visible}.import-court-viewport{height:48dvh;flex:auto}.import-review .import-workspace{flex:none}.import-review .import-court{padding:6px}.import-validation{bottom:0}}`}</style>
     </div>
   );
 }
