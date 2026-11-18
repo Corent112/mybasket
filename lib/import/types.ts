@@ -146,6 +146,7 @@ export type AiExerciseDiagram = {
 };
 
 export type AiExerciseImport = {
+  assistantResult?: {status:'read'|'partial'|'failed';reference?:string;code?:string;stage?:string;message?:string;retryable?:boolean};
   title: string;
   organisation: string;
   deroulement: string[];

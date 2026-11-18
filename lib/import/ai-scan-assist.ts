@@ -20,7 +20,7 @@ export function reconcileScan(local: AiExerciseImport, ai: AiExerciseImport): Ai
  const weak=audited || !base || !!local.referenceFallback || base.players.length===0
    || base.players.filter(p=>p.label==='?'||p.labelConfident===false||(p.confidence??1)<.5).length>base.players.length/3;
  if(!weak)return supplementScan(local,ai);
- if(!coherent)return {...local,warnings:[...local.warnings,'La lecture IA reste incertaine : le calque local est conservé pour vérification.']};
+ if(!coherent)return {...local,assistantResult:ai.assistantResult,warnings:[...local.warnings,'La lecture IA reste incertaine : le calque local est conservé pour vérification.']};
  // Keep reliable numbered players even if vision misses an isolated/off-court marker.
  const players=diagram.players.map(p=>({...p}));
  for(const p of base?.players??[]){
@@ -47,7 +47,7 @@ export function reconcileScan(local: AiExerciseImport, ai: AiExerciseImport): Ai
   return {...changeImportedActionKind({...line,action:'cut'},'dribble'),confidence:line.confidence,source:line.source};
  });
  const revised={...diagram,players,courtReference:base?.courtReference,rectified:base?.rectified,actions};
- return {...local,source:'ai',referenceFallback:undefined,diagram:revised,diagrams:[revised],
+ return {...local,source:'ai',assistantResult:ai.assistantResult,referenceFallback:undefined,diagram:revised,diagrams:[revised],
    confidence:{...local.confidence,diagram:ai.confidence.diagram},
    warnings:[...ai.warnings,'Lecture approfondie utilisée : vérifie les numéros, les extrémités et les joueurs liés aux traits.']};
 }
@@ -75,7 +75,7 @@ export function supplementScan(local:AiExerciseImport,ai:AiExerciseImport):AiExe
   actions.push({...candidate,fromPlayer,toPlayer,confidence:Math.min(candidate.confidence??.5,fromPlayer ? .7 : .35),source:'Proposition IA à confirmer',order:actions.length+1});added++;
  }
  const diagram={...base,detected:players.length>0,players,actions};
- return{...local,diagram,diagrams:[diagram],source:'ai',warnings:[...local.warnings,...ai.warnings,`L’IA a proposé ${added} action(s) supplémentaire(s). Vérifie leur départ, leur arrivée et leur ordre avant de valider.`]};
+ return{...local,diagram,diagrams:[diagram],source:'ai',assistantResult:ai.assistantResult,warnings:[...local.warnings,...ai.warnings,`L’IA a proposé ${added} action(s) supplémentaire(s). Vérifie leur départ, leur arrivée et leur ordre avant de valider.`]};
 }
 /** Send precisely the same calibrated photograph as the review canvas, without native court lines. */
 export async function scanWithAI(file:File,reference?:AiExerciseDiagram['courtReference'],courtType:'half'|'full'='half',previousDiagram?:AiExerciseDiagram):Promise<AiExerciseImport>{
@@ -97,7 +97,7 @@ export async function scanWithAI(file:File,reference?:AiExerciseDiagram['courtRe
   }else ctx.drawImage(image,0,0,canvas.width,canvas.height);
   const encoded=canvas.toDataURL('image/jpeg',.9);if(encoded.length>4_000_000)throw Error('Image trop grande pour l’assistance IA.');
   const response=await fetch('/api/ai/import/exercise',{method:'POST',headers:{'Content-Type':'application/json'},signal:AbortSignal.timeout(175_000),body:JSON.stringify({image:encoded,diagramOnly:true,previousDiagram,coordinateSpace:reference?'image':undefined,courtType:reference?courtType:undefined,note:'Distinguer les lignes du terrain, les cercles autour des numéros et les véritables actions. Suivre chaque trait depuis son joueur jusqu’à sa barre ou sa flèche. Une barre puis une flèche = deux actions distinctes du même joueur. Zigzag = dribble.'})});
-  const body=await response.json();if(!response.ok||!body.exercise){const error=Object.assign(new Error(body.error||'Analyse IA indisponible.'),{status:response.status});throw error;}const exercise=body.exercise as AiExerciseImport;
+  const body=await response.json();if(!response.ok||!body.exercise){const error=Object.assign(new Error(body.error||'Analyse IA indisponible.'),{status:response.status,diagnostic:body.diagnostic});throw error;}const exercise=body.exercise as AiExerciseImport;
   if(exercise.diagram?.scanAudit && typeof ctx.getImageData==='function')exercise.diagram=refineDiagramInk(exercise.diagram,ctx.getImageData(0,0,canvas.width,canvas.height));
   return exercise;
  }finally{if(!reference)URL.revokeObjectURL(source)}

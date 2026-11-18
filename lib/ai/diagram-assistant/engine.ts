@@ -1,3 +1,4 @@
+import { diagramReadError, diagramDiagnostic, type DiagramStage } from './errors';
 import type { AiExerciseDiagram } from '../../import/types';
 import { assembleDiagram, coverage, parseVisionJson, previousPhaseHints, readScene, record } from './model';
 
@@ -14,7 +15,8 @@ Aucun numéro ni trajet n'est prédéfini. Ne crée pas de joueur pour compléte
 
 export async function analyzeMyBasketDiagram(input:{read:DiagramReader;calibrated:boolean;courtType?:'half'|'full';previous?:unknown;now?:()=>number}):Promise<AiExerciseDiagram>{
  const now=input.now??Date.now,started=now();
- const inventory=await input.read(`${RULES}
+ const read=async(prompt:string,stage:DiagramStage)=>{try{return await input.read(prompt,stage)}catch(error){throw diagramReadError(error,stage)}};
+ const inventory=await read(`${RULES}
 LECTURE 1 — INVENTAIRE VISUEL INDÉPENDANT. Ne dessine pas encore les actions.
 Repère le panier, la raquette, les coins (ordre : côté panier gauche, côté panier droit, coin opposé droit, coin opposé gauche, dans l'orientation finale panier en haut).
 Lis TOUS les numéros, encerclés OU écrits seuls au feutre (dans ce cas la position du chiffre est la position du joueur), une seule occurrence par numéro et équipe. Chiffre réellement ambigu : label="?".
@@ -34,23 +36,23 @@ Donne from, to et points=[from,points sur le trait,to] (trois à six points de r
 RECOMPTE les terminaisons visuelles et les actions. Si une flèche/barre manque à l'inventaire, ajoute-la dans additionalTerminals avec sa position et un nouvel id. Si un repère était une ligne du terrain, laisse-le non relié et explique pourquoi dans warnings, ne le valide pas artificiellement.
 JSON: {"actions":[{"terminalId":"t1","previousTerminalId":null,"action":"cut|dribble|screen|pass|shoot|giveball","fromPlayer":"p1","toPlayer":null,"from":{"x":0.0,"y":0.0},"to":{"x":0.0,"y":0.0},"points":[],"confidence":0.0}],"additionalTerminals":[],"warnings":[]}`;
  let reconstructed:unknown;
- try{reconstructed=parseVisionJson(await input.read(pathsPrompt,'paths'))}
- catch{const partial=assembleDiagram(scene,{actions:[],warnings:['La lecture des trajectoires n’a pas abouti. Les repères détectés restent à relier.']},2);return partial}
+ try{reconstructed=parseVisionJson(await read(pathsPrompt,'paths'),'paths')}
+ catch(error){const failure=diagramDiagnostic(error,'paths');const partial=assembleDiagram(scene,{actions:[],warnings:[failure.message+' Les repères détectés restent à relier.']},2);partial.scanAudit!.failure=failure;return partial}
  let diagram=assembleDiagram(scene,reconstructed,2);
  const missing=coverage(diagram).missing;
  // One targeted recovery at most, inside a fixed request budget. Never loop on recognition failure.
  if(missing.length && now()-started<90_000){
   try{
-   const repair=parseVisionJson(await input.read(`${pathsPrompt}
+   const repair=parseVisionJson(await read(`${pathsPrompt}
 CONTRÔLE CIBLÉ : les repères suivants ne sont pas reliés à un trait dont l'arrivée concorde : ${JSON.stringify(missing)}. Leur position ci-dessus est CANONIQUE MyBasket ; les coordonnées de ta réponse doivent toujours suivre l'image entière.
 Voici les actions déjà proposées (coordonnées de l'image) : ${JSON.stringify(reconstructed)}.
-Reprends UNIQUEMENT les repères manquants en suivant l'encre de la photo. Retourne actions et additionalTerminals au même format, sans réinventer les actions déjà reconnues. Si tu ne peux pas lire un trait, garde le doute et explique-le.`,'repair'));
+Reprends UNIQUEMENT les repères manquants en suivant l'encre de la photo. Retourne actions et additionalTerminals au même format, sans réinventer les actions déjà reconnues. Si tu ne peux pas lire un trait, garde le doute et explique-le.`,'repair'),'repair');
    const original=record(reconstructed),extra=record(repair);
    const previousActions=Array.isArray(original.actions)?original.actions:[],newActions=Array.isArray(extra.actions)?extra.actions:[];
    const map=new Map(previousActions.map(a=>[record(a).terminalId,a]));
    for(const a of newActions){const id=record(a).terminalId;if(missing.some(t=>t.id===id)||!map.has(id))map.set(id,a)}
    diagram=assembleDiagram(scene,{actions:[...map.values()],additionalTerminals:[...(Array.isArray(original.additionalTerminals)?original.additionalTerminals:[]),...(Array.isArray(extra.additionalTerminals)?extra.additionalTerminals:[])],warnings:[...(Array.isArray(original.warnings)?original.warnings:[]),...(Array.isArray(extra.warnings)?extra.warnings:[])]},3);
-  }catch{diagram.scanAudit!.warnings.push('Le contrôle complémentaire n’a pas abouti ; les repères non reliés restent visibles.')}
+  }catch(error){const failure=diagramDiagnostic(error,'repair');diagram.scanAudit!.failure=failure;diagram.scanAudit!.warnings.push(failure.message+' Les repères non reliés restent visibles.');}
  }
  return diagram;
 }

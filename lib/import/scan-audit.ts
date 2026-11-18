@@ -7,6 +7,7 @@ export type DiagramScanAudit = {
   dismissed?: string[];
   passes: number;
   warnings: string[];
+  failure?: import("../ai/diagram-assistant/errors").DiagramDiagnostic;
 };
 const distance=(a:AiPoint,b:AiPoint)=>Math.hypot(a.x-b.x,(a.y-b.y)*1.4);
 /** Recomputed after every edit/deletion: a missing line cannot disappear from the audit. */

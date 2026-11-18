@@ -16,6 +16,7 @@ assert.equal(reconcileScan({...local,diagrams:[ai.diagram,ai.diagram]},ai).diagr
 const stable={...local,referenceFallback:undefined,diagram:ai.diagram,diagrams:[ai.diagram]};assert.deepEqual(reconcileScan(stable,ai).diagram.actions,ai.diagram.actions,'Reliable geometry not overwritten');
 let auth=true,contextCalls=0,requestArgs;
 const actual=Module._load;Module._load=function(request,parent,main){
+ if(request==='next/server'){const server=actual.call(this,request,parent,main);return{...server,after:callback=>void Promise.resolve().then(callback)}}
  if(request==='@/lib/ai/knowledge')return{resolveActor:async()=>auth?{ok:true,actor:{userId:'scan-test',clubIds:[],supabase:{}}}:{ok:false,status:401,error:'Connexion requise'},buildScopeContext:()=>({}),buildAIContext:async()=>{contextCalls++;throw Error('Diagram scan must not search documents')},getWriterClient:()=>({}),logAIUsage:async()=>{}};
  if(request==='@/lib/ai/openai')return{getOpenAI:()=>({responses:{create:async args=>{
   requestArgs=args;
