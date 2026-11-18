@@ -889,6 +889,8 @@ useEffect(() => {
   const [selectionPanelOpen, setSelectionPanelOpen] = useState(true);
   const [exportOpen, setExportOpen] = useState(false);
   const [photoImportOpen, setPhotoImportOpen] = useState(false);
+  const [photoImportAI,setPhotoImportAI]=useState(false);
+  useEffect(()=>{const query=new URLSearchParams(window.location.search);if(query.get("scan")==="1"){setPhotoImportAI(query.get("ai")==="1");setPhotoImportOpen(true)}},[]);
   const [saving, setSaving] = useState<null | 'systeme' | 'exercice' | 'library-system' | 'library-exercise'>(null);
   const insertionPending = useRef(false);
   const [insertionStatus, setInsertionStatus] = useState('');
@@ -6508,7 +6510,7 @@ const exportJson = () => {
                 <strong style={{ color: '#6b1a2c', fontSize: 18 }}>Importer des schémas</strong>
                 <button type="button" className="btn btn-outline btn-small" onClick={() => setPhotoImportOpen(false)}>Fermer</button>
               </header>
-              <ExercisePhotoImport drawingOnly onImported={insertPhotoDrawing} />
+              <ExercisePhotoImport drawingOnly initialAssistAI={photoImportAI} onImported={insertPhotoDrawing} />
             </section>
           </div>
         )}

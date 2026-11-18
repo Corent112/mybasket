@@ -1,4 +1,5 @@
 "use client";
+import { libraryPreviewVideo } from '@/lib/library/video-previews';
 
 import SchemaPreview from '@/components/library/SchemaPreview';
 import { schemaPreviewImages } from '@/lib/library/schema-previews';
@@ -39,7 +40,7 @@ function SeanceCard({
   return (
     <article className="mb-seance-card">
       <Link href={detailHref} className="mb-seance-cover">
-        <SchemaPreview images={schemaPreviewImages(item)} alt={item.title || "Séance"} />
+        <SchemaPreview video={libraryPreviewVideo(item)} images={schemaPreviewImages(item)} alt={item.title || "Séance"} />
       </Link>
 
       <div className="mb-seance-body">

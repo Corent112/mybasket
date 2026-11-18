@@ -211,6 +211,7 @@ export default function Header() {
                   DIRECTION TECHNIQUE
                 </Link>
                 <Link href="/accompagnement/formation">FORMATION</Link>
+                <Link href="/assistant">ANALYSE DE MATCH IA</Link>
                 <Link href="/accompagnement/scouting-video">
                   SCOUTING VIDEO
                 </Link>
@@ -234,8 +235,6 @@ export default function Header() {
                   <Link href="/mon-compte?tab=equipes">MES ÉQUIPES</Link>
                   <Link href="/mon-compte?tab=management">MANAGEMENT</Link>
                   <Link href="/mon-compte?tab=messagerie">MESSAGERIE</Link>
-                  <Link href="/assistant">COACH IA</Link>
-                  <Link href="/application">APPLICATION MOBILE / TABLETTE</Link>
                   <button type="button" onClick={signOut}>
                     DÉCONNEXION
                   </button>
@@ -260,8 +259,6 @@ export default function Header() {
           </div>
 
           <div className="mobile-drawer-scroll">
-            <Link href="/application" onClick={closeMobile}>MON ESPACE COACH</Link>
-            <Link href="/assistant" onClick={closeMobile}>COACH IA</Link>
             <Link href="/mon-compte?tab=messagerie" onClick={closeMobile}>MESSAGERIE</Link>
             <Link href="/bibliotheque" onClick={closeMobile}>BIBLIOTHÈQUE</Link>
             <div className="mobile-subnav">
@@ -275,6 +272,7 @@ export default function Header() {
             <div className="mobile-subnav">
               <Link href="/accompagnement/direction-technique" onClick={closeMobile}>Direction technique</Link>
               <Link href="/accompagnement/formation" onClick={closeMobile}>Formation</Link>
+              <Link href="/assistant" onClick={closeMobile}>Analyse de match IA</Link>
               <Link href="/accompagnement/scouting-video" onClick={closeMobile}>Scouting vidéo</Link>
             </div>
 

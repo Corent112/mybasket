@@ -1,4 +1,5 @@
 "use client";
+import { libraryPreviewVideo } from '@/lib/library/video-previews';
 
 import SchemaPreview from '@/components/library/SchemaPreview';
 import { schemaPreviewImages } from '@/lib/library/schema-previews';
@@ -174,7 +175,7 @@ export default function SystemesWorkspace() {
                   return (
                     <article key={system.id} className="sw-card">
                       <Link href={`/systemes/${system.id}`} className="sw-cover">
-                        <SchemaPreview images={schemaPreviewImages(system)} alt={system.title || "Système"} />
+                        <SchemaPreview video={libraryPreviewVideo(system)} images={schemaPreviewImages(system)} alt={system.title || "Système"} />
                       </Link>
 
                       <div className="sw-body">

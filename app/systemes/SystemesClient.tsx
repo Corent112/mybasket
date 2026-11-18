@@ -1,4 +1,5 @@
 "use client";
+import { libraryPreviewVideo } from '@/lib/library/video-previews';
 
 import SchemaPreview from '@/components/library/SchemaPreview';
 import { schemaPreviewImages } from '@/lib/library/schema-previews';
@@ -135,7 +136,7 @@ function SystemCard({
         {isFavorite ? "★" : "☆"}
       </button>
       <Link href={detailHref} className="mb-system-cover">
-        <SchemaPreview images={previewImages} alt={item.title || "Schéma"} />
+        <SchemaPreview video={libraryPreviewVideo(item)} images={previewImages} alt={item.title || "Schéma"} />
       </Link>
 
       <div className="mb-system-body">

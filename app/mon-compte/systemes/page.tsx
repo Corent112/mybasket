@@ -1,4 +1,5 @@
 "use client";
+import { libraryPreviewVideo } from '@/lib/library/video-previews';
 
 import SchemaPreview from '@/components/library/SchemaPreview';
 import { schemaPreviewImages } from '@/lib/library/schema-previews';
@@ -396,7 +397,7 @@ export default function MesSystemesPage() {
                       className="cover"
                       aria-label={item.title || "Ouvrir le système"}
                     >
-                      <SchemaPreview images={schemaPreviewImages(item)} alt={item.title || "Système"} />
+                      <SchemaPreview video={libraryPreviewVideo(item)} images={schemaPreviewImages(item)} alt={item.title || "Système"} />
 
                       <span className={`badge ${itemStatus}`}>
                         {STATUS_LABELS[itemStatus] || "Privé"}

@@ -19,6 +19,8 @@ const click=async el=>{assert.ok(el);await act(async()=>el.dispatchEvent(new Mou
  await click(button('2. Actions'));const validate=[...document.querySelectorAll('.import-validation button')].at(-1);assert.equal(validate.disabled,true,'Unconfirmed actions cannot disappear during validation');
  await click(document.querySelector('.import-action-list button'));let select=document.querySelector('[aria-label="Nature de l’action"]');assert.equal(select.value,'cut');
  await act(async()=>{select.value='dribble';select.dispatchEvent(new Event('change',{bubbles:true}))});assert.equal(validate.disabled,false);
+ await click(document.querySelector('[aria-label="Annuler la dernière modification"]'));assert.equal(validate.disabled,true);await click(document.querySelector('.import-action-list button'));assert.equal(document.querySelector('[aria-label="Nature de l’action"]').value,'cut');
+ await click(document.querySelector('[aria-label="Rétablir la modification"]'));await click(document.querySelector('.import-action-list button'));select=document.querySelector('[aria-label="Nature de l’action"]');assert.equal(select.value,'dribble');
  await act(async()=>{select.value='cut';select.dispatchEvent(new Event('change',{bubbles:true}))});
  const canvas=document.querySelector('canvas');canvas.getBoundingClientRect=()=>({left:0,top:0,width:720,height:564});
  await act(async()=>canvas.dispatchEvent(new MouseEvent('pointerdown',{bubbles:true,clientX:250,clientY:338.4})));

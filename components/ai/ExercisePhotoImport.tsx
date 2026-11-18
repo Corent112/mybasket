@@ -46,6 +46,7 @@ type Props = {
   playersOnly?: boolean;
   drawingOnly?: boolean;
   phaseRoom?: number;
+  initialAssistAI?: boolean;
 };
 
 /** Étapes de l'écran : rien → analyse → résumé → correction. */
@@ -56,11 +57,11 @@ const rect = (r: { x0: number; y0: number; x1: number; y1: number }) =>
 
 const plural = (count: number, one: string, many: string) => (count > 1 ? many : one);
 
-export default function ExercisePhotoImport({ onImported, playersOnly = false, drawingOnly = false, phaseRoom = 50 }: Props) {
+export default function ExercisePhotoImport({ onImported, playersOnly = false, drawingOnly = false, phaseRoom = 50, initialAssistAI = false }: Props) {
   const inputRef = useRef<HTMLInputElement | null>(null);
   const [step, setStep] = useState<Step>("idle");
   const [busy, setBusy] = useState(false);
-  const [assistAI, setAssistAI] = useState(false);
+  const [assistAI, setAssistAI] = useState(initialAssistAI);
   const [status, setStatus] = useState("");
   const [error, setError] = useState("");
   const [warnings, setWarnings] = useState<string[]>([]);
