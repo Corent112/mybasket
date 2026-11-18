@@ -3,22 +3,13 @@ import Link from "next/link";
 import styles from "./page.module.css";
 import { revalidatePath } from "next/cache";
 import DeleteUserButton from "./DeleteUserButton";
+import DirectoryRefresh from "./DirectoryRefresh";
+import { buildUserDirectory, formatLastConnection, matchesDirectoryFilters, type DirectorySource } from "@/lib/admin/user-directory";
 import {readAllAuthUsers,readAdminRows,resolveAdminUserSubscription} from "@/lib/admin/user-subscriptions";
 
 import { requireAdmin } from "@/lib/admin/guard";
 import { createAdminClient } from "@/lib/supabase/admin-server";
 import { getSiteUrl } from "@/lib/site-url";
-type Profile = {
-  id: string;
-  email: string | null;
-  display_name: string | null;
-  platform_role: string | null;
-  status: string | null;
-  club: string | null;
-  avatar_url: string | null;
-  created_at: string | null;
-  last_sign_in_at: string | null;
-};
 
 type Plan = {
   id: string;
@@ -30,9 +21,10 @@ type Plan = {
 };
 
 function formatDate(value: string | null) {
-  if (!value) return "Jamais";
+  if (!value || !Number.isFinite(Date.parse(value))) return "—";
 
   return new Date(value).toLocaleDateString("fr-FR", {
+    timeZone: "Europe/Paris",
     day: "2-digit",
     month: "2-digit",
     year: "numeric",
@@ -53,6 +45,7 @@ function getRoleLabel(role: string | null) {
 }
 
 function getStatusLabel(status: string | null) {
+  if (status === "contact") return "Sans compte";
   if (status === "active") return "Actif";
   if (status === "inactive") return "Inactif";
   if (status === "suspended") return "Suspendu";
@@ -209,47 +202,39 @@ async function deleteUserAction(formData: FormData) {
   revalidatePath("/admin/paiements");
 }
 
-export default async function AdminUtilisateursPage() {
+export default async function AdminUtilisateursPage({ searchParams }: {
+  searchParams: Promise<Record<string, string | string[] | undefined>>;
+}) {
   const { supabase, user: currentUser } = await requireAdmin();
-
-  const adminClient = createAdminClient();
+  const query = await searchParams;
+  const param = (key: string) => typeof query[key] === "string" ? query[key] as string : "";
+  const filters = { q: param("q"), role: param("role") || "all", status: param("status") || "all", category: param("category") || "all" };
+  const adminClient = createAdminClient({ noStore: true });
   const readClient = adminClient || supabase;
-  const [profilesData,subscriptionsData,plansData,grantsResult] = await Promise.all([
-    readAdminRows(readClient,"profiles"),
-    readAdminRows(readClient,"subscriptions"),
-    readAdminRows(readClient,"subscription_plans"),
-    adminClient ? readAdminRows(adminClient,"free_access_grants").then(data=>({data,error:""})).catch(error=>({data:[],error:error.message as string})) : Promise.resolve({data:[],error:"Lecture des accès offerts indisponible : configuration serveur manquante."}),
+  const warnings: string[] = [];
+  const optionalRows = async (table: string, select: string, label: string) => {
+    try { return await readAdminRows(readClient, table, select); }
+    catch { warnings.push(`Lecture ${label} indisponible. La liste peut être incomplète.`); return []; }
+  };
+  const [profilesData, subscriptionsData, plansData, grantsResult, authUsers, candidates, cohorts, clubInvitations, teamInvitations] = await Promise.all([
+    readAdminRows(readClient, "profiles"),
+    readAdminRows(readClient, "subscriptions"),
+    readAdminRows(readClient, "subscription_plans"),
+    adminClient ? readAdminRows(adminClient, "free_access_grants").then(data => ({ data, error: "" })).catch(() => ({ data: [], error: "Lecture des accès offerts indisponible." })) : Promise.resolve({ data: [], error: "Lecture des accès offerts indisponible : configuration serveur manquante." }),
+    adminClient ? readAllAuthUsers(adminClient).catch(() => { warnings.push("Lecture des connexions indisponible. Réessaie avec Actualiser."); return null; }) : Promise.resolve(null),
+    optionalRows("training_candidates", "id,user_id,cohort_id,email,first_name,last_name,club_name,created_at", "des participants aux formations"),
+    optionalRows("training_cohorts", "id,name,institution_id,training_programs(name)", "des formations institutionnelles"),
+    optionalRows("club_member_invitations", "id,email,status,created_at,expires_at", "des invitations de club"),
+    optionalRows("team_invitations", "id,email,status,created_at,expires_at", "des invitations d’équipe"),
   ]);
-  const storedProfiles = (profilesData || []) as Profile[];
-  const authUsers = adminClient ? await readAllAuthUsers(adminClient) : [];
-  const profilesById = new Map(storedProfiles.map((profile) => [profile.id, profile]));
-
-  const profiles: Profile[] = authUsers.length
-    ? authUsers.map((authUser: any) => {
-        const profile = profilesById.get(authUser.id);
-        return {
-          id: authUser.id,
-          email: authUser.email || profile?.email || null,
-          display_name:
-            profile?.display_name ||
-            String(authUser.user_metadata?.display_name || authUser.user_metadata?.full_name || "") ||
-            null,
-          platform_role: profile?.platform_role || "user",
-          status: profile?.status || "active",
-          club: profile?.club || null,
-          avatar_url:
-            profile?.avatar_url || String(authUser.user_metadata?.avatar_url || "") || null,
-          created_at: profile?.created_at || authUser.created_at || null,
-          last_sign_in_at: authUser.last_sign_in_at || profile?.last_sign_in_at || null,
-        };
-      })
-    : storedProfiles;
+  if (!adminClient) warnings.push("Configuration serveur manquante : les dates de connexion ne peuvent pas être vérifiées.");
+  const profiles = buildUserDirectory({ profiles: profilesData as DirectorySource[], authUsers: authUsers as DirectorySource[] | null, candidates: candidates as DirectorySource[], cohorts: cohorts as DirectorySource[], invitations: [...clubInvitations, ...teamInvitations] as DirectorySource[] });
   const plans = (plansData || []) as Plan[];
-
-  const accessByUser = new Map(profiles.map(user=>[user.id,resolveAdminUserSubscription(user,subscriptionsData,grantsResult.data,plansData)]));
+  const accessByUser = new Map(profiles.map(user => [user.id, resolveAdminUserSubscription({ id: user.account_id || user.id, email: user.email }, subscriptionsData, grantsResult.data, plansData)]));
+  const visiblePeople = profiles.filter(person => matchesDirectoryFilters(person, accessByUser.get(person.id)!, filters));
   const selectablePlans = plans.filter(plan=>plan.status==="active").sort((a,b)=>Number(a.sort_order||0)-Number(b.sort_order||0));
 
-  const totalUsers = profiles.length;
+  const totalUsers = profiles.filter(user => user.account_id).length;
   const coaches = profiles.filter((user) =>
     ["coach", "ceo", "superadmin", "admin"].includes(user.platform_role || "")
   ).length;
@@ -260,8 +245,11 @@ export default async function AdminUtilisateursPage() {
   const suspendedUsers = profiles.filter(
     (user) => user.status === "suspended"
   ).length;
-  const subscribedUsers = profiles.filter(user=>accessByUser.get(user.id)?.active).length;
-  const neverConnected = profiles.filter((user) => !user.last_sign_in_at).length;
+  const subscribedUsers = profiles.filter(user => { const access = accessByUser.get(user.id); return access?.active && access.source === "subscription"; }).length;
+  const freeUsers = profiles.filter(user => { const access = accessByUser.get(user.id); return access?.active && access.source === "free"; }).length;
+  const guests = profiles.filter(user => user.guest).length;
+  const trainees = profiles.filter(user => user.trainings.length).length;
+  const neverConnected = profiles.filter(user => user.account_id && user.connection_known && !user.last_sign_in_at).length;
 
   return (
     <main className={styles.adminUsers}>
@@ -274,7 +262,7 @@ export default async function AdminUtilisateursPage() {
           <div>
             <p>Administration MyBasket</p>
             <h1>Utilisateurs</h1>
-            <span>Gérer les comptes, rôles, statuts et abonnements.</span>
+            <span>Comptes, abonnements, invités et formations institutionnelles.</span>
           </div>
 
           <div className={styles.heroActions}>
@@ -324,11 +312,12 @@ export default async function AdminUtilisateursPage() {
               </div>
             </details>
 
-            <button type="button">Exporter</button>
+            <DirectoryRefresh />
           </div>
         </section>
 
         {grantsResult.error && <p role="alert">{grantsResult.error}</p>}
+        {warnings.map(warning => <p key={warning} role="alert">{warning}</p>)}
         <section className={styles.statsGrid}>
           <div className={styles.statCard}>
             <strong>{totalUsers}</strong>
@@ -358,11 +347,25 @@ export default async function AdminUtilisateursPage() {
             <strong>{neverConnected}</strong>
             <span>Jamais connectés</span>
           </div>
+          <div className={`${styles.statCard} ${styles.gold}`}><strong>{freeUsers}</strong><span>Accès offerts</span></div>
+          <div className={styles.statCard}><strong>{guests}</strong><span>Invités</span></div>
+          <div className={styles.statCard}><strong>{trainees}</strong><span>Formations institutionnelles</span></div>
         </section>
 
-        <section className={styles.filters}>
-          <input placeholder="Rechercher un utilisateur, email..." />
-          <select defaultValue="all">
+        <p className={styles.directoryNote}>Dernière connexion réelle, heure de Paris. Actualisation automatique chaque minute. Une personne peut être abonnée et inscrite à une formation. Les invités sont les comptes invités ou anonymes et les invitations en cours ; les visiteurs sans compte ni invitation ne sont pas identifiables.</p>
+        <form method="get" className={styles.filters}>
+          <input name="q" defaultValue={filters.q} aria-label="Rechercher une personne" placeholder="Nom, email, club, formation…" />
+          <select name="category" defaultValue={filters.category} aria-label="Type de personne">
+            <option value="all">Toutes les personnes</option>
+            <option value="subscribers">Abonnés</option>
+            <option value="free">Accès offerts</option>
+            <option value="guests">Invités</option>
+            <option value="training">Formations institutionnelles</option>
+            <option value="without-account">Sans compte</option>
+            <option value="without-subscription">Sans abonnement actif</option>
+            <option value="never-connected">Jamais connectés</option>
+          </select>
+          <select name="role" defaultValue={filters.role} aria-label="Rôle">
             <option value="all">Tous les rôles</option>
             <option value="user">Utilisateur</option>
             <option value="coach">Coach</option>
@@ -372,18 +375,21 @@ export default async function AdminUtilisateursPage() {
             <option value="ceo">CEO</option>
           </select>
 
-          <select defaultValue="all">
+          <select name="status" defaultValue={filters.status} aria-label="Statut">
             <option value="all">Tous les statuts</option>
             <option value="active">Actif</option>
             <option value="inactive">Inactif</option>
             <option value="suspended">Suspendu</option>
+            <option value="contact">Sans compte</option>
           </select>
-        </section>
+          <button type="submit">Filtrer</button>
+          <Link href="/admin/utilisateurs">Réinitialiser</Link>
+        </form>
 
         <section className={styles.tableCard}>
           <div className={styles.tableHead}>
             <h2>Liste des utilisateurs</h2>
-            <span>{totalUsers} comptes</span>
+            <span>{visiblePeople.length} / {profiles.length} personnes · {totalUsers} comptes</span>
           </div>
 
           <div className={styles.tableWrapper}>
@@ -392,9 +398,9 @@ export default async function AdminUtilisateursPage() {
                 <tr>
                   <th>Utilisateur</th>
                   <th>Email</th>
-                  <th>Rôle</th>
+                  <th>Profil / origine</th>
                   <th>Abonnement</th>
-                  <th>Inscription</th>
+                  <th>Ajout / inscription</th>
                   <th>Dernière connexion</th>
                   <th>Statut</th>
                   <th>Actions</th>
@@ -402,7 +408,7 @@ export default async function AdminUtilisateursPage() {
               </thead>
 
               <tbody>
-                {profiles.map((user) => {
+                {visiblePeople.map((user) => {
                   const access = accessByUser.get(user.id)!;
                   const plan = access.active ? access.plan : null;
                   const startsAt = access.subscription?.starts_at || access.subscription?.current_period_start || null;
@@ -423,7 +429,7 @@ export default async function AdminUtilisateursPage() {
 
                           <div>
                             <strong>{user.display_name || "Sans nom"}</strong>
-                            <span>{user.club || "Compte individuel"}</span>
+                            <span>{user.club || (user.account_id ? "Compte MyBasket" : "Contact sans compte")}</span>
                           </div>
                         </div>
                       </td>
@@ -431,13 +437,20 @@ export default async function AdminUtilisateursPage() {
                       <td>{user.email || "—"}</td>
 
                       <td>
-                        <span className={styles.roleBadge}>
-                          {getRoleLabel(user.platform_role)}
-                        </span>
+                        <div className={styles.originBadges}>
+                          {user.account_id && <span className={styles.roleBadge}>{getRoleLabel(user.platform_role)}</span>}
+                          {access.active && <span className={styles.planBadge}>{access.source === "free" ? "Accès offert" : "Abonné"}</span>}
+                          {user.guest && <span className={styles.originBadge}>Invité</span>}
+                          {user.trainings.length > 0 && <span className={styles.originBadge}>Formation institutionnelle</span>}
+                          {!user.account_id && <span className={styles.originBadge}>Sans compte</span>}
+                        </div>
+                        {user.trainings.map(training => <small key={training} className={styles.subscriptionSource}>{training}</small>)}
                       </td>
 
                       <td>
-                        {["ceo", "superadmin"].includes(user.platform_role || "") ? (
+                        {!user.account_id ? (
+                          <span>{access.active ? `Accès offert : ${access.plan?.name || "Offre attribuée"} · en attente de compte` : "Sans abonnement"}</span>
+                        ) : ["ceo", "superadmin"].includes(user.platform_role || "") ? (
                           <span className={styles.planBadge}>Accès total CEO</span>
                         ) : (
                           <div>
@@ -445,7 +458,7 @@ export default async function AdminUtilisateursPage() {
                           <small className={styles.subscriptionSource}>{access.source === "free" ? "Accès offert" : access.active ? "Abonnement attribué" : access.plan ? `Ancien abonnement : ${access.plan.name || "—"}` : "Aucun accès attribué"}</small>
                           {access.active && (startsAt || endsAt) && <small className={styles.subscriptionSource}>{startsAt ? `Du ${formatDate(startsAt)}` : ""}{endsAt ? ` au ${formatDate(endsAt)}` : " · Sans date de fin"}</small>}
                           <form key={`${user.id}-${plan?.id || "none"}-${access.source}`} action={changeSubscriptionAction} className={styles.subscriptionForm}>
-                            <input type="hidden" name="user_id" value={user.id} />
+                            <input type="hidden" name="user_id" value={user.account_id} />
                             <select name="plan_id" defaultValue={plan?.id || ""} aria-label={`Abonnement de ${user.email || user.display_name || "l’utilisateur"}`}>
                               {!plan?.id ? <option value="" disabled>Choisir une offre</option> : null}
                               {plan?.id && !selectablePlans.some(p=>p.id===plan.id) ? <option value={plan.id}>{plan.name} (offre inactive)</option> : null}
@@ -462,7 +475,7 @@ export default async function AdminUtilisateursPage() {
                       </td>
 
                       <td>{formatDate(user.created_at)}</td>
-                      <td>{formatDate(user.last_sign_in_at)}</td>
+                      <td><span className={styles.connectionDate}>{formatLastConnection(user)}</span></td>
 
                       <td>
                         <span
@@ -476,14 +489,10 @@ export default async function AdminUtilisateursPage() {
 
                       <td>
                         <div className={styles.actions}>
-                          <Link href={`/admin/utilisateurs/${user.id}`}>
-                            Voir
-                          </Link>
-                          <button type="button">Modifier</button>
-                          <button type="button">Suspendre</button>
-                          {user.id !== currentUser.id && !["ceo", "superadmin"].includes(user.platform_role || "") ? (
+                          {!user.account_id && <span>Contact uniquement</span>}
+                          {user.account_id && user.account_id !== currentUser.id && !["ceo", "superadmin"].includes(user.platform_role || "") ? (
                             <DeleteUserButton
-                              userId={user.id}
+                              userId={user.account_id}
                               email={user.email || "ce compte"}
                               action={deleteUserAction}
                             />
@@ -494,11 +503,11 @@ export default async function AdminUtilisateursPage() {
                   );
                 })}
 
-                {profiles.length === 0 && (
+                {visiblePeople.length === 0 && (
                   <tr>
                     <td colSpan={8}>
                       <div className={styles.emptyState}>
-                        Aucun utilisateur trouvé.
+                        Aucune personne ne correspond aux filtres.
                       </div>
                     </td>
                   </tr>

@@ -488,3 +488,14 @@
 }
 
 .subscriptionLabel{display:block;font-size:12px;margin-bottom:3px;color:#6b1a2c}.subscriptionSource{display:block;font-size:11px;color:#6b7280;margin-bottom:7px}
+
+.statsGrid { grid-template-columns: repeat(5, minmax(0, 1fr)); }
+.filters { grid-template-columns: minmax(220px, 2fr) repeat(3, minmax(150px, 1fr)) auto auto; align-items: center; }
+.filters button { min-height: 46px; padding: 0 18px; border: 0; border-radius: 12px; color: white; background: #6b1a2c; cursor: pointer; font-weight: 800; }
+.filters a { color: #6b1a2c; font-size: 13px; }
+.originBadges { display: flex; flex-wrap: wrap; gap: 5px; margin-bottom: 7px; }
+.originBadge { display: inline-flex; padding: 6px 9px; background: #f3edf0; color: #6b1a2c; border-radius: 999px; font-size: 11px; font-weight: 800; }
+.directoryNote { color: #64646e; font-size: 13px; line-height: 1.6; }
+.connectionDate { white-space: nowrap; font-variant-numeric: tabular-nums; }
+@media (max-width: 1300px) { .filters { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+@media (max-width: 900px) { .filters { grid-template-columns: 1fr; } .statsGrid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
