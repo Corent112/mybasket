@@ -17,6 +17,8 @@ export const AI_FAST_MODEL = process.env.OPENAI_FAST_MODEL || "gpt-5.6-luna";
 
 /** Modèle vision pour les imports photo. Configurable séparément pour maîtriser les coûts. */
 export const AI_VISION_MODEL = process.env.OPENAI_VISION_MODEL || "gpt-5.4";
+/** Dedicated diagram reader; can evolve without changing statistics analysis. */
+export const AI_DIAGRAM_MODEL = process.env.OPENAI_DIAGRAM_MODEL || AI_VISION_MODEL;
 
 /** Lecture de feuille de stats et bilan chiffré après-match. */
 export const AI_MATCH_ANALYSIS_MODEL = process.env.OPENAI_MATCH_ANALYSIS_MODEL || "gpt-5.4";

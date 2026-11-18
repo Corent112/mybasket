@@ -1,0 +1,134 @@
+import { applyHomography, solveHomography } from '../../import/homography';
+import { courtToCanonical } from '../../import/court-geometry';
+import { changeImportedActionKind } from '../../import/action-kind';
+import type { AiDiagramAction, AiDiagramPlayer, AiExerciseDiagram, AiPoint } from '../../import/types';
+import type { ScanTerminal } from '../../import/scan-audit';
+import { unresolvedScanTerminals } from '../../import/scan-audit';
+
+type Json = Record<string, unknown>;
+export const record=(value:unknown):Json=>value && typeof value==='object'&&!Array.isArray(value)?value as Json:{};
+const list=(value:unknown)=>Array.isArray(value)?value:[];
+const text=(value:unknown,max=80)=>typeof value==='string'?value.trim().slice(0,max):'';
+const scalar=(value:unknown)=>typeof value==='number'&&Number.isFinite(value)?value:undefined;
+const score=(value:unknown)=>Math.max(0,Math.min(1,scalar(value)??0));
+export const point=(value:unknown):AiPoint|undefined=>{
+ const row=record(value),x=scalar(row.x),y=scalar(row.y);
+ return x!==undefined&&y!==undefined&&x>=0&&x<=1&&y>=0&&y<=1?{x,y}:undefined;
+};
+const distance=(a:AiPoint,b:AiPoint)=>Math.hypot(a.x-b.x,(a.y-b.y)*1.4);
+export function parseVisionJson(value:string):unknown{
+ const clean=value.trim().replace(/^```(?:json)?\s*/i,'').replace(/\s*```$/,'');
+ const start=clean.indexOf('{'),end=clean.lastIndexOf('}');
+ if(start<0||end<=start)throw Error('Réponse du lecteur de schémas illisible.');
+ return JSON.parse(clean.slice(start,end+1));
+}
+export type Scene = {courtType:'half'|'full';players:AiDiagramPlayer[];terminals:ScanTerminal[];warnings:string[];map:(p:AiPoint)=>AiPoint;sourceCorners?:AiPoint[];sourceInventory:unknown};
+export function readScene(raw:unknown,calibrated:boolean,expectedCourt?:'half'|'full'):Scene{
+ const row=record(raw),court=record(row.court),courtType=expectedCourt??(court.type==='full'?'full':'half');
+ if(list(row.players).length>20||list(row.terminals).length>60)throw Error('Schéma trop dense : utilise une image par phase.');
+ const warnings=list(row.warnings).map(v=>text(v,240)).filter(Boolean);
+ const corners=list(court.corners).map(point).filter((p):p is AiPoint=>!!p);
+ const homography=!calibrated&&corners.length===4&&score(court.confidence)>=.5
+  ?solveHomography(corners,[{x:0,y:0},{x:1,y:0},{x:1,y:1},{x:0,y:1}]):null;
+ if(!calibrated&&!homography)throw Error('Les coins du terrain restent incertains. Recadre une seule phase, avec les limites du terrain visibles.');
+ const map=(p:AiPoint):AiPoint=>calibrated?{x:p.x,y:p.y*(courtType==='half'?.5:1)}:courtToCanonical(applyHomography(homography!,p),courtType);
+ const inventoryPlayers:unknown[]=[],inventoryTerminals:unknown[]=[];
+ const players:AiDiagramPlayer[]=[],keys=new Set<string>(),labels=new Set<string>();
+ for(const [index,value] of list(row.players).slice(0,20).entries()){
+  const p=record(value),at=point(p);if(!at)continue;
+  let key=text(p.key,30)||`p${index+1}`;while(keys.has(key))key=`p${index+1}-${key}`;keys.add(key);
+  const team=p.team==='def'?'def':'att';let label=text(p.label,4)||'?';const identity=`${team}:${label}`;
+  if(label!=='?'&&labels.has(identity)){label='?';warnings.push('Numéro répété : un joueur reste à numéroter.')}else labels.add(identity);
+  const confidence=score(p.confidence);
+  inventoryPlayers.push({...at,key,label,team,hasBall:p.hasBall===true,confidence});
+  players.push({...map(at),key,label,team,hasBall:p.hasBall===true,confidence,labelConfident:label!=='?'&&confidence>=.75,
+   type:team==='def'?'defender':'attacker',typeConfidence:confidence,source:'Assistant schémas MyBasket · inventaire'});
+ }
+ if(!players.length)throw Error('Aucun joueur repéré avec une position exploitable.');
+ const terminals:ScanTerminal[]=[],ids=new Set<string>();
+ for(const [index,value] of list(row.terminals).slice(0,60).entries()){
+  const t=record(value),at=point(t);if(!at||!['bar','arrow'].includes(String(t.kind)))continue;
+  let id=text(t.id,40)||`t${index+1}`;while(ids.has(id))id=`t${index+1}-${id}`;ids.add(id);
+  const kind=t.kind==='bar'?'bar':'arrow';
+  if(terminals.some(other=>other.kind===kind&&distance(other,map(at))<.007))continue;
+  terminals.push({...map(at),id,kind,confidence:score(t.confidence)});
+  inventoryTerminals.push({...at,id,kind,confidence:score(t.confidence)});
+ }
+ return{courtType,players,terminals,warnings,map,sourceCorners:calibrated?undefined:corners,sourceInventory:{court:{...court,type:courtType},players:inventoryPlayers,terminals:inventoryTerminals,warnings}};
+}
+export function assembleDiagram(scene:Scene,raw:unknown,passes:number):AiExerciseDiagram{
+ const row=record(raw),warnings=[...scene.warnings,...list(row.warnings).map(v=>text(v,240)).filter(Boolean)];
+ const byPlayer=new Map(scene.players.map(p=>[p.key,p]));
+ const terminals=[...scene.terminals],terminalIds=new Set(terminals.map(t=>t.id));
+ for(const value of list(row.additionalTerminals).slice(0,20)){
+  const t=record(value),p=point(t),id=text(t.id,40);if(!p||!id||terminalIds.has(id)||!['bar','arrow'].includes(String(t.kind)))continue;
+  const at=scene.map(p),kind=t.kind==='bar'?'bar':'arrow';
+  if(terminals.some(other=>other.kind===kind&&distance(other,at)<.007))continue;
+  terminals.push({...at,id,kind,confidence:score(t.confidence)});terminalIds.add(id);
+ }
+ if(list(row.actions).length>60)throw Error('Trop de trajectoires dans une seule phase.');
+ const nodes=list(row.actions).slice(0,60).map(value=>({...record(value)})),byTerminal=new Map<string,Json>();
+ for(const [index,node] of nodes.entries()){
+  const id=text(node.terminalId,40)||`untracked-${index+1}`;
+  if(!terminalIds.has(id)){
+   const at=point(node.to);
+   if(!at)throw Error('Un trait proposé ne possède aucun repère de destination exploitable.');
+   terminals.push({...scene.map(at),id,kind:node.action==='screen'?'bar':'arrow',confidence:.3});terminalIds.add(id);
+   warnings.push(`Trait ${id} : terminaison supplémentaire à confirmer.`);
+  }
+  if(!byTerminal.has(id))byTerminal.set(id,node);
+ }
+ const actions:AiDiagramAction[]=[],built=new Map<string,AiDiagramAction>(),visiting=new Set<string>();
+ const visit=(id:string):AiDiagramAction|undefined=>{
+  if(built.has(id))return built.get(id);
+  if(visiting.has(id)){warnings.push('Enchaînement circulaire à vérifier.');return undefined}
+  const node=byTerminal.get(id),terminal=terminals.find(t=>t.id===id);if(!node||!terminal)return undefined;
+  visiting.add(id);
+  const previousId=text(node.previousTerminalId,40);
+  const previous=previousId?visit(previousId):undefined;
+  const ownerKey=text(node.fromPlayer,30)||previous?.fromPlayer;
+  const owner=byPlayer.get(ownerKey??'');
+  const rawFrom=point(node.from),observedFrom=rawFrom?scene.map(rawFrom):undefined;
+  const connected=!previousId&&owner&&observedFrom?actions.filter(a=>a.fromPlayer===owner.key&&['cut','screen','dribble'].includes(a.action)&&distance(a.to,observedFrom)<.035):[];
+  const previousOwn=previous && previous.fromPlayer===owner?.key && ['cut','screen','dribble'].includes(previous.action)?previous:connected.length===1?connected[0]:undefined;
+  let confidence=Math.min(score(node.confidence),terminal.confidence<.5?.4:1);
+  if(previousId&&!previousOwn){confidence=Math.min(confidence,.4);warnings.push(`Action ${id} : enchaînement à vérifier.`)}
+  const unexplained=!!owner&&!!observedFrom&&!previousOwn&&distance(owner,observedFrom)>.06;
+  if(unexplained){confidence=Math.min(confidence,.4);warnings.push(`Action ${id} : départ éloigné du joueur, enchaînement à vérifier.`)}
+  const from=previousOwn?.to??(unexplained?observedFrom:owner?{x:owner.x,y:owner.y}:observedFrom);
+  const endpoint=point(node.to),to=endpoint?scene.map(endpoint):{x:terminal.x,y:terminal.y};
+  const allowed=['cut','dribble','pass','shoot','screen','giveball'];
+  let kind=allowed.includes(String(node.action))?String(node.action) as AiDiagramAction['action']:'cut';
+  if(terminal.kind==='bar')kind='screen';
+  else if(kind==='screen'){kind='cut';confidence=Math.min(confidence,.4)}
+  if(!owner||!from||distance(to,terminal)>.035)confidence=Math.min(confidence,.4);
+  if(!from||distance(from,to)<.004){visiting.delete(id);return undefined}
+  const mids=list(node.points).map(point).filter((p):p is AiPoint=>!!p).map(scene.map);
+  // A midpoint describes a smooth route. Preserve a genuine returning run when more points are needed.
+  const points=mids.length>2?[from,...mids.slice(1,-1).slice(0,6),to]:[from,to];
+  const receiver=text(node.toPlayer,30);
+  if(kind==='pass'&&(!byPlayer.has(receiver)||receiver===owner?.key)){confidence=Math.min(confidence,.4);warnings.push(`Passe ${id} : destinataire à confirmer.`)}
+  let action:AiDiagramAction={terminalId:id,action:kind,fromPlayer:owner?.key,toPlayer:kind==='pass'&&receiver!==owner?.key&&byPlayer.has(receiver)?receiver:undefined,
+   from,to,points,confidence,order:actions.length+1,source:`Assistant schémas MyBasket · ${id}`};
+  if(kind==='dribble')action={...changeImportedActionKind({...action,action:'cut'},'dribble'),confidence,source:action.source};
+  actions.push(action);built.set(id,action);visiting.delete(id);return action;
+ };
+ for(const id of byTerminal.keys())visit(id);
+ return{detected:true,courtType:scene.courtType,players:scene.players,objects:[],actions,notes:'',
+  scanAudit:{version:'mybasket-diagram-v1',sourceCorners:scene.sourceCorners,terminals,passes,warnings:[...new Set(warnings)].slice(0,20)}};
+}
+export function coverage(diagram:AiExerciseDiagram){return{total:diagram.scanAudit?.terminals.length??0,missing:unresolvedScanTerminals(diagram)}}
+
+/** Adjacent phase is supporting evidence only; never silently moves/adds a player in the new image. */
+export function previousPhaseHints(value:unknown):unknown[]{
+ const row=record(value),positions=new Map<string,{key:string;label:string;team:string;x:number;y:number}>();
+ for(const value of list(row.players).slice(0,20)){
+  const p=record(value),at=point(p),key=text(p.key,30),label=text(p.label,4);
+  if(at&&key&&label&&label!=='?')positions.set(key,{...at,key,label,team:p.team==='def'?'def':'att'});
+ }
+ for(const value of list(row.actions).slice(0,60)){
+  const action=record(value),at=point(action.to),player=positions.get(text(action.fromPlayer,30));
+  if(player&&at&&score(action.confidence)>=.65&&['cut','screen','dribble'].includes(String(action.action)))Object.assign(player,at);
+ }
+ return [...positions.values()];
+}

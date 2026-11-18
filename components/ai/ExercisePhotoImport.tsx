@@ -135,10 +135,10 @@ export default function ExercisePhotoImport({ onImported, playersOnly = false, d
             ? await scanPlayersOnly(file)
             : refineImportedExercise(await scanExerciseLocally(file, report, { drawingOnly }));
           if (assistAI && !playersOnly && file.type.startsWith('image/') && (result.diagrams?.length??0)<=1) {
-            report('Contrôle IA des joueurs et des actions…');
+            report('Assistant MyBasket · joueurs → traits → contrôle des oublis…');
             try {
               const diagram=result.diagrams?.[0]??(result.diagram.detected?result.diagram:result.referenceFallback);
-              result = refineImportedExercise(reconcileScan(result, await scanWithAI(file, diagram?.courtReference, diagram?.courtType)));
+              result = refineImportedExercise(reconcileScan(result, await scanWithAI(file, diagram?.courtReference, diagram?.courtType, photos.at(-1)?.diagrams?.at(-1)??photos.at(-1)?.diagram)));
             }
             catch { result = { ...result, warnings: [...result.warnings, 'L’assistance IA n’a pas abouti. La lecture locale est conservée.'] }; }
           }
@@ -251,7 +251,7 @@ export default function ExercisePhotoImport({ onImported, playersOnly = false, d
         <span className="scan-upload-icon">↥</span><h2>Importe tes schémas</h2>
         <p>Glisse tes photos ici, une par phase.</p>
         <button type="button" className="scan-upload-button" disabled={busy} onClick={() => inputRef.current?.click()}>{busy ? "Analyse en cours…" : "Choisir mes photos"}</button>
-        {!playersOnly && <label className="scan-ai-option"><input type="checkbox" checked={assistAI} disabled={busy} onChange={event=>setAssistAI(event.target.checked)} /> Analyse approfondie IA</label>}
+        {!playersOnly && <label className="scan-ai-option"><input type="checkbox" checked={assistAI} disabled={busy} onChange={event=>setAssistAI(event.target.checked)} /> Assistant schémas MyBasket</label>}
       </div>}
 
       <input
