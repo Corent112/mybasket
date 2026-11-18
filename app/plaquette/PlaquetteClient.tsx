@@ -3404,6 +3404,7 @@ const owners=ownersAtClock(sched,ballEventsRef.current,clock);
   // Raccourcis clavier : Undo/Redo, suppression, rotation (r / Shift+r), z-order ( [ ] et Shift pour 1er/arrière-plan )
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
+      if (photoImportOpen || e.defaultPrevented) return;
       const tag = (e.target as HTMLElement)?.tagName;
       if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
       const mod = e.ctrlKey || e.metaKey;
@@ -3417,7 +3418,7 @@ const owners=ownersAtClock(sched,ballEventsRef.current,clock);
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [phases, current, selection, past, future]);
+  }, [phases, current, selection, past, future, photoImportOpen]);
 
   // ----------------------- Pointeur -----------------------
   const getN = (e: React.PointerEvent): Pt => {
