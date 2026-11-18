@@ -242,22 +242,13 @@ export default function ExercisePhotoImport({ onImported, playersOnly = false, d
       }}
       style={dragging ? { outline: "2px dashed #8F1D35", outlineOffset: 8, borderRadius: 12 } : undefined}
     >
-      <div className="ce-ai-copy">
-        <span className="ce-ai-badge">NUMÉRISATION GRATUITE</span>
-        <div>
-          <b>{drawingOnly ? "Importe une ou plusieurs photos de schémas" : "Schémas sur papier, captures d’écran ou vidéo ?"}</b>
-          <p>
-            MyBasket détecte le terrain, redresse la perspective, isole joueurs et tracés puis reconstruit chaque dessin
-            avec les objets natifs de Plaquette. Tu peux aussi glisser-déposer une image ici. Rien n’est enregistré tant que tu n’as pas validé.
-          </p>
-          <p><strong>Plusieurs phases ?</strong> Prends une photo par phase, puis sélectionne toutes les photos dans la même fenêtre.</p>
-        </div>
-      </div>
-
-      {!playersOnly && <label style={{display:'flex',gap:8,alignItems:'center',fontSize:13}}><input type="checkbox" checked={assistAI} disabled={busy} onChange={event=>setAssistAI(event.target.checked)} /> Compléter la lecture par l’IA (connexion nécessaire)</label>}
-      <button type="button" className="ce-ai-btn" disabled={busy} onClick={() => inputRef.current?.click()}>
-        {busy ? "Numérisation en cours…" : "📸 Scanner des schémas"}
-      </button>
+      <style>{`.scan-upload-card{text-align:center;border:1.5px dashed #d9c4ce;background:linear-gradient(145deg,#fdf9fb,#f7f0f4);padding:30px 20px;border-radius:20px;color:#382c36}.scan-upload-icon{display:grid;place-items:center;width:52px;height:52px;margin:0 auto 14px;background:#6b1a2c;color:#fff;border-radius:16px;font-size:30px}.scan-upload-card h2{font-size:23px;margin:0 0 8px;color:#6b1a2c}.scan-upload-card p{font-size:14px;color:#877680;margin:0 0 20px}.scan-upload-button{border:0;border-radius:12px;background:#6b1a2c;color:white;font-size:14px;font-weight:800;padding:14px 22px;cursor:pointer}.scan-upload-button:disabled{opacity:.5}.scan-ai-option{display:flex;align-items:center;justify-content:center;gap:7px;font-size:13px;color:#75626d;margin:15px auto 0}.scan-ai-option input{accent-color:#6b1a2c}.scan-details{padding:12px;background:#faf7f9;border-radius:12px;font-size:13px}.scan-details summary{color:#6b1a2c;font-weight:700;cursor:pointer}`}</style>
+      {(step === "idle" || step === "scanning") && <div className="scan-upload-card">
+        <span className="scan-upload-icon">↥</span><h2>Importe tes schémas</h2>
+        <p>Glisse tes photos ici, une par phase.</p>
+        <button type="button" className="scan-upload-button" disabled={busy} onClick={() => inputRef.current?.click()}>{busy ? "Analyse en cours…" : "Choisir mes photos"}</button>
+        {!playersOnly && <label className="scan-ai-option"><input type="checkbox" checked={assistAI} disabled={busy} onChange={event=>setAssistAI(event.target.checked)} /> Aide IA</label>}
+      </div>}
 
       <input
         ref={inputRef}
@@ -270,7 +261,7 @@ export default function ExercisePhotoImport({ onImported, playersOnly = false, d
         }}
       />
 
-      {(status || error) && <div className={error ? "ce-ai-state error" : "ce-ai-state"}>{error || status}</div>}
+      {(error || (status && step === "scanning")) && <div className={error ? "ce-ai-state error" : "ce-ai-state"}>{error || status}</div>}
 
       {/* ------------------------------------------------ écran « Analyse terminée » */}
       {step === "summary" && pending && (
@@ -289,11 +280,6 @@ export default function ExercisePhotoImport({ onImported, playersOnly = false, d
                 ? "Aucun élément à vérifier"
                 : `${toCheck} ${plural(toCheck, "élément à vérifier", "éléments à vérifier")}`}
             </span>
-            {typeof pending.importConfidence === "number" && (
-              <span style={summaryStyles.hint}>
-                Fiabilité globale estimée : {Math.round(pending.importConfidence * 100)} %
-              </span>
-            )}
             {diagramCount === 0 && (
               <span style={summaryStyles.hint}>
                 {pending.referenceFallback
@@ -344,13 +330,7 @@ export default function ExercisePhotoImport({ onImported, playersOnly = false, d
             </div>
           )}
 
-          {warnings.length > 0 && (
-            <ul style={summaryStyles.warnings}>
-              {warnings.map((warning) => (
-                <li key={warning}>{warning}</li>
-              ))}
-            </ul>
-          )}
+          {warnings.length > 0 && <details className="scan-details"><summary>Détails de l’analyse</summary><ul style={summaryStyles.warnings}>{warnings.map(warning=><li key={warning}>{warning}</li>)}</ul></details>}
 
           <div style={summaryStyles.actions}>
             <button type="button" style={summaryStyles.buttonGhost} onClick={resetAll}>

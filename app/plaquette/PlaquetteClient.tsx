@@ -6503,9 +6503,9 @@ const exportJson = () => {
         {photoImportOpen && (
           <div style={{ position: 'fixed', inset: 0, zIndex: 4000, background: '#0009', display: 'grid', placeItems: 'center', padding: '1rem' }}>
             <section role="dialog" aria-modal="true" aria-label="Importer une photo sur la Plaquette"
-              style={{ background: '#fff', color: '#17151c', borderRadius: 14, width: 'min(1120px, 100%)', maxHeight: '92dvh', overflow: 'auto', padding: '1rem' }}>
+              style={{ background: '#fff', color: '#17151c', borderRadius: 22, width: 'min(1220px, 100%)', maxHeight: '94dvh', overflow: 'auto', padding: '1.25rem' }}>
               <header style={{ display: 'flex', justifyContent: 'space-between', gap: 12, marginBottom: 12 }}>
-                <strong>Importer un dessin depuis une photo</strong>
+                <strong style={{ color: '#6b1a2c', fontSize: 18 }}>Importer des schémas</strong>
                 <button type="button" className="btn btn-outline btn-small" onClick={() => setPhotoImportOpen(false)}>Fermer</button>
               </header>
               <ExercisePhotoImport drawingOnly onImported={insertPhotoDrawing} />

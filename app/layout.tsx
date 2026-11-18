@@ -1,3 +1,4 @@
+import PushAccountBridge from "@/components/messaging/PushAccountBridge";
 import type { Metadata, Viewport } from "next";
 import { Roboto, Alfa_Slab_One } from "next/font/google";
 
@@ -50,7 +51,7 @@ export default function RootLayout({
         <UnifiedBackofficeSkin />
         <PublicChromeRouteGuard />
         <MobileAppSupport />
-        <LocalVideoBridge />
+        <LocalVideoBridge /><PushAccountBridge />
         <div className="app-shell">
           <Header />
 

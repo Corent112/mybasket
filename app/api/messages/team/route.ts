@@ -1,7 +1,11 @@
-import { NextResponse } from 'next/server';
+import { after, NextResponse } from 'next/server';
+import { GROUP_SUBJECT, messageGroups, registerMessageGroup } from '@/lib/messaging/groups';
+import { sendMessagePush } from '@/lib/messaging/push-server';
 import { createClient } from '@/lib/supabase/server';
 import { createAdminClient } from '@/lib/supabase/admin-server';
 import { teamMessagingContacts, MessagingAccessError } from '@/lib/messaging/team-contacts';
+export const runtime='nodejs';
+export const maxDuration=60;
 const uuid = (value: unknown) => typeof value === 'string' && /^[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i.test(value);
 async function context() {
   const sb = await createClient(); const { data: { user } } = await sb.auth.getUser();
@@ -16,7 +20,9 @@ export async function GET(request: Request) {
     if (teamId) {
       if (!uuid(teamId)) throw new MessagingAccessError('Équipe invalide.', 400);
       const result = await teamMessagingContacts(db, user.id, teamId);
-      return NextResponse.json({ contacts: result.contacts, canLinkPlayers: result.canLinkPlayers });
+      const {data:row,error:groupError}=await db.from('teams').select('metadata').eq('id',teamId).maybeSingle();
+      if(groupError)throw new MessagingAccessError('Groupes indisponibles.',503);
+      return NextResponse.json({ contacts: result.contacts, canLinkPlayers: result.canLinkPlayers, groups:messageGroups(row?.metadata).filter(group=>group.memberIds.includes(user.id)).map(group=>({id:group.id,name:group.name,count:group.memberIds.length})) });
     }
     const [owned, member] = await Promise.all([db.from('teams').select('id,name').eq('user_id', user.id), db.from('team_members').select('team_id').eq('user_id', user.id).eq('status', 'active')]);
     if (owned.error || member.error) throw new MessagingAccessError('Équipes indisponibles.', 503);
@@ -30,16 +36,24 @@ export async function POST(request: Request) {
   try {
     const { user, db } = await context(); const body = await request.json();
     const message = String(body.message || '').trim();
-    if (!uuid(body.teamId) || !uuid(body.recipientId) || !message || message.length > 5000) throw new MessagingAccessError('Équipe, destinataire ou message invalide.', 400);
+    const ids = [...new Set(Array.isArray(body.recipientIds) ? body.recipientIds : [body.recipientId])];
+    if (!uuid(body.teamId) || !ids.length || ids.length>50 || !ids.every(uuid) || !message || message.length > 5000) throw new MessagingAccessError('Équipe, destinataires ou message invalide.', 400);
     const { contacts, team } = await teamMessagingContacts(db, user.id, body.teamId);
-    const recipient = contacts.find(row => row.userId === body.recipientId);
-    if (!recipient || recipient.userId === user.id) throw new MessagingAccessError('Ce destinataire n’est pas relié à cette équipe.');
+    const recipients=ids.map(id=>contacts.find(row=>row.userId===id));
+    if(recipients.some(row=>!row||row.userId===user.id))throw new MessagingAccessError('Un destinataire n’est pas relié à cette équipe.');
     const { data: profile } = await db.from('profiles').select('display_name').eq('id', user.id).maybeSingle();
-    const now = new Date().toISOString();
-    // Existing inbox schema: both parties get the same persisted conversation.
-    const { data, error } = await db.from('platform_conversations').insert({ conversation_type: 'accompagnement', subject: `Équipe · ${team.name} · ${recipient.name}`, initial_message: message, sender_user_id: user.id, sender_name: profile?.display_name || 'Coach', sender_email: user.email || null, recipient_user_id: recipient.userId, reference_id: team.id, status: 'open', created_at: now, updated_at: now }).select('id').single();
-    if (error || !data) throw new MessagingAccessError('Le message n’a pas pu être enregistré.', 503);
-    return NextResponse.json({ id: data.id });
+    const now = new Date().toISOString(), isGroup=body.mode==='group';
+    const name=String(body.groupName||'').trim().slice(0,80);
+    if(isGroup&&(!name||ids.length<2))throw new MessagingAccessError('Nomme le groupe et choisis au moins deux destinataires.',400);
+    const rows=(isGroup?recipients.slice(0,1):recipients).map(recipient=>({id:crypto.randomUUID(),conversation_type:'accompagnement',subject:isGroup?GROUP_SUBJECT+name:`Équipe · ${team.name} · ${recipient!.name}`,initial_message:message,sender_user_id:user.id,sender_name:profile?.display_name||'Coach',sender_email:user.email||null,recipient_user_id:recipient!.userId,reference_id:team.id,status:'open',created_at:now,updated_at:now}));
+    const { data, error } = await db.from('platform_conversations').insert(rows).select('id');
+    if(error||data?.length!==rows.length)throw new MessagingAccessError('Le message n’a pas pu être enregistré.',503);
+    if(isGroup){
+      try{await registerMessageGroup(db,team.id,{id:rows[0].id,name,memberIds:[user.id,...ids as string[]],createdBy:user.id,createdAt:now})}
+      catch(error){await db.from('platform_conversations').delete().eq('id',rows[0].id);throw error}
+    }
+    after(async()=>{if(isGroup)await sendMessagePush(db,ids as string[],{title:name,conversationId:rows[0].id});else await Promise.all(rows.map(row=>sendMessagePush(db,[row.recipient_user_id!],{title:profile?.display_name||'MyBasket',conversationId:row.id}))) });
+    return NextResponse.json({ id: rows[0].id, ids:rows.map(row=>row.id), count:rows.length, group:isGroup });
   } catch (error) { return failure(error); }
 }
 export async function PATCH(request: Request) {

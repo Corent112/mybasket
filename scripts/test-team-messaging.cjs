@@ -1,0 +1,30 @@
+const assert=require('node:assert/strict'),fs=require('node:fs'),path=require('node:path'),Module=require('node:module'),ts=require('typescript');
+for(const ext of ['.ts','.tsx'])require.extensions[ext]=(mod,file)=>mod._compile(ts.transpileModule(fs.readFileSync(file,'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2020,esModuleInterop:true}}).outputText,file);
+const id=n=>`00000000-0000-4000-8000-${String(n).padStart(12,'0')}`;
+let current=id(1);const team=id(10),tables={teams:[{id:team,user_id:id(1),name:'U18',metadata:{otherSetting:'preserve'},updated_at:'v1'}],team_members:[{team_id:team,user_id:id(2),status:'active',permissions:{players:true}}],players:[{id:id(5),team_id:team,first_name:'Player',metadata:{messagingUserId:id(3)}}],profiles:[1,2,3,4].map(n=>({id:id(n),display_name:`User ${n}`})),platform_conversations:[],platform_conversation_replies:[]};
+const clone=v=>JSON.parse(JSON.stringify(v));
+function contains(row,needle){if(Array.isArray(needle))return needle.every(n=>Array.isArray(row)&&row.some(r=>contains(r,n)));if(needle&&typeof needle==='object')return Object.entries(needle).every(([k,v])=>contains(row?.[k],v));return row===needle}
+let conflicts=0;
+const db={auth:{getUser:async()=>({data:{user:current?{id:current,email:'test@example.test'}:null}})},from(table){let filters=[],mode='select',payload,executed;
+ const run=()=>{if(executed)return executed;let rows=tables[table].filter(row=>filters.every(f=>f(row)));
+ if(mode==='insert'){rows=(Array.isArray(payload)?payload:[payload]).map(r=>({...clone(r),id:r.id||crypto.randomUUID()}));tables[table].push(...rows)}
+ if(mode==='update'){if(table==='teams'&&conflicts){conflicts--;rows=[]}else rows.forEach(r=>Object.assign(r,clone(payload)))}
+ if(mode==='delete')tables[table]=tables[table].filter(r=>!rows.includes(r));
+ rows=clone(rows);if(table==='platform_conversations')rows=rows.map(r=>({...r,platform_conversation_replies:clone(tables.platform_conversation_replies.filter(x=>x.conversation_id===r.id))}));return executed={data:rows,error:null}};
+ const q={select:()=>q,eq:(k,v)=>{filters.push(r=>r[k]===v);return q},is:(k,v)=>{filters.push(r=>r[k]==v);return q},in:(k,v)=>{filters.push(r=>v.includes(r[k]));return q},contains:(k,v)=>{filters.push(r=>contains(r[k],v));return q},or:expression=>{const tests=expression.split(',').map(x=>{const[k,,value]=x.split('.');return r=>r[k]===value});filters.push(r=>tests.some(f=>f(r)));return q},order:()=>q,insert:value=>{mode='insert';payload=value;return q},update:value=>{mode='update';payload=value;return q},delete:()=>{mode='delete';return q},maybeSingle:async()=>{const r=run();return{...r,data:r.data[0]||null}},then:(resolve,reject)=>Promise.resolve(run()).then(resolve,reject)};return q}};
+const actual=Module._load;Module._load=function(request,parent,main){if(request==='next/server')return{NextResponse:{json:(d,init)=>Response.json(d,init)},after:()=>{}};if(request==='@/lib/supabase/server')return{createClient:async()=>db};if(request==='@/lib/supabase/admin-server')return{createAdminClient:()=>db};if(request==='@/lib/messaging/push-server')return{sendMessagePush:async()=>{throw Error('Never send real notifications in tests')}};if(request.startsWith('@/'))request=path.resolve(__dirname,'..',request.slice(2));return actual.call(this,request,parent,main)};
+const api=require('../app/api/messages/team/route.ts'),inbox=require('../app/api/messages/platform/route.ts');
+const req=body=>new Request('https://mybasket.test/api/messages',{method:'POST',body:JSON.stringify(body),headers:{'Content-Type':'application/json'}});
+(async()=>{
+ current=null;assert.equal((await inbox.GET()).status,401);current=id(1);
+ let response=await api.POST(req({teamId:team,recipientIds:[id(2),id(3)],message:'Private broadcast'}));assert.equal(response.status,200);const broadcast=await response.json();assert.equal(broadcast.count,2);assert.equal(tables.platform_conversations.length,2);
+ assert.equal((await api.POST(req({teamId:team,recipientIds:[id(2),id(4)],message:'Blocked'}))).status,403);assert.equal(tables.platform_conversations.length,2,'Invalid broadcast is never partially sent');
+ conflicts=1;response=await api.POST(req({teamId:team,recipientIds:[id(2),id(3)],mode:'group',groupName:'Staff et joueur',message:'Shared conversation'}));assert.equal(response.status,200);const group=await response.json();assert.equal(tables.teams[0].metadata.otherSetting,'preserve');assert.equal(tables.teams[0].metadata.messagingGroups.length,1);assert.equal(tables.platform_conversations.length,3,'A group has one shared thread, not N separate copies');
+ current=id(3);let list=await(await inbox.GET()).json();assert.equal(list.conversations.length,2);assert.equal(list.conversations.find(c=>c.id===group.id).member_count,3);
+ assert.equal((await inbox.POST(req({conversationId:group.id,message:'Player reply'}))).status,200);
+ current=id(2);list=await(await inbox.GET()).json();assert.equal(list.conversations.find(c=>c.id===group.id).platform_conversation_replies[0].message,'Player reply');assert.equal(list.conversations.find(c=>c.id===group.id).platform_conversation_replies[0].sender_name,'User 3');
+ current=id(4);assert.equal((await inbox.POST(req({conversationId:group.id,message:'Intrusion'}))).status,403);assert.equal((await(await inbox.GET()).json()).conversations.length,0);
+ current=id(3);const privateForStaff=tables.platform_conversations.find(r=>r.recipient_user_id===id(2)&&r.id!==group.id);assert.equal((await inbox.POST(req({conversationId:privateForStaff.id,message:'Intrusion'}))).status,403);
+ tables.teams[0].metadata.messagingGroups[0].memberIds=[id(1),id(3)];current=id(2);assert.equal((await inbox.POST(req({conversationId:group.id,message:'Removed'}))).status,403);assert.equal((await(await inbox.GET()).json()).conversations.some(c=>c.id===group.id),false,'Removed first recipient cannot bypass group membership');
+ console.log('Messaging: private broadcast isolation, no partial unauthorized sends, shared group replies, roster access, membership removal and metadata conflict retry passed.');
+})().catch(e=>{console.error(e);process.exitCode=1});
