@@ -101,6 +101,10 @@ export type AiDiagramActionKind =
   | "freedraw";
 
 export type AiDiagramAction = {
+  /** Link to a visually counted arrow/bar in the MyBasket assistant audit. */
+  terminalId?: string;
+  /** Dense photo-traced path; keep its shape while showing few editing handles. */
+  geometry?: "traced";
   continuationChoice?: { group: string; alternate: boolean; selected?: boolean };
   action: AiDiagramActionKind;
   fromPlayer?: string;
@@ -118,6 +122,7 @@ export type AiDiagramAction = {
 };
 
 export type AiExerciseDiagram = {
+  scanAudit?: import("./scan-audit").DiagramScanAudit;
   detected: boolean;
   courtType: "half" | "full";
   players: AiDiagramPlayer[];

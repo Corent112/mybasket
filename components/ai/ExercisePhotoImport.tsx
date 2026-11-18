@@ -64,6 +64,7 @@ export default function ExercisePhotoImport({ onImported, playersOnly = false, d
   const [assistAI, setAssistAI] = useState(initialAssistAI);
   const [status, setStatus] = useState("");
   const [error, setError] = useState("");
+  const [assistantNotice,setAssistantNotice]=useState("");
   const [warnings, setWarnings] = useState<string[]>([]);
   const [debug, setDebug] = useState<AiExerciseImport["debug"] | null>(null);
   const [debugOpen, setDebugOpen] = useState(false);
@@ -94,6 +95,7 @@ export default function ExercisePhotoImport({ onImported, playersOnly = false, d
     setStatus("");
     setError("");
     setWarnings([]);
+    setAssistantNotice("");
     setSourceImage((previous) => {
       if (previous) URL.revokeObjectURL(previous);
       return "";
@@ -126,6 +128,7 @@ export default function ExercisePhotoImport({ onImported, playersOnly = false, d
 
     try {
       const photos: AiExerciseImport[] = [];
+      let assistantUnavailable=false;
       const batchWarnings: string[] = [];
       for (const [index, file] of files.entries()) {
         const report = (message: string) => setStatus(multiple ? `Photo ${index + 1}/${files.length} · ${message}` : message);
@@ -134,13 +137,19 @@ export default function ExercisePhotoImport({ onImported, playersOnly = false, d
           let result = playersOnly && file.type.startsWith("image/")
             ? await scanPlayersOnly(file)
             : refineImportedExercise(await scanExerciseLocally(file, report, { drawingOnly }));
-          if (assistAI && !playersOnly && file.type.startsWith('image/') && (result.diagrams?.length??0)<=1) {
-            report('Contrôle IA des joueurs et des actions…');
+          if (assistAI && !assistantUnavailable && !playersOnly && file.type.startsWith('image/') && (result.diagrams?.length??0)<=1) {
+            report('Assistant MyBasket · joueurs → traits → contrôle des oublis…');
             try {
               const diagram=result.diagrams?.[0]??(result.diagram.detected?result.diagram:result.referenceFallback);
-              result = refineImportedExercise(reconcileScan(result, await scanWithAI(file, diagram?.courtReference, diagram?.courtType)));
+              result = refineImportedExercise(reconcileScan(result, await scanWithAI(file, diagram?.courtReference, diagram?.courtType, photos.at(-1)?.diagrams?.at(-1)??photos.at(-1)?.diagram)));
             }
-            catch { result = { ...result, warnings: [...result.warnings, 'L’assistance IA n’a pas abouti. La lecture locale est conservée.'] }; }
+            catch (cause) {
+              const message=cause instanceof Error?cause.message:'Lecture IA indisponible.';
+              const code=(cause as {status?:number})?.status;
+              if(code&&[401,403,429,503].includes(code))assistantUnavailable=true;
+              setAssistantNotice(`${message} Le résultat affiché provient du scan local ; l’assistant n’a pas terminé sa lecture.`);
+              result = { ...result, warnings: [...result.warnings, message] };
+            }
           }
           if (!multiple || diagramsOf(result).length || result.referenceFallback) photos.push(result);
           else batchWarnings.push(`Photo ${index + 1} (${file.name}) : aucun terrain retrouvé. Tu peux la joindre comme image.`);
@@ -251,7 +260,7 @@ export default function ExercisePhotoImport({ onImported, playersOnly = false, d
         <span className="scan-upload-icon">↥</span><h2>Importe tes schémas</h2>
         <p>Glisse tes photos ici, une par phase.</p>
         <button type="button" className="scan-upload-button" disabled={busy} onClick={() => inputRef.current?.click()}>{busy ? "Analyse en cours…" : "Choisir mes photos"}</button>
-        {!playersOnly && <label className="scan-ai-option"><input type="checkbox" checked={assistAI} disabled={busy} onChange={event=>setAssistAI(event.target.checked)} /> Analyse approfondie IA</label>}
+        {!playersOnly && <label className="scan-ai-option"><input type="checkbox" checked={assistAI} disabled={busy} onChange={event=>setAssistAI(event.target.checked)} /> Assistant schémas MyBasket</label>}
       </div>}
 
       <input
@@ -352,6 +361,7 @@ export default function ExercisePhotoImport({ onImported, playersOnly = false, d
         </div>
       )}
 
+      {assistantNotice && step === "review" && <p role="status" style={{padding:"12px 14px",borderRadius:12,background:"#fff5df",color:"#6b471d",fontSize:13}}>{assistantNotice}</p>}
       {/* ------------------------------------------------------- correction manuelle */}
       {step === "review" && pending && (
         <div style={summaryStyles.reviewHost}>

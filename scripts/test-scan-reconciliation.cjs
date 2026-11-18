@@ -19,7 +19,9 @@ const actual=Module._load;Module._load=function(request,parent,main){
  if(request==='@/lib/ai/knowledge')return{resolveActor:async()=>auth?{ok:true,actor:{userId:'scan-test',clubIds:[],supabase:{}}}:{ok:false,status:401,error:'Connexion requise'},buildScopeContext:()=>({}),buildAIContext:async()=>{contextCalls++;throw Error('Diagram scan must not search documents')},getWriterClient:()=>({}),logAIUsage:async()=>{}};
  if(request==='@/lib/ai/openai')return{getOpenAI:()=>({responses:{create:async args=>{
   requestArgs=args;
-  return {output_text:JSON.stringify({...ai,diagram:{...ai.diagram,actions:ai.diagram.actions.map(({from,...a})=>a)}})};
+  const inventory={court:{type:'half'},players:ai.diagram.players,terminals:ai.diagram.actions.map((a,i)=>({id:'t'+i,kind:a.action==='screen'?'bar':'arrow',...a.to,confidence:.95}))};
+  const paths={actions:ai.diagram.actions.map((a,i)=>({...a,terminalId:'t'+i,previousTerminalId:i===1?'t0':null}))};
+  return {output_text:JSON.stringify(args.input[0].content[0].text.includes('LECTURE 1')?inventory:paths)};
  }}})};
  if(request.startsWith('@/'))request=path.resolve(__dirname,'..',request.slice(2));return actual.call(this,request,parent,main);
 };

@@ -28,6 +28,7 @@ import { resolveImportPassChoices } from "@/lib/import/import-refiner";
 import { reconcileDiagramRosters } from "@/lib/import/diagram-roster";
 import { ActionKindDialog } from "./ActionKindDialog";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { unresolvedScanTerminals } from "@/lib/import/scan-audit";
 import type {
   AiDetectionType,
   AiDiagramAction,
@@ -129,7 +130,7 @@ function curveHandles(action: AiDiagramAction | undefined) {
 function reviewPath(action: AiDiagramAction): AiPoint[] {
   const from = action.from ?? action.to;
   if (action.action === "dribble" && action.from && (!action.points || action.points.length < 3)) return changeImportedActionKind({ ...action, action:"cut" }, "dribble").points ?? [from, action.to];
-  if (action.action === "dribble" || action.action === "freedraw" || hasImportedTurnback(action.points)) {
+  if (action.geometry === "traced" || action.action === "dribble" || action.action === "freedraw" || hasImportedTurnback(action.points)) {
     return [from, ...(action.points?.slice(1, -1) ?? []), action.to];
   }
   return sampleImportedArc(from, action.to, importedCurveHandle(action.points)?.point);
@@ -205,8 +206,8 @@ export function diagramsOf(result: AiExerciseImport): AiExerciseDiagram[] {
 /** Nombre total d'éléments à vérifier, tous schémas confondus. */
 export function countReviewItems(result: AiExerciseImport): number {
   const diagrams = diagramsOf(result);
-  if (!diagrams.length) return reviewItemsOfDiagram(result.referenceFallback).length;
-  return diagrams.reduce((total, diagram) => total + reviewItemsOfDiagram(diagram).length, 0);
+  if (!diagrams.length) return reviewItemsOfDiagram(result.referenceFallback).length+(result.referenceFallback?unresolvedScanTerminals(result.referenceFallback).length:0);
+  return diagrams.reduce((total, diagram) => total + reviewItemsOfDiagram(diagram).length+unresolvedScanTerminals(diagram).length, 0);
 }
 
 /* -------------------------------------------------------------------------- */
@@ -454,6 +455,13 @@ export default function ImportReview({
       }
       ctx.restore();
     });
+
+    // Numbered audit markers remain visible until a real line ends here or the coach dismisses them.
+    for(const terminal of unresolvedScanTerminals(diagram)){
+      const p=toPixel(terminal);ctx.save();ctx.strokeStyle='#b92766';ctx.fillStyle='#fff';ctx.lineWidth=2;ctx.setLineDash([4,3]);
+      ctx.beginPath();ctx.arc(p.x,p.y,13,0,Math.PI*2);ctx.fill();ctx.stroke();ctx.setLineDash([]);
+      ctx.fillStyle='#b92766';ctx.font='bold 10px system-ui';ctx.textAlign='center';ctx.fillText(terminal.id,p.x,p.y+3);ctx.restore();
+    }
 
     // Objets
     diagram.objects.forEach((object, index) => {
@@ -945,7 +953,10 @@ export default function ImportReview({
   const doubtful = stage === "players"
     ? reviewItems.filter(item => item.selection?.kind !== "action")
     : reviewItems;
-  const omittedCount = diagrams.reduce((n,item) => n+resolveImportPassChoices(item.actions).filter(action => needsReview(action.confidence) || requiresStartingPlayer(action)).length,0);
+  const missingTerminals=unresolvedScanTerminals(diagram);
+  const auditBlockCount=diagrams.reduce((sum,item)=>sum+unresolvedScanTerminals(item).length,0);
+  const rosterBlockCount=diagrams.reduce((sum,item)=>sum+(item.scanAudit?item.players.filter(player=>!player.label||player.label==='?'||player.labelConfident===false).length:0),0);
+  const omittedCount = rosterBlockCount+auditBlockCount+diagrams.reduce((n,item) => n+resolveImportPassChoices(item.actions).filter(action => needsReview(action.confidence) || requiresStartingPlayer(action)).length,0);
   const cleanDiagrams = diagrams.map(item => {
     return { ...item, actions: resolveImportPassChoices(item.actions) };
   });
@@ -975,7 +986,7 @@ export default function ImportReview({
   const kept = cleanDiagrams.filter(
     (item) => item.players.length > 0 || item.actions.length > 0 || item.objects.length > 0
   );
-  const totalDoubtful = cleanDiagrams.reduce((sum, item) => sum + reviewItemsOfDiagram(item).length, 0);
+  const totalDoubtful = cleanDiagrams.reduce((sum, item) => sum + reviewItemsOfDiagram(item).length+unresolvedScanTerminals(item).length, 0);
   const validate = () => {
     if (omittedCount || ((result.referenceFallback || batchMode) && !kept.length)) return;
     onValidate({
@@ -1256,6 +1267,17 @@ export default function ImportReview({
             )}
           </section>
 
+          {diagram.scanAudit && <section className="import-scan-audit" aria-label="Contrôle des traits MyBasket">
+            <h3 style={styles.sectionTitle}>Assistant MyBasket</h3>
+            <p style={styles.hint}>{diagram.scanAudit.terminals.length-missingTerminals.length-(diagram.scanAudit.dismissed?.length??0)} / {diagram.scanAudit.terminals.length} repères reliés{diagram.scanAudit.dismissed?.length?` · ${diagram.scanAudit.dismissed.length} écarté(s)`:""}</p>
+            {!diagram.scanAudit.terminals.length && <p style={styles.hint}>Aucune terminaison repérée : compare avec la photo avant de valider.</p>}
+            {missingTerminals.map(terminal=><div className="import-missing-trace" key={terminal.id}>
+              <strong>{terminal.kind==='bar'?'Barre d’écran':'Pointe de flèche'} · {terminal.id}</strong>
+              <span>Un trait reste à relier ici.</span>
+              <button type="button" onClick={()=>{checkStage('actions');setShowUncertain(true);setOverlay(.6);setTraceKind(terminal.kind==='bar'?'screen':'cut');setTraceMode(true)}}>Retracer ce trait</button>
+              <button type="button" onClick={()=>updateDiagram(item=>({...item,scanAudit:item.scanAudit?{...item.scanAudit,dismissed:[...new Set([...(item.scanAudit.dismissed??[]),terminal.id])]}:undefined}))}>Ce repère n’est pas une action</button>
+            </div>)}
+          </section>}
           {stage === "actions" && <section className="import-action-list"><h3 style={styles.sectionTitle}>Actions détectées</h3>{diagram.actions.map((action,index)=><button key={index} type="button" aria-pressed={selection?.kind==='action'&&selection.index===index} onClick={()=>{setShowUncertain(true);setSelection({kind:'action',index,end:'to'})}}><b>{index+1}</b><span>{actionChoices.find(choice=>choice.value===action.action)?.label||'Tracé'}</span><small>{diagram.players.find(player=>player.key===action.fromPlayer)?.label||'?'}</small></button>)}</section>}
           <details className="import-tools"><summary>Ajouter un élément</summary>
             <div style={styles.row}>
@@ -1370,15 +1392,15 @@ export default function ImportReview({
         {stage === "players" ? <button type="button" style={styles.buttonPrimary} onClick={() => checkStage("actions")}>
           Vérifier les actions
         </button> : <>
-        {omittedCount > 0 && <span style={styles.hint}>{omittedCount} action{omittedCount > 1 ? "s" : ""} à vérifier</span>}
+        {omittedCount > 0 && <span style={styles.hint}>{omittedCount} élément{omittedCount > 1 ? "s" : ""} à vérifier</span>}
         <button type="button" style={styles.buttonPrimary} disabled={Boolean(omittedCount || ((result.referenceFallback || batchMode) && !kept.length))} onClick={validate}>
-          {omittedCount ? "Vérifie les actions" : totalDoubtful
+          {omittedCount ? "Vérifie les éléments" : totalDoubtful
             ? `Importer · ${totalDoubtful} élément${totalDoubtful > 1 ? "s" : ""} à vérifier`
             : validateLabel}
         </button>
         </>}
       </div>
-      <style>{`.ce-ai-import-review{min-height:0}.import-review{max-height:calc(94dvh - 92px);min-height:0;gap:10px!important}.import-review>div:not(.import-workspace){flex-shrink:0}.import-review .import-workspace{flex:1;min-height:140px;overflow:hidden;align-items:stretch!important}.import-review .import-court{display:flex;flex-direction:column;align-items:center;min-height:0}.import-court-viewport{flex:1;min-height:120px;width:100%;display:grid;place-items:center;overflow:hidden}.import-review .import-court canvas{max-width:100%;display:block}.import-review .import-court>label{flex-shrink:0;align-self:stretch}.import-inspector{min-height:0;overflow-y:auto;overscroll-behavior:contain;scrollbar-gutter:stable;padding-right:4px}.import-review .import-inspector select{box-sizing:border-box;appearance:none;-webkit-appearance:none;display:block;padding:10px 32px 10px 12px!important;min-height:42px;height:auto!important;background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8'%3E%3Cpath d='m1 1 5 5 5-5' fill='none' stroke='%236b1a2c' stroke-width='2'/%3E%3C/svg%3E")!important;background-repeat:no-repeat!important;background-position:right 12px center!important}.import-player-numbers{display:flex;gap:7px;margin:12px 0}.import-player-numbers button{border-radius:10px;border:1px solid #dfcbd6;background:white;color:#6b1a2c;min-width:36px;min-height:36px;font-weight:800;cursor:pointer}.import-player-numbers button[aria-pressed=true]{background:#6b1a2c;color:white}.import-player-numbers button:disabled{opacity:.25;cursor:default}.import-top-tools{display:flex;gap:12px;flex-wrap:wrap;align-items:center;justify-content:space-between}.import-history{display:flex;gap:6px;padding:5px;border-radius:13px;background:#f6f2f5;border:1px solid #eee5eb}.import-history button{display:flex;align-items:center;gap:6px;padding:9px 12px;border:0;border-radius:9px;background:white;color:#6b1a2c;font-size:12px;font-weight:750;cursor:pointer}.import-history button:disabled{opacity:.35;cursor:default}.import-control{padding:12px;background:#faf7f9;border:1px solid #ece3e9;border-radius:12px;margin:0!important;min-width:0}.import-control>span{display:flex;gap:6px;align-items:center;font-size:11px;color:#866e7c}.import-control select{width:100%!important;min-height:42px;background:white!important;border:1px solid #e2d4dd!important;color:#4b283a!important;font-weight:750;font-size:14px!important;border-radius:10px!important}.import-edit-tools{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:9px;margin:12px 0}.import-tool-tile{display:flex;align-items:center;justify-content:center;flex-direction:column;gap:9px;min-height:82px;padding:12px 8px;border:1px solid #e3d3dc;border-radius:13px;background:linear-gradient(145deg,#fff,#fbf5f8);color:#6b1a2c;cursor:pointer;font-size:12px;font-weight:750;text-align:center;line-height:1.4}.import-tool-tile:hover{background:#f3e7ee;border-color:#b78c9e}.import-tool-tile[aria-pressed=true]{background:#6b1a2c;color:white;border-color:#6b1a2c}.import-owner-fields{display:grid;gap:10px}.import-owner-fields .link-player{min-height:52px;flex-direction:row}.import-selection-actions{display:flex;gap:8px;margin-top:14px}.import-selection-actions button{display:flex;align-items:center;justify-content:center;gap:6px;flex:1;min-height:42px;border:0;border-radius:10px;font-size:12px;font-weight:750;cursor:pointer}.import-confirm{background:#6b1a2c;color:white}.import-delete{background:#fff0f0;color:#a13747}.import-review{color:#302631}.import-review .import-workspace{display:grid!important;grid-template-columns:minmax(0,1fr) 280px;gap:20px}.import-court{min-width:0;background:#f7f4f6;border-radius:16px;padding:10px}.import-court canvas{width:100%;height:auto;display:block}.import-review section,.import-tools{padding:16px;background:#fff;border:1px solid #e9e0e5;border-radius:14px}.import-tools summary,.import-details summary{font-size:13px;font-weight:700;color:#6b1a2c;cursor:pointer}.import-tools[open] summary{margin-bottom:14px}.import-details{padding:10px 14px;border-radius:10px;background:#f8f5f7}.import-action-list{display:grid;gap:7px}.import-action-list button{display:flex;align-items:center;gap:9px;background:#faf7f9;border:1px solid #eee5eb;border-radius:10px;text-align:left;padding:9px;color:#352b35;cursor:pointer}.import-action-list button[aria-pressed=true]{border-color:#6b1a2c;background:#f5eaf0}.import-action-list b{display:grid;place-items:center;background:#6b1a2c;color:white;border-radius:50%;width:24px;height:24px;font-size:12px}.import-action-list small{margin-left:auto;color:#6b1a2c;font-weight:800}.import-validation{position:sticky;bottom:-1px;background:#fff;z-index:3;padding:16px!important;box-shadow:0 -8px 25px #37202d08;align-items:center;flex-wrap:wrap;border-radius:12px}.import-validation button{min-height:42px}.import-validation button:disabled{opacity:.45;cursor:not-allowed}.import-review button:focus-visible,.import-review select:focus-visible{outline:3px solid #d4a24c;outline-offset:2px}@media(max-width:850px){.import-review{max-height:none}.import-review .import-workspace{grid-template-columns:1fr;overflow:visible}.import-inspector{overflow:visible}.import-court-viewport{height:48dvh;flex:auto}.import-review .import-workspace{flex:none}.import-review .import-court{padding:6px}.import-validation{bottom:0}}`}</style>
+      <style>{`.import-scan-audit{border-color:#d4a24c!important;background:#fffaf1!important}.import-missing-trace{display:grid;gap:7px;margin-top:12px;font-size:12px;padding-top:10px;border-top:1px solid #efdfbf}.import-missing-trace span{color:#806c6b}.import-missing-trace button{border:1px solid #dec6d1;border-radius:9px;padding:9px;background:white;color:#6b1a2c;cursor:pointer;font-weight:650}.ce-ai-import-review{min-height:0}.import-review{max-height:calc(94dvh - 92px);min-height:0;gap:10px!important}.import-review>div:not(.import-workspace){flex-shrink:0}.import-review .import-workspace{flex:1;min-height:140px;overflow:hidden;align-items:stretch!important}.import-review .import-court{display:flex;flex-direction:column;align-items:center;min-height:0}.import-court-viewport{flex:1;min-height:120px;width:100%;display:grid;place-items:center;overflow:hidden}.import-review .import-court canvas{max-width:100%;display:block}.import-review .import-court>label{flex-shrink:0;align-self:stretch}.import-inspector{min-height:0;overflow-y:auto;overscroll-behavior:contain;scrollbar-gutter:stable;padding-right:4px}.import-review .import-inspector select{box-sizing:border-box;appearance:none;-webkit-appearance:none;display:block;padding:10px 32px 10px 12px!important;min-height:42px;height:auto!important;background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8'%3E%3Cpath d='m1 1 5 5 5-5' fill='none' stroke='%236b1a2c' stroke-width='2'/%3E%3C/svg%3E")!important;background-repeat:no-repeat!important;background-position:right 12px center!important}.import-player-numbers{display:flex;gap:7px;margin:12px 0}.import-player-numbers button{border-radius:10px;border:1px solid #dfcbd6;background:white;color:#6b1a2c;min-width:36px;min-height:36px;font-weight:800;cursor:pointer}.import-player-numbers button[aria-pressed=true]{background:#6b1a2c;color:white}.import-player-numbers button:disabled{opacity:.25;cursor:default}.import-top-tools{display:flex;gap:12px;flex-wrap:wrap;align-items:center;justify-content:space-between}.import-history{display:flex;gap:6px;padding:5px;border-radius:13px;background:#f6f2f5;border:1px solid #eee5eb}.import-history button{display:flex;align-items:center;gap:6px;padding:9px 12px;border:0;border-radius:9px;background:white;color:#6b1a2c;font-size:12px;font-weight:750;cursor:pointer}.import-history button:disabled{opacity:.35;cursor:default}.import-control{padding:12px;background:#faf7f9;border:1px solid #ece3e9;border-radius:12px;margin:0!important;min-width:0}.import-control>span{display:flex;gap:6px;align-items:center;font-size:11px;color:#866e7c}.import-control select{width:100%!important;min-height:42px;background:white!important;border:1px solid #e2d4dd!important;color:#4b283a!important;font-weight:750;font-size:14px!important;border-radius:10px!important}.import-edit-tools{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:9px;margin:12px 0}.import-tool-tile{display:flex;align-items:center;justify-content:center;flex-direction:column;gap:9px;min-height:82px;padding:12px 8px;border:1px solid #e3d3dc;border-radius:13px;background:linear-gradient(145deg,#fff,#fbf5f8);color:#6b1a2c;cursor:pointer;font-size:12px;font-weight:750;text-align:center;line-height:1.4}.import-tool-tile:hover{background:#f3e7ee;border-color:#b78c9e}.import-tool-tile[aria-pressed=true]{background:#6b1a2c;color:white;border-color:#6b1a2c}.import-owner-fields{display:grid;gap:10px}.import-owner-fields .link-player{min-height:52px;flex-direction:row}.import-selection-actions{display:flex;gap:8px;margin-top:14px}.import-selection-actions button{display:flex;align-items:center;justify-content:center;gap:6px;flex:1;min-height:42px;border:0;border-radius:10px;font-size:12px;font-weight:750;cursor:pointer}.import-confirm{background:#6b1a2c;color:white}.import-delete{background:#fff0f0;color:#a13747}.import-review{color:#302631}.import-review .import-workspace{display:grid!important;grid-template-columns:minmax(0,1fr) 280px;gap:20px}.import-court{min-width:0;background:#f7f4f6;border-radius:16px;padding:10px}.import-court canvas{width:100%;height:auto;display:block}.import-review section,.import-tools{padding:16px;background:#fff;border:1px solid #e9e0e5;border-radius:14px}.import-tools summary,.import-details summary{font-size:13px;font-weight:700;color:#6b1a2c;cursor:pointer}.import-tools[open] summary{margin-bottom:14px}.import-details{padding:10px 14px;border-radius:10px;background:#f8f5f7}.import-action-list{display:grid;gap:7px}.import-action-list button{display:flex;align-items:center;gap:9px;background:#faf7f9;border:1px solid #eee5eb;border-radius:10px;text-align:left;padding:9px;color:#352b35;cursor:pointer}.import-action-list button[aria-pressed=true]{border-color:#6b1a2c;background:#f5eaf0}.import-action-list b{display:grid;place-items:center;background:#6b1a2c;color:white;border-radius:50%;width:24px;height:24px;font-size:12px}.import-action-list small{margin-left:auto;color:#6b1a2c;font-weight:800}.import-validation{position:sticky;bottom:-1px;background:#fff;z-index:3;padding:16px!important;box-shadow:0 -8px 25px #37202d08;align-items:center;flex-wrap:wrap;border-radius:12px}.import-validation button{min-height:42px}.import-validation button:disabled{opacity:.45;cursor:not-allowed}.import-review button:focus-visible,.import-review select:focus-visible{outline:3px solid #d4a24c;outline-offset:2px}@media(max-width:850px){.import-review{max-height:none}.import-review .import-workspace{grid-template-columns:1fr;overflow:visible}.import-inspector{overflow:visible}.import-court-viewport{height:48dvh;flex:auto}.import-review .import-workspace{flex:none}.import-review .import-court{padding:6px}.import-validation{bottom:0}}`}</style>
     </div>
   );
 }
