@@ -7,12 +7,14 @@ import { MONTAGE_INCOMING_EVENT, incomingMontageKey, readIncomingClips, markInco
 import { enforceTimelineSequence, montageItemDuration, montageTrack } from "@/lib/montage/timeline-sequence";
 import ClipThumbnail from "@/components/video-editor/ClipThumbnail";
 import { saveReceivedClipReference, RECEIVED_PLAYLIST_NAME } from "@/lib/montage/received-playlist";
+import { montageDraftKey, readMontageDraft, writeMontageDraft, discardMontageDraft, type MontageDraft } from "@/lib/montage/draft-store";
 import { saveMontageAtomically } from "@/lib/montage/save-timeline";
 import { useLivestatTags } from "@/lib/livestat-tags";
 import { getLocalMatchVideoUrl, setLocalMatchVideo } from "@/lib/local-video-registry";
 import useLocalMatchVideoVersion from "@/hooks/useLocalMatchVideoVersion";
 import { exportTimelineLocally, downloadLocalExport, shareLocalExport, type LocalExportResult, type LocalExportOverlay, type LocalExportSource } from "@/lib/local-montage-export";
 import LocalMatchVideoButton from "@/components/video/LocalMatchVideoButton";
+import { requestVideoFromOpenTabs } from "@/lib/video/local-video-bridge";
 import { restoreMatchVideoForClip, relinkMatchVideo } from "@/lib/video/match-video-resolver";
 import { createClient } from "@/lib/supabase/client";
 
@@ -99,6 +101,8 @@ type MontageItem = {
   transition?: "none" | "fade";
 };
 
+type DraftSnapshot = { items: Omit<MontageItem, 'action'>[]; title: string; note: string; playerId: string };
+
 type Props = {
   initialTeamId?: string;
   initialPlayerId?: string;
@@ -183,7 +187,8 @@ function actionVideoUrl(action: ActionRow | undefined, matches: Map<string, Matc
   const local = matchId ? getLocalMatchVideoUrl(matchId) : null;
   if (local) return local;
   const match = matches.get(matchId);
-  return String(match?.video_url || match?.youtube_url || "");
+  const source = String(match?.video_url || match?.youtube_url || "");
+  return /(?:youtube\.com|youtu\.be)\//i.test(source) ? "" : source;
 }
 
 function formatClipTime(value: number) {
@@ -314,6 +319,11 @@ export default function MontageStudio({
   const [clipSort, setClipSort] = useState("received");
   const receiptTokensRef = useRef(new Set<string>());
   const manualReceiptQueueRef = useRef(Promise.resolve());
+  const [draftScope, setDraftScope] = useState<{ teamId:string; montageId:string; key:string } | null>(null);
+  const [recoveryDraft, setRecoveryDraft] = useState<MontageDraft<DraftSnapshot> | null>(null);
+  const [localSavedFingerprint, setLocalSavedFingerprint] = useState('');
+  const draftIsReady = draftScope?.teamId === teamId && draftScope?.montageId === montageId;
+
   const itemsRef = useRef(items);
   itemsRef.current = items;
   const incomingSourcesRef = useRef({ actions, matches, themes });
@@ -609,6 +619,50 @@ export default function MontageStudio({
       active = false;
     };
   }, [actions, flash, montageId, supabase, teamId, loading, libraryError]);
+
+  useEffect(() => {
+    if (!editorReady || !teamId) return;
+    let active = true;
+    void (async () => {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user || !active) return;
+      const key = montageDraftKey(user.id, teamId, montageId);
+      const draft = await readMontageDraft<DraftSnapshot>(key);
+      if (!active) return;
+      setDraftScope({ teamId, montageId, key });
+      setRecoveryDraft(draft && draft.fingerprint !== savedFingerprintRef.current ? draft : null);
+    })().catch(() => { if (active) { setDraftScope({ teamId, montageId, key:'' }); flash('La copie locale est indisponible sur ce navigateur.'); } });
+    return () => { active = false; };
+  }, [editorReady, teamId, montageId, supabase, flash]);
+
+  useEffect(() => {
+    if (!editorReady || !draftIsReady || !draftScope?.key || recoveryDraft) return;
+    const fingerprint = draftFingerprint(items, title, coachNote, assignedPlayerId);
+    if (fingerprint === savedFingerprintRef.current) return;
+    const timer = window.setTimeout(() => {
+      const snapshot: DraftSnapshot = { items:items.map(({ action: _action, ...item }) => item), title, note:coachNote, playerId:assignedPlayerId };
+      void writeMontageDraft(draftScope.key, { version:1, fingerprint, savedAt:Date.now(), snapshot }).then(() => setLocalSavedFingerprint(fingerprint)).catch(() => flash('Copie locale impossible : garde cet onglet ouvert et réessaie l’enregistrement.'));
+    }, 450);
+    return () => window.clearTimeout(timer);
+  }, [items, title, coachNote, assignedPlayerId, editorReady, draftIsReady, draftScope, recoveryDraft, flash]);
+
+  const currentFingerprint = draftFingerprint(items, title, coachNote, assignedPlayerId);
+  useEffect(() => {
+    const protect = (event:BeforeUnloadEvent) => {
+      if (editorReady && currentFingerprint !== savedFingerprintRef.current && currentFingerprint !== localSavedFingerprint) { event.preventDefault(); event.returnValue=''; }
+    };
+    window.addEventListener('beforeunload', protect);
+    return () => window.removeEventListener('beforeunload', protect);
+  }, [currentFingerprint, localSavedFingerprint, editorReady]);
+
+  const restoreDraft = () => {
+    if (!recoveryDraft) return;
+    const snapshot = recoveryDraft.snapshot;
+    if (!Array.isArray(snapshot.items)) { flash('Cette copie locale est illisible.'); return; }
+    setTitle(snapshot.title || 'Montage'); setCoachNote(snapshot.note || ''); setAssignedPlayerId(snapshot.playerId || '');
+    setItems(snapshot.items.map(item => ({ ...item, action:actions.find(action => action.id === item.action_id) })));
+    setRecoveryDraft(null); setLocalSavedFingerprint(recoveryDraft.fingerprint); flash('Montage local restauré.');
+  };
 
   // À la réouverture d'un montage, restaure UNE fois chaque source locale
   // nécessaire, par matchId. Un montage de 20 clips issus de 3 matchs ne doit
@@ -919,7 +973,7 @@ export default function MontageStudio({
   const insertionIndex = () =>
     items.length === 0 ? 0 : clamp(selectedIndex + 1, 0, items.length);
 
-  const addActions = (incoming: ActionRow[], position?: number) => {
+  const addActions = (incoming: ActionRow[], position?: number, registerReferences = true) => {
     if (!incoming.length || incoming.some(action => !hasMontageBounds(action))) return false;
     const insertAt = position == null ? items.length : clamp(position, 0, items.length);
     const additions = incoming.map((action): MontageItem => ({
@@ -939,7 +993,7 @@ export default function MontageStudio({
     setClipPreviewIndex(null);
     setMontagePlaying(false);
     setPlayhead(items.slice(0, insertAt).reduce((time, item) => time + (montageTrack(item) === "video" ? montageItemDuration(item) : 0), 0));
-    for (const action of incoming) registerAddedClip(action);
+    if (registerReferences) for (const action of incoming) registerAddedClip(action);
     return true;
   };
 
@@ -957,6 +1011,9 @@ export default function MontageStudio({
       }).catch(error=>flash(`Clip inséré. Sa référence dans Mes clips ajoutés n’a pas pu être enregistrée : ${error instanceof Error ? error.message : 'erreur réseau'}`));
     }
   };
+  const addIncomingActionsRef = useRef(addActions);
+  addIncomingActionsRef.current = addActions;
+
   const addAction = (action: ActionRow, position?: number) => {
     if (!addActions([action], position)) {
       flash("Cette action ne possède pas de bornes vidéo exploitables.");
@@ -994,9 +1051,9 @@ export default function MontageStudio({
   }, [teamId]);
 
   // Transfer from LiveStats works both in an already-open window and after
-  // navigation. Received references stay independent of the current film.
+  // navigation. References remain available independently of inserted film segments.
   useEffect(() => {
-    if (!teamId) return;
+    if (!teamId || !editorReady || !draftIsReady || recoveryDraft) return;
     let active = true;
     let processing = false;
     let requested = false;
@@ -1028,14 +1085,18 @@ export default function MontageStudio({
           }
           if (action.match_id && !getLocalMatchVideoUrl(action.match_id)) {
             window.opener?.postMessage({ type: "mybasket:montage-video-request", teamId, matchId: action.match_id }, window.location.origin);
+            void requestVideoFromOpenTabs(user.id, String(action.match_id));
           }
           const synced = synchronizeMontageAction(action, source);
-          // Reception never changes the timeline or the source statistics.
+          // Preserve source statistics and absolute edited bounds during timeline insertion.
           const receivedAction = { ...synced, clip_title: clip.title || synced.clip_title,
             resolved_clip_start: clip.clipStart ?? synced.resolved_clip_start,
             resolved_clip_end: clip.clipEnd ?? synced.resolved_clip_end,
           };
           if (!active) return;
+          if (newlyReceived && clip.destination !== 'library' && !addIncomingActionsRef.current([receivedAction], undefined, false)) {
+            throw new Error('Le clip reçu n’a pas de bornes vidéo valides. Corrige son début et sa fin avant de l’insérer.');
+          }
           setReceivedClips(current => [...current.filter(row => row.actionId !== clip.actionId), clip]);
           setActions(current => [...current.filter(row => row.id !== synced.id), receivedAction]);
           if (newlyReceived) {
@@ -1066,7 +1127,7 @@ export default function MontageStudio({
 
           }
           if (source) setMatches(current => current.some(row => row.id === source!.id) ? current : [...current, source!]);
-          if (newlyReceived) flash("✓ Clip reçu dans Mes clips ajoutés · glisse-le dans la timeline pour l’insérer");
+          if (newlyReceived) flash(clip.destination === "library" ? "✓ Clip reçu dans Mes clips ajoutés" : "✓ Clip reçu et inséré dans la timeline");
         }
       } catch (error) {
         if (active) setTransferError(error instanceof Error ? error.message : "Transfert Montage impossible.");
@@ -1091,7 +1152,7 @@ export default function MontageStudio({
       window.removeEventListener("storage", onStorage);
       window.removeEventListener("focus", onIncoming);
     };
-  }, [editorReady, teamId, supabase, flash, setItems]);
+  }, [editorReady, draftIsReady, recoveryDraft, teamId, supabase, flash, setItems]);
 
   const removeItem = (index: number) => {
     setItems((current) =>
@@ -1199,7 +1260,8 @@ export default function MontageStudio({
   const saveMontage = async () => {
     if (saveBusyRef.current) return;
     if (!teamId) { flash("Choisis une équipe avant d’enregistrer."); return; }
-    if (!editorReady || loading) { flash("Le montage n’est pas encore chargé. Réessaie dans un instant."); return; }
+    if (!editorReady || loading || !draftIsReady) { flash("Le montage n’est pas encore chargé. Réessaie dans un instant."); return; }
+    if (recoveryDraft) { flash("Choisis d’abord la version du montage à conserver."); return; }
     const snapshot = enforceTimelineSequence(items);
     const fingerprint = draftFingerprint(snapshot, title, coachNote, assignedPlayerId);
     if (montageId && fingerprint === savedFingerprintRef.current) { flash("Toutes les modifications sont déjà enregistrées."); return; }
@@ -1235,6 +1297,7 @@ export default function MontageStudio({
       // Playlist sources remain available after saving or deleting film segments.
       montageVersionRef.current = result.updated_at;
       savedFingerprintRef.current = fingerprint;
+      if (draftScope?.key) void discardMontageDraft(draftScope.key, fingerprint).catch(() => {});
       failedFingerprintRef.current = "";
       loadedKeyRef.current = `${teamId}:${result.id}`;
       setMontageId(result.id);
@@ -1291,14 +1354,14 @@ export default function MontageStudio({
   }, [redoEdit, undoEdit]);
 
   useEffect(() => {
-    if (!hydratedRef.current || !teamId || !editorReady || saving) return;
+    if (!hydratedRef.current || !teamId || !editorReady || !draftIsReady || recoveryDraft || saving) return;
     const fingerprint = draftFingerprint(items, title, coachNote, assignedPlayerId);
     if (fingerprint === savedFingerprintRef.current || fingerprint === failedFingerprintRef.current) return;
     const timer=window.setTimeout(()=>{ void saveLatestRef.current(); }, 900);
     return()=>window.clearTimeout(timer);
     // autosave volontairement déclenché par l'état éditable du projet
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [items, title, coachNote, assignedPlayerId, teamId, editorReady, saving]);
+  }, [items, title, coachNote, assignedPlayerId, teamId, editorReady, draftIsReady, recoveryDraft, saving]);
 
   const renderMontage = async () => {
     if (!montageId) {
@@ -2071,7 +2134,7 @@ export default function MontageStudio({
         <div className="mp-project-name">
           <input value={title} onChange={(e) => setTitle(e.target.value)} aria-label="Titre du montage" />
           <span className={`mp-save-pill ${saveState}`}>
-            {saveState === "saving" ? "Sauvegarde…" : saveState === "error" ? "Non enregistré" : saveState === "saved" ? "Sauvegardé" : montageId ? "Modifications en cours" : "Non enregistré"}
+            {saveState === "saving" ? "Sauvegarde…" : saveState === "error" ? (currentFingerprint === localSavedFingerprint ? "Copie locale · synchronisation à reprendre" : "Non enregistré") : saveState === "saved" ? "Sauvegardé" : montageId ? "Modifications en cours" : "Non enregistré"}
           </span>
         </div>
 
@@ -2085,6 +2148,7 @@ export default function MontageStudio({
         </div>
       </header>
 
+      {recoveryDraft && draftIsReady && <div role="status" style={{padding:14,background:'#fff4dc',color:'#603d0f'}}>Une version non synchronisée est disponible sur cet appareil. <button onClick={restoreDraft}>Restaurer le montage local</button> <button onClick={() => { if (draftScope?.key) void discardMontageDraft(draftScope.key).then(() => setRecoveryDraft(null)).catch(() => flash('La copie locale n’a pas pu être écartée.')); else setRecoveryDraft(null); }}>Garder la version en ligne</button></div>}
       {transferError && <div role="alert" style={{ padding: 12, background: "#fff0f0", color: "#941b32" }}>Transfert Montage : {transferError} <button onClick={() => { receiptTokensRef.current.clear(); window.dispatchEvent(new Event(MONTAGE_INCOMING_EVENT)); }}>Réessayer</button></div>}
       <main className="mp-grid">
         <nav className="mp-workspace-nav" aria-label="Organisation du montage">

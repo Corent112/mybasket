@@ -67,7 +67,9 @@ function normalize(raw: any): AiExerciseImport {
   const players = Array.isArray(raw?.diagram?.players)
     ? raw.diagram.players.slice(0, 20).map((p: any, i: number) => ({
         key: str(p?.key, 30) || `p${i + 1}`,
-        label: str(p?.label, 8) || String(i + 1),
+        label: str(p?.label, 8) || "?",
+        labelConfident: Boolean(str(p?.label, 8)) && str(p?.label, 8) !== "?",
+        confidence: confidence(p?.confidence ?? raw?.confidence?.diagram),
         team: p?.team === "def" ? "def" : "att",
         x: coord(p?.x),
         y: coordY(p?.y),
@@ -96,6 +98,10 @@ function normalize(raw: any): AiExerciseImport {
         from: a?.from ? { x: coord(a.from.x), y: coordY(a.from.y) } : undefined,
         to: { x: coord(a?.to?.x), y: coordY(a?.to?.y) },
         order: num(a?.order, 100) ?? i + 1,
+        points: Array.isArray(a?.points) ? a.points.slice(0, 16).filter((p: any) => Number.isFinite(Number(p?.x)) && Number.isFinite(Number(p?.y))).map((p: any) => ({x:coord(p.x),y:coordY(p.y)})) : undefined,
+        confidence: confidence(a?.confidence ?? raw?.confidence?.diagram),
+        source: "Analyse IA",
+
       }))
     : [];
 
@@ -191,6 +197,12 @@ SCHÉMA :
 - Pour dribble/cut/screen, indique fromPlayer et la destination to.
 - Pour shoot, indique fromPlayer et une destination approximative vers le panier.
 - N'invente pas une trajectoire invisible : ajoute plutôt un warning.
+- Commence par les coins et les marquages du terrain, puis identifie TOUS les joueurs, même placés dehors pour une remise en jeu. Un chiffre illisible reste « ? ».
+- Compte toutes les pointes de flèche et barres terminales. Chaque barre termine une action écran ; une flèche après cette barre correspond à une NOUVELLE action du même joueur. Ne fusionne jamais écran puis déplacement.
+- Les zigzags sont du dribble. Les pointillés sont des passes. Une ligne passant près d'un joueur ne lui appartient pas nécessairement : suis son origine et sa terminaison.
+- Conserve tous les déplacements même si plusieurs choix de passe existent. Les choix de passe ne suppriment aucun déplacement.
+- Conserve les courbes avec quelques points géométriques, sans recopier chaque oscillation du zigzag. N'ajoute aucun coude absent du dessin.
+- Recompte tes actions avant de répondre et signale les traits dont l'origine reste incertaine. Fournis confidence (0..1) par joueur et par action ; ne masque pas les incertitudes.
 
 JSON ATTENDU :
 {

@@ -89,6 +89,7 @@ export async function POST(request: Request) {
         .from("ai_conversations")
         .select("id")
         .eq("id", conversationId)
+        .eq("user_id", actor.userId)
         .maybeSingle();
       if (!existing) conversationId = null;
     }

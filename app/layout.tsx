@@ -3,6 +3,8 @@ import { Roboto, Alfa_Slab_One } from "next/font/google";
 
 import "./globals.css";
 
+import MobileAppSupport from "@/components/assistant/MobileAppSupport";
+import LocalVideoBridge from "@/components/video/LocalVideoBridge";
 import Header from "@/components/Header";
 import Footer from "@/components/Footer";
 import LegacyBusinessStateMigration from "@/components/LegacyBusinessStateMigration";
@@ -26,6 +28,7 @@ export const metadata: Metadata = {
   title: "MyBasket",
   icons: { apple: "/app-icons/mybasket-180.png" },
   description: "L'application des coachs de basket",
+  appleWebApp: { capable: true, statusBarStyle: "default", title: "MyBasket" },
 };
 
 export const viewport: Viewport = {
@@ -46,6 +49,8 @@ export default function RootLayout({
         <EmptyRangesPolyfill />
         <UnifiedBackofficeSkin />
         <PublicChromeRouteGuard />
+        <MobileAppSupport />
+        <LocalVideoBridge />
         <div className="app-shell">
           <Header />
 

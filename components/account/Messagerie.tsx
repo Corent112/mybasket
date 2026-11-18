@@ -1,10 +1,11 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import StartTeamConversation from "@/components/messaging/StartTeamConversation";
 import { addReply, deleteMessage, getMessages, markAsRead, TYPE_LABEL, type MbMessage } from "@/lib/messages";
 
 type PlatformConversation = {
-  id: string; conversation_type: string; subject: string; initial_message: string;
+  id: string; participant_name?: string; sender_user_id?: string; conversation_type: string; subject: string; initial_message: string;
   sender_name: string | null; sender_email: string | null; reference_id: string | null;
   created_at: string; platform_conversation_replies?: Array<{ id:string; sender_user_id:string; message:string; created_at:string }>;
 };
@@ -16,6 +17,9 @@ export default function Messagerie() {
   const [platform, setPlatform] = useState<PlatformConversation[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [reply, setReply] = useState("");
+  const [viewerId, setViewerId] = useState("");
+  const [error, setError] = useState("");
+  const [sending, setSending] = useState(false);
 
   async function reload() {
     const localList = getMessages();
@@ -23,14 +27,23 @@ export default function Messagerie() {
     try {
       const res = await fetch("/api/messages/platform", { cache:"no-store" });
       const json = await res.json();
+      if (!res.ok) throw new Error(json.error || "Chargement impossible");
+      setViewerId(json.userId || "");
+      setError("");
       const remote = Array.isArray(json.conversations) ? json.conversations : [];
       setPlatform(remote);
-      if (!selectedId) setSelectedId(remote[0] ? `p:${remote[0].id}` : localList[0] ? `l:${localList[0].id}` : null);
-    } catch {
-      if (!selectedId && localList[0]) setSelectedId(`l:${localList[0].id}`);
+      setSelectedId(current => current || (remote[0] ? `p:${remote[0].id}` : localList[0] ? `l:${localList[0].id}` : null));
+    } catch (error) {
+      setError(error instanceof Error ? error.message : "Messages indisponibles");
+      setSelectedId(current => current || (localList[0] ? `l:${localList[0].id}` : null));
     }
   }
-  useEffect(() => { reload(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, []);
+  useEffect(() => {
+    void reload();
+    const timer = window.setInterval(() => { if (document.visibilityState === 'visible') void reload(); }, 8000);
+    return () => window.clearInterval(timer);
+    /* eslint-disable-next-line react-hooks/exhaustive-deps */
+  }, []);
 
   const messages = useMemo<Unified[]>(() => [
     ...platform.map((p) => ({ source:"platform", platform:p } as Unified)),
@@ -39,11 +52,16 @@ export default function Messagerie() {
   const selected = messages.find((m) => selectedId === (m.source === "platform" ? `p:${m.platform.id}` : `l:${m.local.id}`)) || null;
 
   async function sendReply() {
-    if (!selected || !reply.trim()) return;
+    if (!selected || !reply.trim() || sending) return;
     if (selected.source === "platform") {
-      const res = await fetch("/api/messages/platform", { method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify({ conversationId:selected.platform.id, message:reply.trim() }) });
-      if (!res.ok) { const j=await res.json().catch(()=>({})); alert(j.error || "Réponse non envoyée"); return; }
-      setReply(""); await reload(); return;
+      setSending(true); setError("");
+      try {
+        const res = await fetch("/api/messages/platform", { method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify({ conversationId:selected.platform.id, message:reply.trim() }) });
+        const data = await res.json(); if (!res.ok) throw new Error(data.error || "Message non envoyé");
+        setReply(""); await reload();
+      } catch (error) { setError(error instanceof Error ? error.message : "Message non envoyé"); }
+      finally { setSending(false); }
+      return;
     }
     addReply(selected.local.id, reply.trim()); setReply(""); setLocal(getMessages());
   }
@@ -56,14 +74,14 @@ export default function Messagerie() {
 
   function fmt(iso:string){ return new Date(iso).toLocaleString("fr-FR",{day:"2-digit",month:"2-digit",year:"numeric",hour:"2-digit",minute:"2-digit"}); }
 
-  const sender = selected?.source === "platform" ? selected.platform.sender_name || "Utilisateur" : selected?.source === "local" ? selected.local.expediteurNom || "Utilisateur" : "";
+  const sender = selected?.source === "platform" ? selected.platform.participant_name || selected.platform.sender_name || "Utilisateur" : selected?.source === "local" ? selected.local.expediteurNom || "Utilisateur" : "";
   const email = selected?.source === "platform" ? selected.platform.sender_email : selected?.source === "local" ? selected.local.expediteurEmail : null;
   const subject = selected?.source === "platform" ? selected.platform.subject : selected?.source === "local" ? selected.local.annonceTitre || selected.local.sujet : "";
 
-  return <div className="msg-page"><style>{CSS}</style><h1>Messagerie</h1><div className="msg-box">
+  return <div className="msg-page"><style>{CSS}</style><h1>Messagerie</h1><StartTeamConversation onCreated={id=>{setSelectedId(`p:${id}`);void reload();}} />{error&&<p role="alert">{error}</p>}<div className="msg-box">
     <aside className="msg-left">{messages.length===0?<div className="msg-empty-left">Aucun message.</div>:messages.map((m)=>{
       const id=m.source==="platform"?`p:${m.platform.id}`:`l:${m.local.id}`;
-      const name=m.source==="platform"?m.platform.sender_name||"Utilisateur":m.local.expediteurNom||"Utilisateur";
+      const name=m.source==="platform"?m.platform.participant_name||m.platform.sender_name||"Utilisateur":m.local.expediteurNom||"Utilisateur";
       const sub=m.source==="platform"?m.platform.subject:m.local.annonceTitre||m.local.sujet;
       const body=m.source==="platform"?m.platform.initial_message:m.local.message;
       return <button key={id} className={`msg-preview ${selectedId===id?"active":""}`} onClick={()=>choose(m)}><strong>{name}</strong><span className="msg-preview-sub">📋 {sub}</span><p>{body}</p></button>;
@@ -71,9 +89,9 @@ export default function Messagerie() {
     <section className="msg-right">{!selected?<div className="msg-empty-main">Sélectionne une conversation.</div>:<>
       <div className="msg-head"><div><h2>{sender}</h2><p>📋 {subject}</p><p>✉️ {email||"Email non renseigné"}</p><span className="msg-type">{selected.source==="platform"?selected.platform.conversation_type.toUpperCase():TYPE_LABEL[selected.local.type]}</span></div>
       <div className="msg-head-actions">{selected.source==="platform"&&selected.platform.reference_id&&selected.platform.conversation_type==="annonce"?<button className="msg-ad-btn" onClick={()=>location.href=`/admin/annonces/${selected.platform.reference_id}`}>👁 Voir l'annonce</button>:null}{selected.source==="local"&&selected.local.annonceId?<button className="msg-ad-btn" onClick={()=>location.href=`/annonces/${selected.local.annonceId}`}>👁 Voir l'annonce</button>:null}</div></div>
-      <div className="msg-thread"><div className="bubble incoming"><p>{selected.source==="platform"?selected.platform.initial_message:selected.local.message}</p><span>{fmt(selected.source==="platform"?selected.platform.created_at:selected.local.date)}</span></div>
-      {selected.source==="platform"?(selected.platform.platform_conversation_replies||[]).map(r=><div className="bubble outgoing" key={r.id}><p>{r.message}</p><span>{fmt(r.created_at)}</span></div>):(selected.local.reponses||[]).map((r,i)=><div className="bubble outgoing" key={i}><p>{r.texte}</p><span>{fmt(r.date)} · Toi</span></div>)}</div>
-      <div className="msg-compose"><textarea value={reply} onChange={e=>setReply(e.target.value)} placeholder="Écris ta réponse..."/><button onClick={sendReply}>📨 Envoyer</button></div>
+      <div className="msg-thread"><div className={`bubble ${selected.source === "platform" && selected.platform.sender_user_id === viewerId ? "outgoing" : "incoming"}`}><p>{selected.source==="platform"?selected.platform.initial_message:selected.local.message}</p><span>{fmt(selected.source==="platform"?selected.platform.created_at:selected.local.date)}</span></div>
+      {selected.source==="platform"?(selected.platform.platform_conversation_replies||[]).map(r=><div className={`bubble ${r.sender_user_id===viewerId?"outgoing":"incoming"}`} key={r.id}><p>{r.message}</p><span>{fmt(r.created_at)}</span></div>):(selected.local.reponses||[]).map((r,i)=><div className="bubble outgoing" key={i}><p>{r.texte}</p><span>{fmt(r.date)} · Toi</span></div>)}</div>
+      <div className="msg-compose"><textarea value={reply} onChange={e=>setReply(e.target.value)} placeholder="Écris ta réponse..."/><button disabled={sending||!reply.trim()} onClick={sendReply}>{sending?"Envoi…":"📨 Envoyer"}</button></div>
     </>}</section>
   </div></div>;
 }
