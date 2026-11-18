@@ -20,6 +20,8 @@
  * en calque sous le dessin pour comparer avec la photo d'origine.
  */
 
+import { Undo2, Redo2, ArrowLeftRight, Spline, Link2, UserRound, Check, Trash2 } from "lucide-react";
+import { useReviewHistory } from "./useReviewHistory";
 import { changeImportedActionKind } from "@/lib/import/action-kind";
 import { hasImportedTurnback, importedCurveHandle, sampleImportedArc } from "@/lib/import/curve-handle";
 import { resolveImportPassChoices } from "@/lib/import/import-refiner";
@@ -235,8 +237,7 @@ export default function ImportReview({
     }));
   }, [result]);
 
-  const [diagrams, setDiagrams] = useState<AiExerciseDiagram[]>(initial);
-  const [current, setCurrent] = useState(Math.min(initialDiagram, Math.max(0, initial.length - 1)));
+  const { diagrams,current,setDiagrams,setCurrent,canUndo,canRedo,undo,redo,beginGesture,endGesture } = useReviewHistory(initial,initialDiagram);
   const [selection, setSelection] = useState<Selection>(null);
   const [stage, setStage] = useState<"players" | "actions">("players");
   const [showUncertain, setShowUncertain] = useState(Boolean(result.referenceFallback));
@@ -257,6 +258,22 @@ export default function ImportReview({
   const [linkStart, setLinkStart] = useState(false);
   const [actionTypeIndex, setActionTypeIndex] = useState<number | null>(null);
   useEffect(() => { setLinkStart(false); }, [current, selection]);
+
+  const travelHistory = (direction: "undo" | "redo") => {
+    endGesture(); traceRef.current=null; setTracePreview([]); setDragging(false); setSelection(null); setLinkStart(false); setActionTypeIndex(null); setAddMode(null); setTraceMode(false); setAnnotationMode(false); setShowUncertain(true);
+    if(direction==="undo")undo();else redo();
+  };
+  const historyShortcuts=useRef({canUndo,canRedo,travelHistory});historyShortcuts.current={canUndo,canRedo,travelHistory};
+  useEffect(()=>{
+    const keydown=(event:KeyboardEvent)=>{
+      const target=event.target as HTMLElement|null;
+      if(!(event.ctrlKey||event.metaKey)||event.altKey||target?.closest('input,textarea,select,[contenteditable="true"],dialog'))return;
+      const redoKey=event.key.toLowerCase()==='y'||(event.key.toLowerCase()==='z'&&event.shiftKey),undoKey=event.key.toLowerCase()==='z'&&!event.shiftKey;
+      const state=historyShortcuts.current;
+      if((redoKey&&state.canRedo)||(undoKey&&state.canUndo)){event.preventDefault();state.travelHistory(redoKey?'redo':'undo')}
+    };
+    window.addEventListener('keydown',keydown);return()=>window.removeEventListener('keydown',keydown);
+  },[]);
 
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const overlayImage = useRef<HTMLImageElement | null>(null);
@@ -643,6 +660,7 @@ export default function ImportReview({
 
     const hit = hitTest(x, y);
     setSelection(hit);
+    if(hit)beginGesture();
     setDragging(Boolean(hit));
     if (hit) event.currentTarget.setPointerCapture(event.pointerId);
   };
@@ -663,11 +681,12 @@ export default function ImportReview({
       return;
     }
     if (!selection) return;
+    if(selection.kind==="action"&&selection.end==="curve"&&selection.pointIndex===undefined)return;
     updateDiagram((item) => {
       if (selection.kind === "player") {
         const players = item.players.map((player, index) =>
           index === selection.index
-            ? { ...player, x: point.x, y: point.y, source: `${player.source ?? ""} · déplacé`.trim() }
+            ? { ...player, x: point.x, y: point.y, source: "position corrigée à la main" }
             : player
         );
         const original = item.players[selection.index];
@@ -724,6 +743,7 @@ export default function ImportReview({
   };
 
   const handlePointerUp = () => {
+    endGesture();
     setDragging(false);
     const points = traceRef.current;
     traceRef.current = null;
@@ -1026,9 +1046,14 @@ export default function ImportReview({
         ) : null}
       </div>
 
+      <div className="import-top-tools"><div className="import-history" role="group" aria-label="Historique des modifications">
+        <button type="button" disabled={!canUndo} aria-label="Annuler la dernière modification" title="Annuler · Ctrl/Cmd + Z" onClick={()=>travelHistory('undo')}><Undo2 size={17}/><span>Annuler</span></button>
+        <button type="button" disabled={!canRedo} aria-label="Rétablir la modification" title="Rétablir · Ctrl/Cmd + Maj + Z" onClick={()=>travelHistory('redo')}><Redo2 size={17}/><span>Rétablir</span></button>
+      </div>
       <div style={styles.row} aria-label="Étapes de vérification">
         <button type="button" style={stage === "players" ? styles.tabActive : styles.tab} onClick={() => checkStage("players")}>1. Joueurs</button>
         <button type="button" style={stage === "actions" ? styles.tabActive : styles.tab} onClick={() => checkStage("actions")}>2. Actions</button>
+      </div>
       </div>
       <p style={styles.hint}>{stage === "players"
         ? "Place les joueurs, puis passe aux actions."
@@ -1071,7 +1096,7 @@ export default function ImportReview({
             }}
             onPointerMove={handlePointerMove}
             onPointerUp={handlePointerUp}
-            onPointerCancel={() => { traceRef.current = null; setTracePreview([]); setDragging(false); }}
+            onPointerCancel={() => { endGesture(); traceRef.current = null; setTracePreview([]); setDragging(false); }}
           />
           {diagram.courtReference ? (
             <label style={styles.slider}>
@@ -1118,6 +1143,7 @@ export default function ImportReview({
                         <input
                           value={selectedPlayer.label}
                           maxLength={4}
+                          onFocus={beginGesture} onBlur={endGesture}
                           onChange={(event) => setPlayerLabel(selection.index, event.target.value)}
                           style={styles.input}
                         />
@@ -1133,31 +1159,33 @@ export default function ImportReview({
                   </>
                 ) : selectedAction ? (
                   <>
-                    <label style={styles.fieldLabel}>Nature de l’action
+                    <label className="import-control" style={styles.fieldLabel}><span>Nature de l’action</span>
                       <select aria-label="Nature de l’action" value={selectedAction.action} style={{...styles.input,width:'100%'}} onChange={event=>setActionKind(selection.index,event.target.value as AiDiagramActionKind)}>{actionChoices.map(choice=><option key={choice.value} value={choice.value}>{choice.label}</option>)}</select>
                     </label>
                     {requiresStartingPlayer(selectedAction) && <p style={styles.hint}>Choisis le joueur au départ.</p>}
+                    <div className="import-edit-tools">
                     {selectedAction.from && !curveHandles(selectedAction).length && (
-                      <button type="button" style={styles.button} onClick={() => {
+                      <button type="button" className="import-tool-tile" onClick={() => {
                         const { from, to } = selectedAction;
                         if (!from) return;
                         const middle = { x: (from.x + to.x) / 2 - (to.y - from.y) * .16, y: (from.y + to.y) / 2 + (to.x - from.x) * .16 };
                         updateDiagram(item => ({ ...item, actions: item.actions.map((action, index) =>
                           index === selection.index ? { ...action, points: [from, middle, to] } : action) }));
                       }}>
-                        Courber le trait
+                        <Spline size={20}/><span>Courber le trait</span>
                       </button>
                     )}
                     {selectedAction.from && selectedAction.action !== "freedraw" && (
-                      <button type="button" style={styles.button} onClick={() => reverseAction(selection.index)}>
-                        Inverser le sens
+                      <button type="button" className="import-tool-tile" onClick={() => reverseAction(selection.index)}>
+                        <ArrowLeftRight size={20}/><span>Inverser le sens</span>
                       </button>
                     )}
+                    </div>
                     {selectedAction.action !== "freedraw" && (
-                      <div style={styles.fieldRow}>
-                        <label style={styles.fieldLabel}>
-                          Joueur au départ
-                          <select value={selectedAction.fromPlayer ?? ""} style={styles.input}
+                      <div className="import-owner-fields">
+                        <label className="import-control" style={styles.fieldLabel}>
+                          <span><UserRound size={15}/> Joueur au départ</span>
+                          <select aria-label="Joueur au départ" value={selectedAction.fromPlayer ?? ""} style={styles.input}
                             onChange={event => setActionPlayer(selection.index, "from", event.target.value)}>
                             <option value="">Point libre</option>
                             {diagram.players.filter(player => player.key !== selectedAction.toPlayer).map(player => (
@@ -1165,18 +1193,17 @@ export default function ImportReview({
                             ))}
                           </select>
                         </label>
-                        <button type="button" aria-pressed={linkStart}
-                          style={linkStart ? styles.buttonPrimary : styles.button}
+                        <button type="button" className="import-tool-tile link-player" aria-pressed={linkStart}
                           onClick={() => {
                             setTraceMode(false); setAddMode(null); setAnnotationMode(false);
                             setLinkStart(active => !active);
                           }}>
-                          {linkStart ? "Clique sur le joueur de départ" : "Lier sur le terrain"}
+                          <Link2 size={20}/><span>{linkStart ? "Clique sur le joueur" : "Choisir sur le terrain"}</span>
                         </button>
                         {selectedAction.action === "pass" && (
-                          <label style={styles.fieldLabel}>
-                            Destinataire
-                            <select value={selectedAction.toPlayer ?? ""} style={styles.input}
+                          <label className="import-control" style={styles.fieldLabel}>
+                            <span><UserRound size={15}/> Récepteur</span>
+                            <select aria-label="Récepteur de la passe" value={selectedAction.toPlayer ?? ""} style={styles.input}
                               onChange={event => setActionPlayer(selection.index, "to", event.target.value)}>
                               <option value="">Point libre</option>
                               {diagram.players.filter(player => player.key !== selectedAction.fromPlayer).map(player => (
@@ -1191,11 +1218,11 @@ export default function ImportReview({
                 ) : (
                   <p style={styles.hint}>Objet — glisse pour déplacer.</p>
                 )}
-                <div style={styles.row}>
-                  <button type="button" style={styles.button} onClick={confirmSelected}>
+                <div className="import-selection-actions">
+                  <button type="button" className="import-confirm" onClick={confirmSelected}><Check size={16}/>
                     {selectedAction && requiresStartingPlayer(selectedAction) ? "Choisir le joueur de départ" : "Confirmer"}
                   </button>
-                  <button type="button" style={styles.buttonDanger} onClick={removeSelected}>
+                  <button type="button" className="import-delete" onClick={removeSelected}><Trash2 size={16}/>
                     Supprimer
                   </button>
                 </div>
@@ -1293,9 +1320,11 @@ export default function ImportReview({
             .map(player => ({ value: player.key, label: player.label || "Sans numéro" }))}
           onClose={() => setActionTypeIndex(null)}
           onChange={(value, receiver) => {
+            beginGesture();
             const line = diagram.actions[actionTypeIndex];
             if (value !== line.action) setActionKind(actionTypeIndex, value as AiDiagramActionKind);
             if (value === "pass" && receiver !== (line.toPlayer ?? "")) setActionPlayer(actionTypeIndex, "to", receiver);
+            endGesture();
             setActionTypeIndex(null);
             if (value !== "freedraw" && !line.fromPlayer) setLinkStart(true);
           }}
@@ -1325,7 +1354,7 @@ export default function ImportReview({
         </button>
         </>}
       </div>
-      <style>{`.import-review{color:#302631}.import-review .import-workspace{display:grid!important;grid-template-columns:minmax(0,1fr) 280px;gap:20px}.import-court{min-width:0;background:#f7f4f6;border-radius:16px;padding:10px}.import-court canvas{width:100%;height:auto;display:block}.import-review section,.import-tools{padding:16px;background:#fff;border:1px solid #e9e0e5;border-radius:14px}.import-tools summary,.import-details summary{font-size:13px;font-weight:700;color:#6b1a2c;cursor:pointer}.import-tools[open] summary{margin-bottom:14px}.import-details{padding:10px 14px;border-radius:10px;background:#f8f5f7}.import-action-list{display:grid;gap:7px}.import-action-list button{display:flex;align-items:center;gap:9px;background:#faf7f9;border:1px solid #eee5eb;border-radius:10px;text-align:left;padding:9px;color:#352b35;cursor:pointer}.import-action-list button[aria-pressed=true]{border-color:#6b1a2c;background:#f5eaf0}.import-action-list b{display:grid;place-items:center;background:#6b1a2c;color:white;border-radius:50%;width:24px;height:24px;font-size:12px}.import-action-list small{margin-left:auto;color:#6b1a2c;font-weight:800}.import-validation{position:sticky;bottom:-1px;background:#fff;z-index:3;padding:16px!important;box-shadow:0 -8px 25px #37202d08;align-items:center;flex-wrap:wrap;border-radius:12px}.import-validation button{min-height:42px}.import-validation button:disabled{opacity:.45;cursor:not-allowed}.import-review button:focus-visible,.import-review select:focus-visible{outline:3px solid #d4a24c;outline-offset:2px}@media(max-width:850px){.import-review .import-workspace{grid-template-columns:1fr}.import-review .import-court{padding:6px}.import-validation{bottom:0}}`}</style>
+      <style>{`.import-top-tools{display:flex;gap:12px;flex-wrap:wrap;align-items:center;justify-content:space-between}.import-history{display:flex;gap:6px;padding:5px;border-radius:13px;background:#f6f2f5;border:1px solid #eee5eb}.import-history button{display:flex;align-items:center;gap:6px;padding:9px 12px;border:0;border-radius:9px;background:white;color:#6b1a2c;font-size:12px;font-weight:750;cursor:pointer}.import-history button:disabled{opacity:.35;cursor:default}.import-control{padding:12px;background:#faf7f9;border:1px solid #ece3e9;border-radius:12px;margin:0!important;min-width:0}.import-control>span{display:flex;gap:6px;align-items:center;font-size:11px;color:#866e7c}.import-control select{width:100%!important;min-height:42px;background:white!important;border:1px solid #e2d4dd!important;color:#4b283a!important;font-weight:750;font-size:14px!important;border-radius:10px!important}.import-edit-tools{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:9px;margin:12px 0}.import-tool-tile{display:flex;align-items:center;justify-content:center;flex-direction:column;gap:9px;min-height:82px;padding:12px 8px;border:1px solid #e3d3dc;border-radius:13px;background:linear-gradient(145deg,#fff,#fbf5f8);color:#6b1a2c;cursor:pointer;font-size:12px;font-weight:750;text-align:center;line-height:1.4}.import-tool-tile:hover{background:#f3e7ee;border-color:#b78c9e}.import-tool-tile[aria-pressed=true]{background:#6b1a2c;color:white;border-color:#6b1a2c}.import-owner-fields{display:grid;gap:10px}.import-owner-fields .link-player{min-height:52px;flex-direction:row}.import-selection-actions{display:flex;gap:8px;margin-top:14px}.import-selection-actions button{display:flex;align-items:center;justify-content:center;gap:6px;flex:1;min-height:42px;border:0;border-radius:10px;font-size:12px;font-weight:750;cursor:pointer}.import-confirm{background:#6b1a2c;color:white}.import-delete{background:#fff0f0;color:#a13747}.import-review{color:#302631}.import-review .import-workspace{display:grid!important;grid-template-columns:minmax(0,1fr) 280px;gap:20px}.import-court{min-width:0;background:#f7f4f6;border-radius:16px;padding:10px}.import-court canvas{width:100%;height:auto;display:block}.import-review section,.import-tools{padding:16px;background:#fff;border:1px solid #e9e0e5;border-radius:14px}.import-tools summary,.import-details summary{font-size:13px;font-weight:700;color:#6b1a2c;cursor:pointer}.import-tools[open] summary{margin-bottom:14px}.import-details{padding:10px 14px;border-radius:10px;background:#f8f5f7}.import-action-list{display:grid;gap:7px}.import-action-list button{display:flex;align-items:center;gap:9px;background:#faf7f9;border:1px solid #eee5eb;border-radius:10px;text-align:left;padding:9px;color:#352b35;cursor:pointer}.import-action-list button[aria-pressed=true]{border-color:#6b1a2c;background:#f5eaf0}.import-action-list b{display:grid;place-items:center;background:#6b1a2c;color:white;border-radius:50%;width:24px;height:24px;font-size:12px}.import-action-list small{margin-left:auto;color:#6b1a2c;font-weight:800}.import-validation{position:sticky;bottom:-1px;background:#fff;z-index:3;padding:16px!important;box-shadow:0 -8px 25px #37202d08;align-items:center;flex-wrap:wrap;border-radius:12px}.import-validation button{min-height:42px}.import-validation button:disabled{opacity:.45;cursor:not-allowed}.import-review button:focus-visible,.import-review select:focus-visible{outline:3px solid #d4a24c;outline-offset:2px}@media(max-width:850px){.import-review .import-workspace{grid-template-columns:1fr}.import-review .import-court{padding:6px}.import-validation{bottom:0}}`}</style>
     </div>
   );
 }

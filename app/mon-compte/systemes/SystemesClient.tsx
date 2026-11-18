@@ -1,4 +1,5 @@
 "use client";
+import { libraryPreviewVideo } from '@/lib/library/video-previews';
 
 import SchemaPreview from '@/components/library/SchemaPreview';
 import { schemaPreviewImages } from '@/lib/library/schema-previews';
@@ -114,8 +115,6 @@ function SystemCard({
   onToggleFavorite: (item: SystemItem) => void;
 }) {
   const previewImages = schemaPreviewImages(item);
-  const previewVideo = item.schemaVideo || item.videos?.[0] || "";
-  const poster = previewImages[0] || "";
 
   const firstTempsFort = item.tempsForts?.[0];
   const detailHref = `/systemes/${item.id}`;
@@ -137,27 +136,7 @@ function SystemCard({
         {isFavorite ? "★" : "☆"}
       </button>
       <Link href={detailHref} className="mb-system-cover">
-        {previewImages.length > 1 ? <SchemaPreview images={previewImages} alt={item.title || "Système"} /> : previewVideo ? (
-          <video
-            className="mb-system-preview-video"
-            src={previewVideo}
-            poster={poster || undefined}
-            muted
-            loop
-            autoPlay
-            playsInline
-            preload="metadata"
-          />
-        ) : poster ? (
-          <img
-            src={poster}
-            alt={item.title || "Système"}
-            loading="lazy"
-            decoding="async"
-          />
-        ) : (
-          <div className="mb-system-placeholder">🏀</div>
-        )}
+        <SchemaPreview images={previewImages} video={libraryPreviewVideo(item)} alt={item.title || "Système"} />
       </Link>
 
       <div className="mb-system-body">

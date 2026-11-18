@@ -11,7 +11,7 @@ export default function manifest(): MetadataRoute.Manifest {
     scope: "/",
     display: "standalone",
     orientation: "any",
-    shortcuts: [{ name: "Messages", url: "/mon-compte?tab=messagerie" }, { name: "Montage", url: "/montages" }, { name: "Coach IA", url: "/assistant" }],
+    shortcuts: [{ name: "Messages", url: "/mon-compte?tab=messagerie" }, { name: "Montage", url: "/montages" }, { name: "Analyse de match IA", url: "/assistant" }],
     background_color: "#fff8ef",
     theme_color: "#6b1a2c",
     icons: [

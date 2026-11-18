@@ -1,4 +1,5 @@
 "use client";
+import { libraryPreviewVideo } from '@/lib/library/video-previews';
 
 import Link from "next/link";
 import SchemaPreview from './SchemaPreview';
@@ -25,7 +26,7 @@ export default function ExerciseCard({ item }: Props) {
 
   return (
     <Link href={`/exercices/${item.id}`} className="exercise-card">
-      <div className="exercise-thumb"><SchemaPreview images={schemas} alt={item.title || 'Exercice'} /></div>
+      <div className="exercise-thumb"><SchemaPreview video={libraryPreviewVideo(item)} images={schemas} alt={item.title || 'Exercice'} /></div>
 
       <div className="exercise-card-body">
         <div className="exercise-card-head">

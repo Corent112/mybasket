@@ -1,4 +1,5 @@
 "use client";
+import { libraryPreviewVideo } from '@/lib/library/video-previews';
 
 import SchemaPreview from '@/components/library/SchemaPreview';
 import { schemaPreviewImages } from '@/lib/library/schema-previews';
@@ -87,7 +88,7 @@ function ExerciseCard({
         {isFavorite ? "★" : "☆"}
       </button>
       <Link href={detailHref} className="mb-exercise-cover">
-        <SchemaPreview images={previewImages} alt={item.title || "Schéma"} />
+        <SchemaPreview video={libraryPreviewVideo(item)} images={previewImages} alt={item.title || "Schéma"} />
       </Link>
 
       <div className="mb-exercise-body">

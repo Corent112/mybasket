@@ -1,0 +1,12 @@
+const assert=require('node:assert/strict'),fs=require('node:fs'),ts=require('typescript');
+require.extensions['.ts']=(mod,file)=>mod._compile(ts.transpileModule(fs.readFileSync(file,'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2020}}).outputText,file);
+const{initialReviewHistory,reviewHistoryReducer:reduce}=require('../lib/import/review-history.ts');
+const diagrams=[{id:'one',players:[{key:'1',x:.2,y:.2}],actions:[{action:'screen'}],objects:[]},{id:'two',players:[],actions:[],objects:[]}];
+let state=initialReviewHistory(diagrams);
+for(let i=0;i<100;i++)state=reduce(state,{type:'edit',group:1,change:rows=>rows.map((r,index)=>index? r:{...r,players:[{...r.players[0],x:.3+i/1000}]})});
+assert.equal(state.past.length,1,'A drag with one hundred moves is one undo');assert.equal(diagrams[0].players[0].x,.2);
+state=reduce(state,{type:'undo'});assert.equal(state.present.diagrams[0].players[0].x,.2);state=reduce(state,{type:'redo'});assert.equal(state.present.diagrams[0].players[0].x,.399);
+state=reduce(state,{type:'phase',index:1});state=reduce(state,{type:'edit',group:null,change:rows=>rows.slice(0,1)});assert.equal(state.present.current,0);state=reduce(state,{type:'undo'});assert.equal(state.present.current,1);assert.equal(state.present.diagrams.length,2);
+state=reduce(state,{type:'edit',group:null,change:rows=>rows.map(r=>({...r,objects:[{kind:'ball'}]}))});assert.equal(state.future.length,0,'Editing after undo invalidates the redo branch');
+for(let i=0;i<80;i++)state=reduce(state,{type:'edit',group:null,change:rows=>rows.map(r=>({...r,test:i}))});assert.equal(state.past.length,50,'History is bounded');
+console.log('Import history: complete document restoration, grouped drag, phase deletion/recovery, redo invalidation and bounded memory passed.');

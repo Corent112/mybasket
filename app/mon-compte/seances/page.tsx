@@ -1,4 +1,5 @@
 "use client";
+import { libraryPreviewVideo } from '@/lib/library/video-previews';
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
@@ -108,7 +109,7 @@ export default function MesSeancesPage() {
         <section className="grid">
           {sessions.map((session) => (
             <article key={session.id} className="card">
-              <Link href={`/seances/${session.id}`} className="session-preview"><SchemaPreview images={session.schemaImages || []} alt={session.title || "Séance"} /></Link>
+              <Link href={`/seances/${session.id}`} className="session-preview"><SchemaPreview video={libraryPreviewVideo(session)} images={session.schemaImages || []} alt={session.title || "Séance"} /></Link>
               <div className="content">
                 <span className="date">{formatDate(session.session_date)}</span>
 
