@@ -1,7 +1,8 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useState } from "react";
+import SchemaPreview from './SchemaPreview';
+import { schemaPreviewImages } from '@/lib/library/schema-previews';
 import type { Exercise } from "@/types/exercise";
 
 const formatDate = (value: string | number | undefined) => {
@@ -20,47 +21,11 @@ interface Props {
 
 export default function ExerciseCard({ item }: Props) {
   const tags = item.tags ?? [];
-  const schemas = item.schemaImages?.length
-    ? item.schemaImages
-    : item.images || [];
-
-  const [current, setCurrent] = useState(0);
-  const [hover, setHover] = useState(false);
-
-  useEffect(() => {
-    if (!hover || schemas.length <= 1) return;
-
-    const interval = window.setInterval(() => {
-      setCurrent((prev) => (prev + 1) % schemas.length);
-    }, 900);
-
-    return () => window.clearInterval(interval);
-  }, [hover, schemas.length]);
+  const schemas = schemaPreviewImages(item);
 
   return (
     <Link href={`/exercices/${item.id}`} className="exercise-card">
-      <div
-        className="exercise-thumb"
-        onMouseEnter={() => setHover(true)}
-        onMouseLeave={() => {
-          setHover(false);
-          setCurrent(0);
-        }}
-      >
-        {schemas.length > 0 ? (
-          <img
-            src={schemas[current]}
-            alt={item.title || "Schéma"}
-            className="exercise-image"
-          />
-        ) : (
-          <div className="exercise-thumb-empty">Aucun schéma</div>
-        )}
-
-        {schemas.length > 0 && (
-          <div className="exercise-photo-badge">📷 {schemas.length}</div>
-        )}
-      </div>
+      <div className="exercise-thumb"><SchemaPreview images={schemas} alt={item.title || 'Exercice'} /></div>
 
       <div className="exercise-card-body">
         <div className="exercise-card-head">

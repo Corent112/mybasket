@@ -1,5 +1,7 @@
 "use client";
 
+import SchemaPreview from '@/components/library/SchemaPreview';
+import { schemaPreviewImages } from '@/lib/library/schema-previews';
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
@@ -111,8 +113,7 @@ function SystemCard({
   isFavorite: boolean;
   onToggleFavorite: (item: SystemItem) => void;
 }) {
-  const thumbnail =
-    item.schemaImages?.[0] || item.images?.[0] || item.schemaImage || "";
+  const previewImages = schemaPreviewImages(item);
 
   const firstTempsFort = item.tempsForts?.[0];
   const detailHref = `/systemes/${item.id}`;
@@ -134,11 +135,7 @@ function SystemCard({
         {isFavorite ? "★" : "☆"}
       </button>
       <Link href={detailHref} className="mb-system-cover">
-        {thumbnail ? (
-          <img src={thumbnail} alt={item.title || "Système"} />
-        ) : (
-          <div className="mb-system-placeholder">🏀</div>
-        )}
+        <SchemaPreview images={previewImages} alt={item.title || "Schéma"} />
       </Link>
 
       <div className="mb-system-body">

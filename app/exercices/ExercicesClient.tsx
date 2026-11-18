@@ -1,5 +1,7 @@
 "use client";
 
+import SchemaPreview from '@/components/library/SchemaPreview';
+import { schemaPreviewImages } from '@/lib/library/schema-previews';
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import type { User } from "@supabase/supabase-js";
@@ -65,11 +67,7 @@ function ExerciseCard({
   isFavorite: boolean;
   onToggleFavorite: (exercise: Exercise) => void;
 }) {
-  const thumbnail =
-    item.diagrams?.[0]?.imageUrl ||
-    item.schemaImages?.[0] ||
-    item.images?.[0] ||
-    "";
+  const previewImages = schemaPreviewImages(item);
 
   const detailHref = isConnected ? `/exercices/${item.id}` : "/abonnements";
 
@@ -89,11 +87,7 @@ function ExerciseCard({
         {isFavorite ? "★" : "☆"}
       </button>
       <Link href={detailHref} className="mb-exercise-cover">
-        {thumbnail ? (
-          <img src={thumbnail} alt={item.title || "Exercice"} />
-        ) : (
-          <div className="mb-exercise-placeholder">🏀</div>
-        )}
+        <SchemaPreview images={previewImages} alt={item.title || "Schéma"} />
       </Link>
 
       <div className="mb-exercise-body">

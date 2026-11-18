@@ -1,5 +1,7 @@
 "use client";
 
+import SchemaPreview from '@/components/library/SchemaPreview';
+import { schemaPreviewImages } from '@/lib/library/schema-previews';
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
@@ -161,11 +163,6 @@ export default function SystemesWorkspace() {
             ) : (
               <div className="sw-grid">
                 {sortedMine.map((system) => {
-                  const thumbnail =
-                    system.schemaImages?.[0] ||
-                    system.images?.[0] ||
-                    system.schemaImage ||
-                    "";
                   const submitted = system.review_status === "submitted";
                   const canPropose =
                     !isCeo &&
@@ -177,11 +174,7 @@ export default function SystemesWorkspace() {
                   return (
                     <article key={system.id} className="sw-card">
                       <Link href={`/systemes/${system.id}`} className="sw-cover">
-                        {thumbnail ? (
-                          <img src={thumbnail} alt={system.title || "Système"} />
-                        ) : (
-                          <span>🏀</span>
-                        )}
+                        <SchemaPreview images={schemaPreviewImages(system)} alt={system.title || "Système"} />
                       </Link>
 
                       <div className="sw-body">
