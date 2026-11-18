@@ -1,0 +1,27 @@
+const assert=require('node:assert/strict'),fs=require('node:fs'),path=require('node:path'),Module=require('node:module'),ts=require('typescript'),vm=require('node:vm'),{createECDH}=require('node:crypto');
+process.env.MESSAGE_PUSH_STORAGE_KEY='test-only-ephemeral-key';
+require.extensions['.ts']=(mod,file)=>mod._compile(ts.transpileModule(fs.readFileSync(file,'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2020,esModuleInterop:true}}).outputText,file);
+const actual=Module._load,webpush=require('web-push'),sent=[];let expired=false;
+Module._load=function(request,parent,main){if(request==='web-push')return{...webpush,sendNotification:async(sub,payload)=>{if(expired)throw{statusCode:410};sent.push({sub,payload:JSON.parse(payload)})}};if(request.startsWith('@/'))request=path.resolve(__dirname,'..',request.slice(2));return actual.call(this,request,parent,main)};
+const push=require('../lib/messaging/push-server.ts'),files=new Map();let exists=false,isPublic=false;
+const bucket={download:async p=>files.has(p)?{data:new Blob([files.get(p)])}:{error:{}},upload:async(p,data,opts)=>{if(!opts.upsert&&files.has(p))return{error:{}};files.set(p,data);return{data:{path:p}}},list:async prefix=>({data:[...files.keys()].filter(p=>p.startsWith(prefix+'/')).map(p=>({name:p.slice(prefix.length+1)})),error:null}),remove:async paths=>{paths.forEach(p=>files.delete(p));return{error:null}}};
+const db={storage:{getBucket:async()=>exists?{data:{public:isPublic}}:{error:{}},createBucket:async(_name,opts)=>{assert.equal(opts.public,false);exists=true;return{data:{}}},from:()=>bucket}};
+const key=createECDH('prime256v1').generateKeys().toString('base64url'),subscription={endpoint:'https://fcm.googleapis.com/fcm/send/test-only',keys:{auth:Buffer.alloc(16,1).toString('base64url'),p256dh:key}};
+(async()=>{
+ assert.equal(push.validPushSubscription(subscription),true);for(const endpoint of ['http://fcm.googleapis.com/test','https://127.0.0.1/test','https://fcm.googleapis.com.evil.test/test','https://user:pass@fcm.googleapis.com/test'])assert.equal(push.validPushSubscription({...subscription,endpoint}),false);
+ const keys=await push.pushKeys(db);assert.deepEqual(await push.pushKeys(db),keys);assert.ok(![...files.values()].some(v=>v.includes(keys.privateKey)),'Private key is encrypted even within the private bucket');
+ await push.registerPush(db,'user1',subscription);assert.equal(await push.pushRegistered(db,'user1',subscription.endpoint),true);
+ await push.registerPush(db,'user2',subscription);assert.equal(await push.pushRegistered(db,'user1',subscription.endpoint),false);assert.equal(await push.pushRegistered(db,'user2',subscription.endpoint),true);
+ await push.sendMessagePush(db,['user1','user2'],{title:'Staff',conversationId:'c'});assert.equal(sent.length,1);assert.equal(sent[0].payload.userId,'user2');assert.equal(sent[0].payload.body,'Nouveau message sur MyBasket');assert.ok(![...files.values()].some(v=>v.includes(subscription.endpoint)));
+ await push.unregisterPush(db,'user1',subscription.endpoint);assert.equal(await push.pushRegistered(db,'user2',subscription.endpoint),true,'Old account cannot remove a new account registration');expired=true;await push.sendMessagePush(db,['user2'],{title:'Staff',conversationId:'c'});assert.equal(await push.pushRegistered(db,'user2',subscription.endpoint),false);
+ isPublic=true;await assert.rejects(push.pushKeys(db),/temporairement/);isPublic=false;
+ const listeners={},notifications=[],navigated=[];const owner='00000000-0000-4000-8000-000000000001',other='00000000-0000-4000-8000-000000000002';
+ const context={URL,Response,indexedDB:require('fake-indexeddb').indexedDB,self:{location:{origin:'https://mybasket.test'},addEventListener:(name,fn)=>listeners[name]=fn,registration:{showNotification:async(title,data)=>notifications.push({title,...data})},clients:{matchAll:async()=>[],openWindow:async url=>navigated.push(url)}}};vm.runInNewContext(fs.readFileSync('public/mybasket-sw.js','utf8'),context);
+ const dispatch=async(type,event)=>{let done;listeners[type]({...event,waitUntil:p=>done=p});await done};
+ await dispatch('message',{source:{url:'https://mybasket.test/application'},data:{type:'mybasket:push-owner',userId:owner}});
+ await dispatch('push',{data:{json:()=>({userId:other,title:'Private'})}});assert.equal(notifications.length,0);
+ await dispatch('push',{data:{json:()=>({userId:owner,title:'Staff',url:'https://evil.test/steal'})}});assert.equal(notifications.length,1);
+ await dispatch('notificationclick',{notification:{close:()=>{},data:notifications[0].data}});assert.equal(navigated[0],'https://mybasket.test/mon-compte?tab=messagerie');
+ await dispatch('message',{source:{url:'https://mybasket.test/application'},data:{type:'mybasket:push-owner',userId:null}});await dispatch('push',{data:{json:()=>({userId:owner,title:'Old account'})}});assert.equal(notifications.length,1);
+ console.log('Push: provider endpoint validation, encrypted stable VAPID keys, device/account rebinding, expired registration cleanup, account-isolated background notifications and safe click URLs passed. No real push sent.');
+})().catch(e=>{console.error(e);process.exitCode=1});

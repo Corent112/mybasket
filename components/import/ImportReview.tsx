@@ -20,6 +20,7 @@
  * en calque sous le dessin pour comparer avec la photo d'origine.
  */
 
+import { changeImportedActionKind } from "@/lib/import/action-kind";
 import { hasImportedTurnback, importedCurveHandle, sampleImportedArc } from "@/lib/import/curve-handle";
 import { resolveImportPassChoices } from "@/lib/import/import-refiner";
 import { reconcileDiagramRosters } from "@/lib/import/diagram-roster";
@@ -125,6 +126,7 @@ function curveHandles(action: AiDiagramAction | undefined) {
 
 function reviewPath(action: AiDiagramAction): AiPoint[] {
   const from = action.from ?? action.to;
+  if (action.action === "dribble" && action.from && (!action.points || action.points.length < 3)) return changeImportedActionKind({ ...action, action:"cut" }, "dribble").points ?? [from, action.to];
   if (action.action === "dribble" || action.action === "freedraw" || hasImportedTurnback(action.points)) {
     return [from, ...(action.points?.slice(1, -1) ?? []), action.to];
   }
@@ -183,9 +185,9 @@ export function reviewItemsOfDiagram(diagram: AiExerciseDiagram | undefined): Re
   diagram.actions.forEach((action, index) => {
     if (!needsReview(action.confidence) && !requiresStartingPlayer(action)) return;
     list.push({
-      label: `Action ${index + 1} · ${action.action}`,
+      label: `Action ${index + 1}`,
       selection: { kind: "action", index, end: "to" },
-      detail: !action.fromPlayer && action.action !== "freedraw" ? "Joueur au départ à choisir" : action.source ?? "Tracé à confirmer",
+      detail: !action.fromPlayer && action.action !== "freedraw" ? "Joueur au départ à choisir" : "À confirmer",
     });
   });
 
@@ -814,17 +816,7 @@ export default function ImportReview({
       ...item,
       actions: item.actions.map((line, i) =>
         i === index
-          ? {
-              ...line,
-              action,
-              toPlayer: action === "pass" ? line.toPlayer : undefined,
-              continuationChoice: action === "pass" ? line.continuationChoice : undefined,
-              points: line.action === "dribble" && action !== "dribble" && line.from
-                ? [line.from, ...(importedCurveHandle(line.points, true)?.point ? [importedCurveHandle(line.points, true)!.point] : []), line.to]
-                : line.points,
-              confidence: action === "freedraw" || line.fromPlayer ? 1 : line.confidence,
-              source: `type corrigé à la main : ${action}`,
-            }
+          ? changeImportedActionKind(line, action)
           : line
       ),
     }));
@@ -917,10 +909,9 @@ export default function ImportReview({
   const doubtful = stage === "players"
     ? reviewItems.filter(item => item.selection?.kind !== "action")
     : reviewItems;
-  const omittedCount = diagrams.reduce((n,item) => n+item.actions.filter(action => needsReview(action.confidence) || requiresStartingPlayer(action)).length,0);
+  const omittedCount = diagrams.reduce((n,item) => n+resolveImportPassChoices(item.actions).filter(action => needsReview(action.confidence) || requiresStartingPlayer(action)).length,0);
   const cleanDiagrams = diagrams.map(item => {
-    const accepted = item.actions.filter(action => !needsReview(action.confidence) && !requiresStartingPlayer(action));
-    return { ...item, actions: resolveImportPassChoices(accepted) };
+    return { ...item, actions: resolveImportPassChoices(item.actions) };
   });
   const passGroups = new Map<string, { action: AiDiagramAction; index: number }[]>();
   diagram?.actions.forEach((action, index) => {
@@ -950,7 +941,7 @@ export default function ImportReview({
   );
   const totalDoubtful = cleanDiagrams.reduce((sum, item) => sum + reviewItemsOfDiagram(item).length, 0);
   const validate = () => {
-    if ((result.referenceFallback || batchMode) && !kept.length) return;
+    if (omittedCount || ((result.referenceFallback || batchMode) && !kept.length)) return;
     onValidate({
       ...result,
       referenceFallback: undefined,
@@ -1010,22 +1001,11 @@ export default function ImportReview({
   ];
 
   return (
-    <div style={styles.wrapper}>
+    <div className="import-review" style={styles.wrapper}>
       <div style={styles.header}>
         <div>
-          <h2 style={styles.title}>{result.referenceFallback && !diagram.players.length && !diagram.actions.length && !diagram.objects.length ? "Reconstitue le schéma sur le calque" : "Vérifie le schéma importé"}</h2>
-          {result.referenceFallback && <p style={styles.hint}>{diagram.landmarkMarkerCount && !diagram.players.length && !diagram.actions.length && !diagram.objects.length
-            ? "Les points ont servi au calage. Ajoute un joueur ou une action si tu veux enregistrer un schéma."
-            : "Le terrain est reconnu. Vérifie les tracés proposés et ajoute les joueurs et les mouvements manquants."}</p>}
-          <p style={styles.subtitle}>
-            {diagram.landmarkMarkerCount ? `Calage sur ${diagram.landmarkMarkerCount} points de repère`
-              : diagram.landmarkAligned ? "Calage sur la raquette et la ligne à trois points" : diagram.rectified
-              ? `Terrain redressé (fiabilité ${Math.round((diagram.rectifyScore ?? 0) * 100)} %)`
-              : "Terrain détecté sans redressement"}
-            {typeof result.importConfidence === "number"
-              ? ` · confiance globale ${Math.round(result.importConfidence * 100)} %`
-              : ""}
-          </p>
+          <h2 style={styles.title}>Vérifie ton schéma</h2>
+          <p style={styles.subtitle}>{diagram.players.length} joueurs · {diagram.actions.length} actions</p>
         </div>
         {diagrams.length > 1 ? (
           <div style={styles.row}>
@@ -1039,7 +1019,7 @@ export default function ImportReview({
                 }}
                 style={index === current ? styles.tabActive : styles.tab}
               >
-                Schéma {index + 1}
+                Phase {index + 1}
               </button>
             ))}
           </div>
@@ -1051,8 +1031,8 @@ export default function ImportReview({
         <button type="button" style={stage === "actions" ? styles.tabActive : styles.tab} onClick={() => checkStage("actions")}>2. Actions</button>
       </div>
       <p style={styles.hint}>{stage === "players"
-        ? "Vérifie la position et le rôle des joueurs. Les actions sont masquées à cette étape."
-        : "Vérifie le sens et le départ des actions. Les tracés incertains restent à part tant que tu ne les confirmes pas."}</p>
+        ? "Place les joueurs, puis passe aux actions."
+        : "Sélectionne un trait pour modifier son action."}</p>
 
       {stage === "actions" && [...passGroups].filter(([, options]) => options.length > 1).map(([group, options]) => (
         <div key={group} style={styles.row} role="group" aria-label="Choix de passe">
@@ -1071,16 +1051,10 @@ export default function ImportReview({
         </div>
       ))}
 
-      {result.warnings?.length ? (
-        <ul style={styles.warnings}>
-          {result.warnings.map((warning, index) => (
-            <li key={index}>{warning}</li>
-          ))}
-        </ul>
-      ) : null}
+      {result.warnings?.length ? <details className="import-details"><summary>Détails de l’analyse</summary><ul style={styles.warnings}>{result.warnings.map((warning,index)=><li key={index}>{warning}</li>)}</ul></details> : null}
 
-      <div style={styles.main}>
-        <div>
+      <div className="import-workspace" style={styles.main}>
+        <div className="import-court">
           <canvas
             ref={canvasRef}
             width={size.w}
@@ -1091,7 +1065,7 @@ export default function ImportReview({
               if (stage !== "actions" || traceMode || addMode || annotationMode || linkStart) return;
               const { x, y } = pointerPosition(event);
               const hit = hitTest(x, y);
-              if (hit?.kind !== "action" || hit.end === "curve" ||
+              if (hit?.kind !== "action" || (hit.end === "curve" && hit.pointIndex !== undefined) ||
                   selection?.kind !== "action" || selection.index !== hit.index) return;
               setActionTypeIndex(hit.index);
             }}
@@ -1101,7 +1075,7 @@ export default function ImportReview({
           />
           {diagram.courtReference ? (
             <label style={styles.slider}>
-              Photo alignée sur le terrain
+              Photo d’origine
               <input
                 type="range"
                 min={0}
@@ -1116,7 +1090,123 @@ export default function ImportReview({
 
         <div style={styles.panel}>
           <section>
-            <h3 style={styles.sectionTitle}>Ajouter</h3>
+            <h3 style={styles.sectionTitle}>{selectedAction ? `Action ${selection!.index + 1}` : selectedPlayer ? `Joueur ${selectedPlayer.label}` : "Sélection"}</h3>
+            {selection ? (
+              <>
+                {selectedPlayer ? (
+                  <>
+                    <p style={styles.hint}>
+                      Ajuste le numéro et le rôle.
+                    </p>
+                    <div style={styles.row}>
+                      {(["attacker", "defender", "unknown"] as AiDetectionType[]).map((type) => (
+                        <button
+                          key={type}
+                          type="button"
+                          style={
+                            (selectedPlayer.type ?? "attacker") === type ? styles.buttonPrimary : styles.button
+                          }
+                          onClick={() => setPlayerType(selection.index, type)}
+                        >
+                          {type === "attacker" ? "Attaquant" : type === "defender" ? "Défenseur" : "Incertain"}
+                        </button>
+                      ))}
+                    </div>
+                    <div style={styles.fieldRow}>
+                      <label style={styles.fieldLabel}>
+                        Numéro
+                        <input
+                          value={selectedPlayer.label}
+                          maxLength={4}
+                          onChange={(event) => setPlayerLabel(selection.index, event.target.value)}
+                          style={styles.input}
+                        />
+                      </label>
+                      <button
+                        type="button"
+                        style={selectedPlayer.hasBall ? styles.buttonPrimary : styles.button}
+                        onClick={() => togglePlayerBall(selection.index)}
+                      >
+                        {selectedPlayer.hasBall ? "🏀 Porteur" : "+ Ballon"}
+                      </button>
+                    </div>
+                  </>
+                ) : selectedAction ? (
+                  <>
+                    <label style={styles.fieldLabel}>Nature de l’action
+                      <select aria-label="Nature de l’action" value={selectedAction.action} style={{...styles.input,width:'100%'}} onChange={event=>setActionKind(selection.index,event.target.value as AiDiagramActionKind)}>{actionChoices.map(choice=><option key={choice.value} value={choice.value}>{choice.label}</option>)}</select>
+                    </label>
+                    {requiresStartingPlayer(selectedAction) && <p style={styles.hint}>Choisis le joueur au départ.</p>}
+                    {selectedAction.from && !curveHandles(selectedAction).length && (
+                      <button type="button" style={styles.button} onClick={() => {
+                        const { from, to } = selectedAction;
+                        if (!from) return;
+                        const middle = { x: (from.x + to.x) / 2 - (to.y - from.y) * .16, y: (from.y + to.y) / 2 + (to.x - from.x) * .16 };
+                        updateDiagram(item => ({ ...item, actions: item.actions.map((action, index) =>
+                          index === selection.index ? { ...action, points: [from, middle, to] } : action) }));
+                      }}>
+                        Courber le trait
+                      </button>
+                    )}
+                    {selectedAction.from && selectedAction.action !== "freedraw" && (
+                      <button type="button" style={styles.button} onClick={() => reverseAction(selection.index)}>
+                        Inverser le sens
+                      </button>
+                    )}
+                    {selectedAction.action !== "freedraw" && (
+                      <div style={styles.fieldRow}>
+                        <label style={styles.fieldLabel}>
+                          Joueur au départ
+                          <select value={selectedAction.fromPlayer ?? ""} style={styles.input}
+                            onChange={event => setActionPlayer(selection.index, "from", event.target.value)}>
+                            <option value="">Point libre</option>
+                            {diagram.players.filter(player => player.key !== selectedAction.toPlayer).map(player => (
+                              <option key={player.key} value={player.key}>{player.label || "Sans numéro"}</option>
+                            ))}
+                          </select>
+                        </label>
+                        <button type="button" aria-pressed={linkStart}
+                          style={linkStart ? styles.buttonPrimary : styles.button}
+                          onClick={() => {
+                            setTraceMode(false); setAddMode(null); setAnnotationMode(false);
+                            setLinkStart(active => !active);
+                          }}>
+                          {linkStart ? "Clique sur le joueur de départ" : "Lier sur le terrain"}
+                        </button>
+                        {selectedAction.action === "pass" && (
+                          <label style={styles.fieldLabel}>
+                            Destinataire
+                            <select value={selectedAction.toPlayer ?? ""} style={styles.input}
+                              onChange={event => setActionPlayer(selection.index, "to", event.target.value)}>
+                              <option value="">Point libre</option>
+                              {diagram.players.filter(player => player.key !== selectedAction.fromPlayer).map(player => (
+                                <option key={player.key} value={player.key}>{player.label || "Sans numéro"}</option>
+                              ))}
+                            </select>
+                          </label>
+                        )}
+                      </div>
+                    )}
+                  </>
+                ) : (
+                  <p style={styles.hint}>Objet — glisse pour déplacer.</p>
+                )}
+                <div style={styles.row}>
+                  <button type="button" style={styles.button} onClick={confirmSelected}>
+                    {selectedAction && requiresStartingPlayer(selectedAction) ? "Choisir le joueur de départ" : "Confirmer"}
+                  </button>
+                  <button type="button" style={styles.buttonDanger} onClick={removeSelected}>
+                    Supprimer
+                  </button>
+                </div>
+              </>
+            ) : (
+              <p style={styles.hint}>Choisis un joueur ou un trait sur le terrain.</p>
+            )}
+          </section>
+
+          {stage === "actions" && <section className="import-action-list"><h3 style={styles.sectionTitle}>Actions détectées</h3>{diagram.actions.map((action,index)=><button key={index} type="button" aria-pressed={selection?.kind==='action'&&selection.index===index} onClick={()=>{setShowUncertain(true);setSelection({kind:'action',index,end:'to'})}}><b>{index+1}</b><span>{actionChoices.find(choice=>choice.value===action.action)?.label||'Tracé'}</span><small>{diagram.players.find(player=>player.key===action.fromPlayer)?.label||'?'}</small></button>)}</section>}
+          <details className="import-tools"><summary>Ajouter un élément</summary>
             <div style={styles.row}>
               <button
                 type="button"
@@ -1171,138 +1261,7 @@ export default function ImportReview({
             {annotationMode && <p style={styles.hint}>Saisis le texte, puis clique sur le terrain pour le placer.</p>}
             {traceMode && <p style={styles.hint}>Suis le tracé de la photo du départ à l’arrivée.</p>}
             {addMode ? <p style={styles.hint}>Clique sur le terrain pour le placer.</p> : null}
-          </section>
-
-          <section>
-            <h3 style={styles.sectionTitle}>Lecture MyBasket</h3>
-            <div style={styles.legend}>
-              <span><b>⋯→</b> Passe</span>
-              <span><b>—→</b> Déplacement</span>
-              <span><b>〰→</b> Dribble</span>
-              <span><b>↗︎ panier</b> Tir</span>
-            </div>
-            <p style={styles.hint}>L’import traduit l’image en objets natifs : rien n’est figé dans une photo.</p>
-          </section>
-
-          <section>
-            <h3 style={styles.sectionTitle}>Élément sélectionné</h3>
-            {selection ? (
-              <>
-                {selectedPlayer ? (
-                  <>
-                    <p style={styles.hint}>
-                      {selectedPlayer.label} — {selectedPlayer.source ?? "détecté"}
-                    </p>
-                    <div style={styles.row}>
-                      {(["attacker", "defender", "unknown"] as AiDetectionType[]).map((type) => (
-                        <button
-                          key={type}
-                          type="button"
-                          style={
-                            (selectedPlayer.type ?? "attacker") === type ? styles.buttonPrimary : styles.button
-                          }
-                          onClick={() => setPlayerType(selection.index, type)}
-                        >
-                          {type === "attacker" ? "Attaquant" : type === "defender" ? "Défenseur" : "Incertain"}
-                        </button>
-                      ))}
-                    </div>
-                    <div style={styles.fieldRow}>
-                      <label style={styles.fieldLabel}>
-                        Numéro
-                        <input
-                          value={selectedPlayer.label}
-                          maxLength={4}
-                          onChange={(event) => setPlayerLabel(selection.index, event.target.value)}
-                          style={styles.input}
-                        />
-                      </label>
-                      <button
-                        type="button"
-                        style={selectedPlayer.hasBall ? styles.buttonPrimary : styles.button}
-                        onClick={() => togglePlayerBall(selection.index)}
-                      >
-                        {selectedPlayer.hasBall ? "🏀 Porteur" : "+ Ballon"}
-                      </button>
-                    </div>
-                  </>
-                ) : selectedAction ? (
-                  <>
-                    <p style={styles.hint}>
-                      Trajectoire détectée : <strong>{selectedAction.action}</strong>. Choisis sa signification MyBasket ;
-                      la géométrie du tracé est conservée.
-                    </p>
-                    {requiresStartingPlayer(selectedAction) && (
-                      <p style={styles.hint}>Choisis le joueur de départ pour importer cette action.</p>
-                    )}
-                    <p style={styles.hint}>Glisse les poignées bleues pour ajuster la courbe sur la photo.</p>
-                    {selectedAction.from && !curveHandles(selectedAction).length && (
-                      <button type="button" style={styles.button} onClick={() => {
-                        const { from, to } = selectedAction;
-                        if (!from) return;
-                        const middle = { x: (from.x + to.x) / 2 - (to.y - from.y) * .16, y: (from.y + to.y) / 2 + (to.x - from.x) * .16 };
-                        updateDiagram(item => ({ ...item, actions: item.actions.map((action, index) =>
-                          index === selection.index ? { ...action, points: [from, middle, to] } : action) }));
-                      }}>
-                        Ajouter une poignée
-                      </button>
-                    )}
-                    {selectedAction.from && selectedAction.action !== "freedraw" && (
-                      <button type="button" style={styles.button} onClick={() => reverseAction(selection.index)}>
-                        Inverser le sens
-                      </button>
-                    )}
-                    {selectedAction.action !== "freedraw" && (
-                      <div style={styles.fieldRow}>
-                        <label style={styles.fieldLabel}>
-                          Joueur au départ
-                          <select value={selectedAction.fromPlayer ?? ""} style={styles.input}
-                            onChange={event => setActionPlayer(selection.index, "from", event.target.value)}>
-                            <option value="">Point libre</option>
-                            {diagram.players.filter(player => player.key !== selectedAction.toPlayer).map(player => (
-                              <option key={player.key} value={player.key}>{player.label || "Sans numéro"}</option>
-                            ))}
-                          </select>
-                        </label>
-                        <button type="button" aria-pressed={linkStart}
-                          style={linkStart ? styles.buttonPrimary : styles.button}
-                          onClick={() => {
-                            setTraceMode(false); setAddMode(null); setAnnotationMode(false);
-                            setLinkStart(active => !active);
-                          }}>
-                          {linkStart ? "Clique sur le joueur de départ" : "Choisir le joueur sur le terrain"}
-                        </button>
-                        {selectedAction.action === "pass" && (
-                          <label style={styles.fieldLabel}>
-                            Destinataire
-                            <select value={selectedAction.toPlayer ?? ""} style={styles.input}
-                              onChange={event => setActionPlayer(selection.index, "to", event.target.value)}>
-                              <option value="">Point libre</option>
-                              {diagram.players.filter(player => player.key !== selectedAction.fromPlayer).map(player => (
-                                <option key={player.key} value={player.key}>{player.label || "Sans numéro"}</option>
-                              ))}
-                            </select>
-                          </label>
-                        )}
-                      </div>
-                    )}
-                  </>
-                ) : (
-                  <p style={styles.hint}>Objet — glisse pour déplacer.</p>
-                )}
-                <div style={styles.row}>
-                  <button type="button" style={styles.button} onClick={confirmSelected}>
-                    {selectedAction && requiresStartingPlayer(selectedAction) ? "Choisir le joueur de départ" : "Confirmer"}
-                  </button>
-                  <button type="button" style={styles.buttonDanger} onClick={removeSelected}>
-                    Supprimer
-                  </button>
-                </div>
-              </>
-            ) : (
-              <p style={styles.hint}>Clique sur un élément pour le déplacer, le corriger ou le supprimer.</p>
-            )}
-          </section>
+          </details>
 
           <section>
             <h3 style={styles.sectionTitle}>
@@ -1319,7 +1278,7 @@ export default function ImportReview({
                 ))}
               </ul>
             ) : (
-              <p style={styles.hint}>Rien à confirmer sur ce schéma.</p>
+              <p style={{...styles.hint,color:"#258149"}}>✓ Tout est vérifié.</p>
             )}
           </section>
         </div>
@@ -1342,7 +1301,7 @@ export default function ImportReview({
           }}
         />
       )}
-      <div style={styles.footer}>
+      <div className="import-validation" style={styles.footer}>
         {batchMode && diagrams.length > 1 && (
           <button type="button" style={styles.buttonGhost} onClick={() => {
             setDiagrams(items => items.filter((_, i) => i !== current));
@@ -1358,14 +1317,15 @@ export default function ImportReview({
         {stage === "players" ? <button type="button" style={styles.buttonPrimary} onClick={() => checkStage("actions")}>
           Vérifier les actions
         </button> : <>
-        {omittedCount > 0 && <span style={styles.hint}>{omittedCount} tracé(s) à confirmer pour les importer.</span>}
-        <button type="button" style={styles.buttonPrimary} disabled={Boolean((result.referenceFallback || batchMode) && !kept.length)} onClick={validate}>
-          {totalDoubtful
-            ? `Valider malgré ${totalDoubtful} élément${totalDoubtful > 1 ? "s" : ""} à confirmer`
+        {omittedCount > 0 && <span style={styles.hint}>{omittedCount} action{omittedCount > 1 ? "s" : ""} à vérifier</span>}
+        <button type="button" style={styles.buttonPrimary} disabled={Boolean(omittedCount || ((result.referenceFallback || batchMode) && !kept.length))} onClick={validate}>
+          {omittedCount ? "Vérifie les actions" : totalDoubtful
+            ? `Importer · ${totalDoubtful} élément${totalDoubtful > 1 ? "s" : ""} à vérifier`
             : validateLabel}
         </button>
         </>}
       </div>
+      <style>{`.import-review{color:#302631}.import-review .import-workspace{display:grid!important;grid-template-columns:minmax(0,1fr) 280px;gap:20px}.import-court{min-width:0;background:#f7f4f6;border-radius:16px;padding:10px}.import-court canvas{width:100%;height:auto;display:block}.import-review section,.import-tools{padding:16px;background:#fff;border:1px solid #e9e0e5;border-radius:14px}.import-tools summary,.import-details summary{font-size:13px;font-weight:700;color:#6b1a2c;cursor:pointer}.import-tools[open] summary{margin-bottom:14px}.import-details{padding:10px 14px;border-radius:10px;background:#f8f5f7}.import-action-list{display:grid;gap:7px}.import-action-list button{display:flex;align-items:center;gap:9px;background:#faf7f9;border:1px solid #eee5eb;border-radius:10px;text-align:left;padding:9px;color:#352b35;cursor:pointer}.import-action-list button[aria-pressed=true]{border-color:#6b1a2c;background:#f5eaf0}.import-action-list b{display:grid;place-items:center;background:#6b1a2c;color:white;border-radius:50%;width:24px;height:24px;font-size:12px}.import-action-list small{margin-left:auto;color:#6b1a2c;font-weight:800}.import-validation{position:sticky;bottom:-1px;background:#fff;z-index:3;padding:16px!important;box-shadow:0 -8px 25px #37202d08;align-items:center;flex-wrap:wrap;border-radius:12px}.import-validation button{min-height:42px}.import-validation button:disabled{opacity:.45;cursor:not-allowed}.import-review button:focus-visible,.import-review select:focus-visible{outline:3px solid #d4a24c;outline-offset:2px}@media(max-width:850px){.import-review .import-workspace{grid-template-columns:1fr}.import-review .import-court{padding:6px}.import-validation{bottom:0}}`}</style>
     </div>
   );
 }
@@ -1381,6 +1341,8 @@ const styles: Record<string, React.CSSProperties> = {
   subtitle: { margin: "4px 0 0", fontSize: 13, color: "#6B6B6B" },
   warnings: { margin: 0, padding: "10px 14px 10px 28px", background: "#FFF7E8", border: "1px solid #F0D9A8", borderRadius: 8, fontSize: 13, color: "#6B4E14" },
   main: { display: "flex", gap: 20, alignItems: "flex-start", flexWrap: "wrap" },
+  tab: {padding:"10px 16px",border:"1px solid #e4dce1",background:"#fff",color:COLORS.bord,borderRadius:10,cursor:"pointer",fontWeight:700},
+  tabActive: {padding:"10px 16px",border:"1px solid "+COLORS.bord,background:COLORS.bord,color:"#fff",borderRadius:10,cursor:"pointer",fontWeight:700},
   canvas: { border: "1px solid #DED8CE", borderRadius: 10, touchAction: "none", maxWidth: "100%", cursor: "crosshair" },
   slider: { display: "flex", alignItems: "center", gap: 10, marginTop: 10, fontSize: 13, color: "#4A4A4A" },
   sliderValue: { minWidth: 44, textAlign: "right" },

@@ -1,13 +1,14 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import PushNotifications from "@/components/messaging/PushNotifications";
 import StartTeamConversation from "@/components/messaging/StartTeamConversation";
-import { addReply, deleteMessage, getMessages, markAsRead, TYPE_LABEL, type MbMessage } from "@/lib/messages";
+import { addReply, getMessages, markAsRead, TYPE_LABEL, type MbMessage } from "@/lib/messages";
 
 type PlatformConversation = {
-  id: string; participant_name?: string; sender_user_id?: string; conversation_type: string; subject: string; initial_message: string;
+  id: string; is_group?: boolean; member_count?:number; participant_name?: string; sender_user_id?: string; conversation_type: string; subject: string; initial_message: string;
   sender_name: string | null; sender_email: string | null; reference_id: string | null;
-  created_at: string; platform_conversation_replies?: Array<{ id:string; sender_user_id:string; message:string; created_at:string }>;
+  created_at: string; platform_conversation_replies?: Array<{ id:string; sender_user_id:string; sender_name?:string; message:string; created_at:string }>;
 };
 
 type Unified = { source:"local"; local:MbMessage } | { source:"platform"; platform:PlatformConversation };
@@ -39,6 +40,7 @@ export default function Messagerie() {
     }
   }
   useEffect(() => {
+    setSelectedId(new URLSearchParams(window.location.search).get("conversation") ? `p:${new URLSearchParams(window.location.search).get("conversation")}` : null);
     void reload();
     const timer = window.setInterval(() => { if (document.visibilityState === 'visible') void reload(); }, 8000);
     return () => window.clearInterval(timer);
@@ -78,7 +80,7 @@ export default function Messagerie() {
   const email = selected?.source === "platform" ? selected.platform.sender_email : selected?.source === "local" ? selected.local.expediteurEmail : null;
   const subject = selected?.source === "platform" ? selected.platform.subject : selected?.source === "local" ? selected.local.annonceTitre || selected.local.sujet : "";
 
-  return <div className="msg-page"><style>{CSS}</style><h1>Messagerie</h1><StartTeamConversation onCreated={id=>{setSelectedId(`p:${id}`);void reload();}} />{error&&<p role="alert">{error}</p>}<div className="msg-box">
+  return <div className="msg-page"><style>{CSS}</style><h1>Messagerie</h1><PushNotifications /><StartTeamConversation onCreated={id=>{setSelectedId(`p:${id}`);void reload();}} />{error&&<p role="alert">{error}</p>}<div className="msg-box">
     <aside className="msg-left">{messages.length===0?<div className="msg-empty-left">Aucun message.</div>:messages.map((m)=>{
       const id=m.source==="platform"?`p:${m.platform.id}`:`l:${m.local.id}`;
       const name=m.source==="platform"?m.platform.participant_name||m.platform.sender_name||"Utilisateur":m.local.expediteurNom||"Utilisateur";
@@ -87,10 +89,10 @@ export default function Messagerie() {
       return <button key={id} className={`msg-preview ${selectedId===id?"active":""}`} onClick={()=>choose(m)}><strong>{name}</strong><span className="msg-preview-sub">📋 {sub}</span><p>{body}</p></button>;
     })}</aside>
     <section className="msg-right">{!selected?<div className="msg-empty-main">Sélectionne une conversation.</div>:<>
-      <div className="msg-head"><div><h2>{sender}</h2><p>📋 {subject}</p><p>✉️ {email||"Email non renseigné"}</p><span className="msg-type">{selected.source==="platform"?selected.platform.conversation_type.toUpperCase():TYPE_LABEL[selected.local.type]}</span></div>
+      <div className="msg-head"><div><h2>{sender}</h2><p>📋 {subject}</p>{selected.source === "platform" && selected.platform.is_group ? <p>{selected.platform.member_count} membres · Conversation partagée</p> : email ? <p>✉️ {email}</p> : null}<span className="msg-type">{selected.source==="platform"?selected.platform.is_group?"GROUPE":selected.platform.conversation_type.toUpperCase():TYPE_LABEL[selected.local.type]}</span></div>
       <div className="msg-head-actions">{selected.source==="platform"&&selected.platform.reference_id&&selected.platform.conversation_type==="annonce"?<button className="msg-ad-btn" onClick={()=>location.href=`/admin/annonces/${selected.platform.reference_id}`}>👁 Voir l'annonce</button>:null}{selected.source==="local"&&selected.local.annonceId?<button className="msg-ad-btn" onClick={()=>location.href=`/annonces/${selected.local.annonceId}`}>👁 Voir l'annonce</button>:null}</div></div>
       <div className="msg-thread"><div className={`bubble ${selected.source === "platform" && selected.platform.sender_user_id === viewerId ? "outgoing" : "incoming"}`}><p>{selected.source==="platform"?selected.platform.initial_message:selected.local.message}</p><span>{fmt(selected.source==="platform"?selected.platform.created_at:selected.local.date)}</span></div>
-      {selected.source==="platform"?(selected.platform.platform_conversation_replies||[]).map(r=><div className={`bubble ${r.sender_user_id===viewerId?"outgoing":"incoming"}`} key={r.id}><p>{r.message}</p><span>{fmt(r.created_at)}</span></div>):(selected.local.reponses||[]).map((r,i)=><div className="bubble outgoing" key={i}><p>{r.texte}</p><span>{fmt(r.date)} · Toi</span></div>)}</div>
+      {selected.source==="platform"?(selected.platform.platform_conversation_replies||[]).map(r=><div className={`bubble ${r.sender_user_id===viewerId?"outgoing":"incoming"}`} key={r.id}>{selected.platform.is_group&&r.sender_user_id!==viewerId&&<strong className="bubble-author">{r.sender_name}</strong>}<p>{r.message}</p><span>{fmt(r.created_at)}</span></div>):(selected.local.reponses||[]).map((r,i)=><div className="bubble outgoing" key={i}><p>{r.texte}</p><span>{fmt(r.date)} · Toi</span></div>)}</div>
       <div className="msg-compose"><textarea value={reply} onChange={e=>setReply(e.target.value)} placeholder="Écris ta réponse..."/><button disabled={sending||!reply.trim()} onClick={sendReply}>{sending?"Envoi…":"📨 Envoyer"}</button></div>
     </>}</section>
   </div></div>;
@@ -272,7 +274,7 @@ const CSS = `
   box-shadow:0 2px 10px rgba(0,0,0,.08);
 }
 
-.bubble p{
+.bubble-author{display:block;margin-bottom:6px;color:#6b1a2c;font-size:12px}.bubble p{
   margin:0 0 .5rem;
   line-height:1.45;
   font-size:1rem;
