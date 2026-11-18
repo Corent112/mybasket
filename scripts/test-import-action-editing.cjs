@@ -2,6 +2,10 @@ const assert=require('node:assert/strict'),fs=require('node:fs'),path=require('n
 const{JSDOM}=require('jsdom'),dom=new JSDOM('<div id="root"></div>',{url:'https://mybasket.test'});
 for(const key of ['window','document','HTMLElement','HTMLCanvasElement','HTMLDialogElement','Event','MouseEvent','Image'])global[key]=dom.window[key];
 global.IS_REACT_ACT_ENVIRONMENT=true;
+let resizeViewport,viewportWidth=600,viewportHeight=280;
+const nativeRect=HTMLElement.prototype.getBoundingClientRect;
+HTMLElement.prototype.getBoundingClientRect=function(){return this.classList.contains('import-court-viewport')?{width:viewportWidth,height:viewportHeight,left:0,top:0}:nativeRect.call(this)};
+global.ResizeObserver=class{constructor(callback){resizeViewport=callback}observe(){resizeViewport()}disconnect(){}};
 HTMLCanvasElement.prototype.getContext=()=>new Proxy({},{get:(_o,key)=>key==='measureText'?()=>({width:10}):()=>{}});HTMLCanvasElement.prototype.setPointerCapture=()=>{};
 HTMLDialogElement.prototype.showModal=function(){this.setAttribute('open','')};HTMLDialogElement.prototype.close=function(){this.removeAttribute('open')};
 const actual=Module._load;Module._load=function(request,parent,main){if(request.startsWith('@/'))request=path.resolve(__dirname,'..',request.slice(2));return actual.call(this,request,parent,main)};
@@ -15,6 +19,8 @@ const button=text=>[...document.querySelectorAll('button')].find(b=>b.textConten
 const click=async el=>{assert.ok(el);await act(async()=>el.dispatchEvent(new MouseEvent('click',{bubbles:true})))};
 (async()=>{
  await act(async()=>root.render(React.createElement(ImportReview,{result:{warnings:['Technical detail'],diagram:{detected:true,courtType:'half',players:[{key:'p1',label:'1',team:'att',x:.2,y:.3},{key:'p2',label:'2',team:'att',x:.8,y:.1}],actions:[line],objects:[]}},onValidate:r=>saved=r})));
+ const fitted=document.querySelector('canvas');assert.equal(fitted.style.height,'280px');assert.equal(fitted.style.width,'357px');assert.equal(fitted.width,720,'Canvas pixel coordinates are unchanged by fitting');
+ viewportWidth=320;viewportHeight=200;await act(async()=>resizeViewport());assert.equal(fitted.style.width,'255px');assert.equal(fitted.style.height,'200px','Viewport resize scales both dimensions together');
  assert.equal(document.querySelector('.import-details').open,false,'Technical detail starts collapsed');
  await click(button('2. Actions'));const validate=[...document.querySelectorAll('.import-validation button')].at(-1);assert.equal(validate.disabled,true,'Unconfirmed actions cannot disappear during validation');
  await click(document.querySelector('.import-action-list button'));let select=document.querySelector('[aria-label="Nature de l’action"]');assert.equal(select.value,'cut');
