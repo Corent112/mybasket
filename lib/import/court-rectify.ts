@@ -152,6 +152,47 @@ export type Rectified = {
   reasons: string[];
 };
 
+/** The outline of a sketch is measured from its ink, independent of regulation dimensions. */
+export function rectifySketchOutline(source: HTMLCanvasElement) {
+  const map = buildLineMap(source, undefined, "dark");
+  if (!map || map.density > .075) return null;
+  const lines = houghLines(map, 28);
+  const horizontal = lines.filter(line => angleGap(line.theta, Math.PI / 2) < .4).slice(0, 8);
+  const vertical = lines.filter(line => angleGap(line.theta, 0) < .4).slice(0, 12);
+  const support = (a: Point, b: Point) => {
+    let count = 0;
+    for (let i = 0; i <= 48; i++) {
+      const t = i / 48;
+      if (hitsLine(map, a.x + (b.x - a.x) * t, a.y + (b.y - a.y) * t, 4, true)) count++;
+    }
+    return count / 49;
+  };
+  let best: { quad: Point[]; score: number } | undefined;
+  for (let i = 0; i < horizontal.length; i++) for (const bottom of horizontal.slice(i + 1)) {
+    for (let j = 0; j < vertical.length; j++) for (const right of vertical.slice(j + 1)) {
+      const corners = [intersect(horizontal[i], vertical[j]), intersect(horizontal[i], right),
+        intersect(bottom, right), intersect(bottom, vertical[j])];
+      if (!corners.every((p): p is Point => !!p && p.x >= -5 && p.x <= map.w + 5 && p.y >= -5 && p.y <= map.h + 5)) continue;
+      const quad = orderQuad(corners);
+      if (!isConvex(quad)) continue;
+      const area = polygonArea(quad) / (map.w * map.h);
+      if (area < .16) continue;
+      const span = (a: number, b: number) => Math.hypot(quad[a].x - quad[b].x, quad[a].y - quad[b].y);
+      const ratio = (span(0, 1) + span(2, 3)) / (span(1, 2) + span(3, 0));
+      if (ratio < .82 || ratio > 1.85) continue;
+      const sides = quad.map((p, index) => support(p, quad[(index + 1) % 4]));
+      if (sides.some(score => score < .59)) continue;
+      const score = sides.reduce((sum, side) => sum + side, 0) / 4 + area * .25;
+      if (!best || score > best.score) best = { quad, score };
+    }
+  }
+  if (!best) return null;
+  const corners = best.quad.map(p => ({ x: p.x / map.scale + map.offsetX, y: p.y / map.scale + map.offsetY }));
+  const matrix = solveHomography(CANONICAL_CORNERS, corners);
+  const warped = matrix && warp(source, matrix, "half");
+  return warped ? { ...warped, corners } : null;
+}
+
 /* -------------------------------------------------------------------------- */
 /* 1. Carte des lignes                                                        */
 /* -------------------------------------------------------------------------- */
