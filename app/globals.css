@@ -13,8 +13,8 @@
   --gris-text:#6B6B6B;
   --rouge:#E63946;
   --bleu:#1B5E9C;
-  --varsity:var(--font-alfa), Arial, sans-serif;
-  --body:var(--font-roboto), Arial, sans-serif;
+  --varsity:var(--font-alfa, Arial), sans-serif;
+  --body:var(--font-roboto, Arial), sans-serif;
   --maxw:1200px;
 }
 
@@ -3259,8 +3259,8 @@ body {
    modifier la logique fonctionnelle des composants.
    ============================================================ */
 :root {
-  --mb-font-body: var(--font-roboto), Arial, sans-serif;
-  --mb-font-display: var(--font-alfa), Arial, sans-serif;
+  --mb-font-body: var(--font-roboto, Arial), sans-serif;
+  --mb-font-display: var(--font-alfa, Arial), sans-serif;
   --mb-ink: #0F0F12;
   --mb-bordeaux: #6B1A2C;
   --mb-bordeaux-dark: #4A0F1E;

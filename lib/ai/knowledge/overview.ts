@@ -6,16 +6,20 @@ import type { KnowledgeOverview } from "./types";
 async function count(
   supabase: SupabaseClient,
   table: string,
-  filters: Record<string, unknown> = {}
+  filters: Record<string, unknown> = {},
+  unavailable?: Set<string>,
 ): Promise<number> {
   let query = supabase.from(table).select("id", { count: "exact", head: true });
 
   for (const [column, value] of Object.entries(filters)) {
-    query = Array.isArray(value) ? query.in(column, value) : query.eq(column, value);
+    query = Array.isArray(value)
+      ? query.in(column, value)
+      : query.eq(column, value);
   }
 
   const { count: total, error } = await query;
   if (error) {
+    unavailable?.add(table);
     console.error(`[AI][overview] count ${table}`, error.message);
     return 0;
   }
@@ -26,9 +30,12 @@ async function count(
  * État du cerveau IA MyBasket, portée GLOBAL (administration CEO).
  */
 export async function getKnowledgeOverview(
-  supabase: SupabaseClient
+  supabase: SupabaseClient,
 ): Promise<KnowledgeOverview> {
   const scope = { scope: "global" };
+  const unavailable = new Set<string>();
+  const total = (table: string, filters: Record<string, unknown> = {}) =>
+    count(supabase, table, filters, unavailable);
 
   const [
     documents,
@@ -45,19 +52,28 @@ export async function getKnowledgeOverview(
     referenceSystems,
     conversations,
   ] = await Promise.all([
-    count(supabase, "ai_knowledge_sources", scope),
-    count(supabase, "ai_knowledge_sources", { ...scope, status: "indexed" }),
-    count(supabase, "ai_knowledge_sources", { ...scope, status: "failed" }),
-    count(supabase, "ai_knowledge_sources", { ...scope, index_status: "pending" }),
-    count(supabase, "ai_knowledge_sources", { ...scope, index_status: "running" }),
-    count(supabase, "ai_knowledge_chunks", scope),
-    count(supabase, "ai_terms", { ...scope, is_active: true }),
-    count(supabase, "ai_rules", { ...scope, is_active: true }),
-    count(supabase, "ai_rules", { ...scope, is_active: true, priority: "critical" }),
-    count(supabase, "ai_corrections", { ...scope, status: "active" }),
-    count(supabase, "ai_reference_content", { ...scope, content_type: "exercise", is_active: true }),
-    count(supabase, "ai_reference_content", { ...scope, content_type: "system", is_active: true }),
-    count(supabase, "ai_conversations", {}),
+    total("ai_knowledge_sources", scope),
+    total("ai_knowledge_sources", { ...scope, status: "indexed" }),
+    total("ai_knowledge_sources", { ...scope, status: "failed" }),
+    total("ai_knowledge_sources", { ...scope, index_status: "pending" }),
+    total("ai_knowledge_sources", { ...scope, index_status: "running" }),
+    total("ai_knowledge_chunks", scope),
+    total("ai_terms", { ...scope, is_active: true }),
+    total("ai_rules", { ...scope, is_active: true }),
+    total("ai_rules", { ...scope, is_active: true, priority: "critical" }),
+    total("ai_corrections", { ...scope, status: "active" }),
+    total("ai_reference_content", {
+      ...scope,
+      content_type: "exercise",
+      is_active: true,
+    }),
+    total("ai_reference_content", {
+      ...scope,
+      content_type: "system",
+      is_active: true,
+    }),
+    total("ai_conversations", {}),
+    total("ai_messages", {}),
   ]);
 
   const { data: lastIndexed } = await supabase
@@ -72,13 +88,15 @@ export async function getKnowledgeOverview(
   const recent = await getRecentKnowledge(supabase);
 
   const indexationStatus: KnowledgeOverview["indexation"]["status"] =
-    indexRunning > 0
-      ? "running"
-      : documentsFailed > 0
-        ? "error"
-        : indexPending > 0
-          ? "partial"
-          : "idle";
+    unavailable.size > 0
+      ? "error"
+      : indexRunning > 0
+        ? "running"
+        : documentsFailed > 0
+          ? "error"
+          : indexPending > 0
+            ? "partial"
+            : "idle";
 
   return {
     documents,
@@ -102,11 +120,13 @@ export async function getKnowledgeOverview(
     },
     recent,
     openAiConfigured: isOpenAiConfigured(),
+    databaseReady: unavailable.size === 0,
+    unavailableTables: [...unavailable],
   };
 }
 
 async function getRecentKnowledge(
-  supabase: SupabaseClient
+  supabase: SupabaseClient,
 ): Promise<KnowledgeOverview["recent"]> {
   const [sources, terms, rules, corrections] = await Promise.all([
     supabase

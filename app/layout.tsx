@@ -2,6 +2,7 @@ import ConnectionBridge from "@/components/account/ConnectionBridge";
 import KnowledgeChat from "@/components/assistant/KnowledgeChat";
 import PushAccountBridge from "@/components/messaging/PushAccountBridge";
 import type { Metadata, Viewport } from "next";
+import type { CSSProperties } from "react";
 import { Roboto, Alfa_Slab_One } from "next/font/google";
 
 import "./globals.css";
@@ -46,20 +47,29 @@ export default function RootLayout({
   children: React.ReactNode;
 }) {
   return (
-    <html lang="fr" className={`${roboto.variable} ${alfa.variable}`}>
+    <html
+      lang="fr"
+      style={
+        {
+          "--font-roboto": roboto.style.fontFamily,
+          "--font-alfa": alfa.style.fontFamily,
+        } as CSSProperties
+      }
+    >
       <body>
         <LegacyBusinessStateMigration />
         <EmptyRangesPolyfill />
         <UnifiedBackofficeSkin />
         <PublicChromeRouteGuard />
         <MobileAppSupport />
-        <LocalVideoBridge /><PushAccountBridge /><KnowledgeChat /><ConnectionBridge />
+        <LocalVideoBridge />
+        <PushAccountBridge />
+        <KnowledgeChat />
+        <ConnectionBridge />
         <div className="app-shell">
           <Header />
 
-          <main className="app-main">
-            {children}
-          </main>
+          <main className="app-main">{children}</main>
 
           <Footer />
         </div>
