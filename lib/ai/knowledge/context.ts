@@ -38,6 +38,7 @@ export async function buildAIContext(
 ): Promise<AIContext> {
   const {
     query,
+    lexicalOnly = false,
     module,
     scope,
     includeDocuments = true,
@@ -58,10 +59,10 @@ export async function buildAIContext(
     await Promise.all([
       getActiveAIRules(supabase, { module, scope }),
       includeTerms
-        ? getRelevantTerms(supabase, { query, limit: termLimit, scope })
+        ? getRelevantTerms(supabase, { query, limit: termLimit, scope, lexicalOnly })
         : Promise.resolve<TermMatch[]>([]),
       includeDocuments
-        ? searchKnowledge(supabase, { query, limit: documentLimit, scope, categories })
+        ? searchKnowledge(supabase, { query, limit: documentLimit, scope, categories, lexicalOnly })
         : Promise.resolve<SearchKnowledgeResult>({
             chunks: [],
             strategy: "none",

@@ -147,7 +147,8 @@ export async function indexSource(
       };
     }
 
-    const extraction = await extractDocumentText(await file.arrayBuffer(), sourceType);
+    const allowPaidIndexing = process.env.MYBASKET_COACH_MODE === "generative";
+    const extraction = await extractDocumentText(await file.arrayBuffer(), sourceType, { allowVision: allowPaidIndexing });
     if (extraction.warning) warnings.push(extraction.warning);
 
     if (extraction.pages.length === 0) {
@@ -181,7 +182,7 @@ export async function indexSource(
     /* --- 4. Embeddings -------------------------------------------- */
     let vectors: number[][] | null = null;
     try {
-      vectors = await embedTexts(chunks.map((c) => c.content));
+      if (allowPaidIndexing) vectors = await embedTexts(chunks.map((c) => c.content));
     } catch (embedError) {
       console.error("[AI][indexer] embeddings", embedError);
       warnings.push(
@@ -191,7 +192,7 @@ export async function indexSource(
 
     if (!vectors && warnings.every((warning) => !warning.includes("embeddings"))) {
       warnings.push(
-        "OPENAI_API_KEY absente : indexation lexicale uniquement (recherche plein texte)."
+        "Document consultable par mots-clés."
       );
     }
 

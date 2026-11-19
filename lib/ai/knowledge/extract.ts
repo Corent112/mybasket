@@ -37,16 +37,20 @@ export function isIndexableType(sourceType: AiSourceType): boolean {
 
 export async function extractDocumentText(
   buffer: ArrayBuffer,
-  sourceType: AiSourceType
+  sourceType: AiSourceType,
+  options: { allowVision?: boolean } = {},
 ): Promise<ExtractionResult> {
   switch (sourceType) {
     case "pdf":
-      return extractPdf(buffer);
+      return extractPdf(buffer, options.allowVision !== false);
     case "docx":
       return extractDocx(buffer);
     case "pptx":
       return extractPptx(buffer);
     case "image":
+      if (options.allowVision === false) {
+        throw new Error("Le mode documentaire nécessite une version texte de cette image.");
+      }
       return extractVision(buffer,"image");
     case "csv":
       return extractCsv(buffer);
@@ -66,7 +70,7 @@ export async function extractDocumentText(
 
 /* --------------------------------------------------------------------- */
 
-async function extractPdf(buffer: ArrayBuffer): Promise<ExtractionResult> {
+async function extractPdf(buffer: ArrayBuffer, allowVision: boolean): Promise<ExtractionResult> {
   const { extractText, getDocumentProxy } = await import("unpdf");
 
   const pdf = await getDocumentProxy(new Uint8Array(buffer));
@@ -77,7 +81,7 @@ async function extractPdf(buffer: ArrayBuffer): Promise<ExtractionResult> {
   );
 
   const totalCharacters = pages.reduce((sum, p) => sum + p.text.length, 0);
-  if(totalCharacters<40) return extractVision(buffer,"pdf");
+  if (totalCharacters < 40 && allowVision) return extractVision(buffer, "pdf");
 
   return {
     pages: pages.filter((p) => p.text.trim().length > 0),

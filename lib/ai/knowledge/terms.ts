@@ -15,6 +15,7 @@ import type { AiTerm, KnowledgeScopeContext, TermMatch } from "./types";
 
 export type GetRelevantTermsOptions = {
   query: string;
+  lexicalOnly?: boolean;
   limit?: number;
   minSimilarity?: number;
   scope?: Partial<KnowledgeScopeContext>;
@@ -82,7 +83,7 @@ export async function getRelevantTerms(
   }
 
   /* --- 2. Correspondance sémantique -------------------------------- */
-  if (results.size < limit) {
+  if (!options.lexicalOnly && results.size < limit) {
     const embedding = await embedText(options.query).catch(() => null);
     const vector = toPgVector(embedding);
 

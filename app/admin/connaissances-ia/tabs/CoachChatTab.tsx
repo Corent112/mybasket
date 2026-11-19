@@ -8,7 +8,6 @@ import { ConfirmDialog, type ConfirmState, Notice, formatDateTime } from "../ui"
 
 type Props = {
   notify: (message: string, tone?: "info" | "success" | "error") => void;
-  openAiConfigured: boolean;
 };
 
 type ChatMessage = {
@@ -26,7 +25,7 @@ const SUGGESTIONS = [
   "Propose une progression pour travailler le jeu à deux.",
 ];
 
-export default function CoachChatTab({ notify, openAiConfigured }: Props) {
+export default function CoachChatTab({ notify }: Props) {
   const [conversations, setConversations] = useState<AiConversation[]>([]);
   const [conversationId, setConversationId] = useState<string | null>(null);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
@@ -97,11 +96,6 @@ export default function CoachChatTab({ notify, openAiConfigured }: Props) {
   const send = async (text: string) => {
     const message = text.trim();
     if (!message || streaming) return;
-
-    if (!openAiConfigured) {
-      notify("OPENAI_API_KEY absente : Coach IA est désactivé.", "error");
-      return;
-    }
 
     setInput("");
     setDegradedNote(null);
@@ -241,16 +235,6 @@ export default function CoachChatTab({ notify, openAiConfigured }: Props) {
 
   return (
     <div>
-      {!openAiConfigured ? (
-        <Notice tone="error">
-          <span>⚠️</span>
-          <span>
-            <strong>Coach IA est désactivé.</strong> La variable{" "}
-            <code>OPENAI_API_KEY</code> n’est pas définie côté serveur.
-          </span>
-        </Notice>
-      ) : null}
-
       {degradedNote ? (
         <Notice tone="warn">
           <span>ℹ️</span>
@@ -352,7 +336,7 @@ export default function CoachChatTab({ notify, openAiConfigured }: Props) {
                   type="button"
                   className={styles.chip}
                   onClick={() => send(suggestion)}
-                  disabled={streaming || !openAiConfigured}
+                  disabled={streaming}
                 >
                   {suggestion}
                 </button>
@@ -373,7 +357,7 @@ export default function CoachChatTab({ notify, openAiConfigured }: Props) {
               }}
               placeholder="Pose ta question à Coach IA… (Entrée pour envoyer, Maj+Entrée pour un retour à la ligne)"
               rows={2}
-              disabled={streaming || !openAiConfigured}
+              disabled={streaming}
             />
             {streaming ? (
               <button
@@ -388,7 +372,7 @@ export default function CoachChatTab({ notify, openAiConfigured }: Props) {
                 type="button"
                 className={`${styles.btn} ${styles.btnPrimary}`}
                 onClick={() => send(input)}
-                disabled={!input.trim() || !openAiConfigured}
+                disabled={!input.trim()}
               >
                 Envoyer
               </button>
