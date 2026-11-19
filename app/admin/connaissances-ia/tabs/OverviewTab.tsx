@@ -41,6 +41,11 @@ export default function OverviewTab({
 
   return (
     <div>
+      {overview.databaseReady === false && (
+        <Notice tone="error">
+          <span>La base de connaissances IA n’est pas initialisée ou accessible. Termine sa configuration avant d’importer des documents ou d’utiliser l’assistant.</span>
+        </Notice>
+      )}
       {!overview.openAiConfigured ? (
         <Notice tone="error">
           <span>⚠️</span>

@@ -303,4 +303,6 @@ export type KnowledgeOverview = {
     createdAt: string;
   }>;
   openAiConfigured: boolean;
+  databaseReady?: boolean;
+  unavailableTables?: string[];
 };

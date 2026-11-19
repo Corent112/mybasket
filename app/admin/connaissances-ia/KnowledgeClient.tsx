@@ -82,7 +82,9 @@ export default function KnowledgeClient({
   };
 
   const engineState =
-    !overview.openAiConfigured
+    overview.databaseReady === false
+      ? { label: "Initialisation nécessaire", dot: styles.dotError }
+      : !overview.openAiConfigured
       ? { label: "Mode dégradé — clé OpenAI absente", dot: styles.dotError }
       : overview.indexation.status === "error"
         ? { label: "Erreurs d'indexation", dot: styles.dotWarn }

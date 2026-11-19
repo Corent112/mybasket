@@ -89,7 +89,9 @@ export default function KnowledgeChat() {
         const data = await response.json().catch(() => ({}));
         throw new Error(
           response.status === 503
-            ? "L’assistant est temporairement indisponible."
+            ? data.code === "AI_SETUP_REQUIRED"
+              ? "L’assistant doit être initialisé par l’administrateur avant de pouvoir répondre."
+              : "L’assistant est temporairement indisponible."
             : data.error || "La réponse n’a pas pu être chargée.",
         );
       }
@@ -134,7 +136,16 @@ export default function KnowledgeChat() {
       }
       if (!complete) throw new Error("Réponse interrompue. Tu peux réessayer.");
     } catch (e) {
-      if ((e as Error).name !== "AbortError") setError((e as Error).message);
+      if ((e as Error).name !== "AbortError") {
+        setError((e as Error).message);
+        setInput(question);
+        setMessages((old) =>
+          old.filter(
+            (m, i) =>
+              i !== old.length - 1 || m.role !== "assistant" || !!m.text,
+          ),
+        );
+      }
     } finally {
       setBusy(false);
       abort.current = null;
@@ -179,23 +190,6 @@ export default function KnowledgeChat() {
             </button>
           </header>
           <div className={styles.messages} role="log" aria-live="polite">
-            {!messages.length && (
-              <div>
-                <p>Que souhaites-tu comprendre ou préparer ?</p>
-                {[
-                  "Qu’est-ce qu’une possession ?",
-                  "Comment calculer l’eFG % ?",
-                ].map((text) => (
-                  <button
-                    className={styles.suggestion}
-                    key={text}
-                    onClick={() => void send(text)}
-                  >
-                    {text}
-                  </button>
-                ))}
-              </div>
-            )}
             {messages.map((m, i) => (
               <article
                 key={i}

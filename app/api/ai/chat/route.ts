@@ -60,7 +60,7 @@ export async function POST(request: Request) {
     "ai-chat",
     actor.userId,
     AI_CHAT_RATE_LIMIT,
-    AI_CHAT_RATE_WINDOW_MS
+    AI_CHAT_RATE_WINDOW_MS,
   );
   if (limited) return limited;
 
@@ -73,7 +73,7 @@ export async function POST(request: Request) {
   if (!client) {
     return apiError(
       "Coach IA n'est pas configuré : la variable OPENAI_API_KEY est absente côté serveur.",
-      503
+      503,
     );
   }
 
@@ -82,7 +82,9 @@ export async function POST(request: Request) {
 
   try {
     /* --- 1. Conversation ------------------------------------------ */
-    let conversationId = isUuid(body.conversationId) ? body.conversationId! : null;
+    let conversationId = isUuid(body.conversationId)
+      ? body.conversationId!
+      : null;
 
     if (conversationId) {
       const { data: existing } = await actor.supabase
@@ -108,7 +110,21 @@ export async function POST(request: Request) {
         .single();
 
       if (createError || !created) {
-        return apiError(createError?.message || "Création de la conversation impossible.", 500);
+        console.error("[AI][chat] conversation", createError);
+        if (["PGRST205", "42P01"].includes(createError?.code || "")) {
+          return Response.json(
+            {
+              error:
+                "La base de connaissances IA doit être initialisée par l’administrateur.",
+              code: "AI_SETUP_REQUIRED",
+            },
+            { status: 503 },
+          );
+        }
+        return apiError(
+          "La conversation n’a pas pu être créée. Réessaie dans un instant.",
+          500,
+        );
       }
       conversationId = created.id;
     }
@@ -190,16 +206,22 @@ export async function POST(request: Request) {
                 push("delta", { text: delta });
               }
             } else if (event.type === "response.completed") {
-              const usage = (event as { response?: { usage?: Record<string, number> } })
-                .response?.usage;
+              const usage = (
+                event as { response?: { usage?: Record<string, number> } }
+              ).response?.usage;
               promptTokens = usage?.input_tokens ?? 0;
               completionTokens = usage?.output_tokens ?? 0;
             } else if (event.type === "error") {
-              failure = String((event as { message?: string }).message || "Erreur du modèle.");
+              failure = String(
+                (event as { message?: string }).message || "Erreur du modèle.",
+              );
             }
           }
         } catch (error) {
-          failure = error instanceof Error ? error.message : "Erreur pendant la génération.";
+          failure =
+            error instanceof Error
+              ? error.message
+              : "Erreur pendant la génération.";
           console.error("[AI][chat] stream", error);
         }
 
@@ -248,7 +270,10 @@ export async function POST(request: Request) {
           });
 
           if (failure) {
-            push("error", { message: failure });
+            push("error", {
+              message:
+                "L’assistant n’a pas pu terminer sa réponse. Réessaie dans un instant.",
+            });
           } else {
             push("done", {
               messageId: saved?.id ?? null,

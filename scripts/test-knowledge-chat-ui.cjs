@@ -43,6 +43,7 @@ require.extensions[".css"] = (m) => {
 let authCallback;
 let questionBodies = [];
 let fail = false;
+let setupFailure = false;
 const mockDb = {
   auth: {
     getUser: async () => ({ data: { user: { id: "one" } } }),
@@ -62,6 +63,11 @@ global.fetch = async (url, options) => {
   assert.equal(url, "/api/ai/chat");
   const body = JSON.parse(options.body);
   questionBodies.push(body);
+  if (setupFailure)
+    return Response.json(
+      { error: "public.ai_conversations missing", code: "AI_SETUP_REQUIRED" },
+      { status: 503 },
+    );
   if (fail)
     return Response.json(
       { error: "provider private configuration detail" },
@@ -129,11 +135,35 @@ global.fetch = async (url, options) => {
     document.activeElement.getAttribute("aria-label"),
     "Ta question",
   );
-  await click(
-    [...document.querySelectorAll("button")].find((b) =>
-      b.textContent.includes("possession"),
-    ),
+  const ask = async (text) => {
+    await act(async () => {
+      const field = document.querySelector('[aria-label="Ta question"]');
+      Object.getOwnPropertyDescriptor(
+        dom.window.HTMLInputElement.prototype,
+        "value",
+      ).set.call(field, text);
+      field.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    await act(async () => {
+      document
+        .querySelector("form")
+        .dispatchEvent(
+          new Event("submit", { bubbles: true, cancelable: true }),
+        );
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    });
+  };
+  assert.equal(
+    document.querySelector('[role="log"]').textContent.trim(),
+    "",
+    "No suggested questions at startup",
   );
+  assert.equal(
+    questionBodies.length,
+    0,
+    "Opening the chat makes no generation request",
+  );
+  await ask("Qu’est-ce qu’une possession ?");
   assert(document.body.textContent.includes("Lexique MyBasket · Possession"));
   assert(document.body.textContent.includes("Oui, explique-moi"));
   assert.equal(questionBodies[0].module, "coach-chat");
@@ -172,13 +202,22 @@ global.fetch = async (url, options) => {
     "Account switch clears private conversation",
   );
   fail = true;
-  await click(
-    [...document.querySelectorAll("button")].find((b) =>
-      b.textContent.includes("possession"),
-    ),
-  );
+  await ask("Question de test");
   assert(document.body.textContent.includes("temporairement indisponible"));
   assert(!document.body.textContent.includes("private configuration"));
+  assert(
+    !document.body.textContent.includes("Je consulte les ressources"),
+    "Failed reply must not keep a loading bubble",
+  );
+  assert.equal(
+    document.querySelector('[aria-label="Ta question"]').value,
+    "Question de test",
+  );
+  fail = false;
+  setupFailure = true;
+  await ask("Autre question");
+  assert(document.body.textContent.includes("initialisé par l’administrateur"));
+  assert(!document.body.textContent.includes("ai_conversations"));
   await act(async () => root.unmount());
   Module._load = original;
   console.log(
