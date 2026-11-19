@@ -69,13 +69,9 @@ export async function POST(request: Request) {
 
   if (!message) return apiError("Le message est vide.");
 
-  const client = getOpenAI();
-  if (!client) {
-    return apiError(
-      "Coach IA n'est pas configuré : la variable OPENAI_API_KEY est absente côté serveur.",
-      503,
-    );
-  }
+  // The documentary assistant works without a model or embedding API.
+  const client = process.env.MYBASKET_COACH_MODE === "generative" ? getOpenAI() : null;
+  const model = client ? AI_CHAT_MODEL : "mybasket-documents";
 
   const moduleKey = str(body.module, 60) || "coach-chat";
   const writer = getWriterClient(actor.supabase);
@@ -152,8 +148,9 @@ export async function POST(request: Request) {
       scope,
       includeDocuments: true,
       includeTerms: true,
-      includeCorrections: true,
-      includeReferences: boolOr(body.includeReferences, false),
+      lexicalOnly: !client,
+      includeCorrections: !!client,
+      includeReferences: !!client && boolOr(body.includeReferences, false),
     });
 
     /* --- 4. Message utilisateur ----------------------------------- */
@@ -167,7 +164,13 @@ export async function POST(request: Request) {
     const started = Date.now();
     const encoder = new TextEncoder();
     const finalConversationId = conversationId;
-    const citations: AiCitation[] = context.citations;
+    const term = !client ? context.terms?.[0] : undefined;
+    const excerpts = !client && !term ? (context.chunks ?? []).slice(0, 2) : [];
+    const sources = new Set(excerpts.map((excerpt) => excerpt.source_id));
+    const citations: AiCitation[] = client ? context.citations : context.citations.filter(
+      (citation) => term ? citation.kind === "term" && citation.id === term.id
+        : citation.kind === "document" && sources.has(citation.id),
+    );
 
     const stream = new ReadableStream<Uint8Array>({
       async start(controller) {
@@ -188,33 +191,49 @@ export async function POST(request: Request) {
         });
 
         try {
-          const openaiStream = await client.responses.create({
-            model: AI_CHAT_MODEL,
-            instructions: context.systemPrompt,
-            input: [
-              ...previous.map((m) => ({ role: m.role, content: m.content })),
-              { role: "user" as const, content: message },
-            ],
-            stream: true,
-          });
+          if (!client) {
+            if (term) {
+              answer = `${term.term} — ${term.definition}`;
+            } else if (excerpts.length) {
+              answer = excerpts.map((excerpt) => {
+                const passage = excerpt.content.trim();
+                const limit = passage.length > 750 ? passage.lastIndexOf(" ", 750) : -1;
+                const text = passage.length > 750 ? passage.slice(0, limit > 0 ? limit : 750) + "…" : passage;
+                return `${excerpt.source_title}${excerpt.page_from ? ` · p. ${excerpt.page_from}` : ""}\n${text}`;
+              }).join("\n\n");
+            } else {
+              answer = "Je n’ai pas trouvé de définition ni de passage correspondant dans les ressources MyBasket. Essaie avec le nom précis du terme ou quelques mots-clés.";
+            }
+            push("delta", { text: answer });
+          } else {
+            const openaiStream = await client.responses.create({
+              model,
+              instructions: context.systemPrompt,
+              input: [
+                ...previous.map((m) => ({ role: m.role, content: m.content })),
+                { role: "user" as const, content: message },
+              ],
+              stream: true,
+            });
 
-          for await (const event of openaiStream) {
-            if (event.type === "response.output_text.delta") {
-              const delta = (event as { delta?: string }).delta || "";
-              if (delta) {
-                answer += delta;
-                push("delta", { text: delta });
+            for await (const event of openaiStream) {
+              if (event.type === "response.output_text.delta") {
+                const delta = (event as { delta?: string }).delta || "";
+                if (delta) {
+                  answer += delta;
+                  push("delta", { text: delta });
+                }
+              } else if (event.type === "response.completed") {
+                const usage = (
+                  event as { response?: { usage?: Record<string, number> } }
+                ).response?.usage;
+                promptTokens = usage?.input_tokens ?? 0;
+                completionTokens = usage?.output_tokens ?? 0;
+              } else if (event.type === "error") {
+                failure = String(
+                  (event as { message?: string }).message || "Erreur du modèle.",
+                );
               }
-            } else if (event.type === "response.completed") {
-              const usage = (
-                event as { response?: { usage?: Record<string, number> } }
-              ).response?.usage;
-              promptTokens = usage?.input_tokens ?? 0;
-              completionTokens = usage?.output_tokens ?? 0;
-            } else if (event.type === "error") {
-              failure = String(
-                (event as { message?: string }).message || "Erreur du modèle.",
-              );
             }
           }
         } catch (error) {
@@ -235,7 +254,7 @@ export async function POST(request: Request) {
               role: "assistant",
               content: answer,
               citations,
-              model: AI_CHAT_MODEL,
+              model,
               prompt_tokens: promptTokens,
               completion_tokens: completionTokens,
               latency_ms: latency,
@@ -257,7 +276,7 @@ export async function POST(request: Request) {
             clubId: actor.clubIds[0] ?? null,
             module: moduleKey,
             operation: "chat",
-            model: AI_CHAT_MODEL,
+            model,
             promptTokens,
             completionTokens,
             latencyMs: latency,

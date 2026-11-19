@@ -200,7 +200,7 @@ export default function KnowledgeClient({
             ) : null}
 
             {tab === "coach" ? (
-              <CoachChatTab notify={notify} openAiConfigured={overview.openAiConfigured} />
+              <CoachChatTab notify={notify} />
             ) : null}
           </div>
         </section>

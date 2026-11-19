@@ -49,12 +49,7 @@ export default function OverviewTab({
       {!overview.openAiConfigured ? (
         <Notice tone="error">
           <span>⚠️</span>
-          <span>
-            <strong>OPENAI_API_KEY absente.</strong> Le cerveau IA fonctionne en mode
-            dégradé : les documents sont stockés et consultables en recherche lexicale,
-            mais la recherche sémantique et Coach IA sont désactivés. Ajoute la clé dans{" "}
-            <code>.env.local</code> puis relance une réindexation.
-          </span>
+          <span>Coach IA peut répondre à partir du lexique et des documents par recherche de mots-clés.</span>
         </Notice>
       ) : null}
 

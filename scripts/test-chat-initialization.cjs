@@ -19,7 +19,7 @@ Module._load = function(name,parent,main) {
   if(name==='@/lib/ai/knowledge')return {
     resolveActor:async()=>authenticated?{ok:true,actor:{supabase:db,userId:'owner',clubIds:[]}}:{ok:false,error:'Non connecté',status:401},
     getWriterClient:()=>db,buildScopeContext:()=>({}),logAIUsage:async()=>{},
-    buildAIContext:async()=>({systemPrompt:'Basket',citations:[],degraded:false,notes:[]}),
+    buildAIContext:async(_db, options)=>({systemPrompt:'Basket',citations:[],degraded:false,notes:[], terms: options.lexicalOnly ? [{id:'term',term:'Possession',definition:'Contrôle du ballon.'}] : []}),
   };
   if(name==='@/lib/ai/openai')return {getOpenAI:()=>({responses:{create:async()=>{calls++;if(modelFails)throw Error('private provider detail');return (async function*(){yield {type:'response.output_text.delta',delta:'Une possession est une séquence de contrôle du ballon.'};yield {type:'response.completed',response:{usage:{input_tokens:2,output_tokens:3}}}})()}}})};
   if(name==='@/lib/ai/http')return {apiError:(error,status=400)=>Response.json({error},{status}),boolOr:(v,f)=>typeof v==='boolean'?v:f,enforceRateLimit:()=>null,isUuid:()=>false,readJson:r=>r.json(),str:(s,n=5000)=>String(s||'').slice(0,n)};
@@ -37,6 +37,8 @@ const errorLog=console.error;console.error=()=>{};
   missing=false;status=await getKnowledgeOverview(db);assert.equal(status.databaseReady,true);assert.equal(status.documents,0);assert.equal(status.indexation.status,'idle');
   broken=true;r=await chat.POST(req());assert.equal(r.status,500);assert(!(await r.text()).includes('private database'));broken=false;
   r=await chat.POST(req());assert.equal(r.status,200);let stream=await r.text();assert(stream.includes('event: delta'));assert(stream.includes('event: done'));
+  assert(stream.includes('Contrôle du ballon.'));assert.equal(calls,0);
+  process.env.MYBASKET_COACH_MODE = 'generative';
   modelFails=true;r=await chat.POST(req());stream=await r.text();assert(stream.includes('event: error'));assert(!stream.includes('private provider detail'));
   console.error=errorLog;Module._load=original;
   console.log('Chat initialization passed: missing schema versus empty knowledge base, no provider call before readiness, clear errors without database/provider leakage, authenticated SSE success. No real AI call.');

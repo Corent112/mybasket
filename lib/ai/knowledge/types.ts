@@ -243,6 +243,7 @@ export type SearchKnowledgeResult = {
 /* --------------------------------------------------------------------- */
 
 export type BuildAIContextOptions = {
+  lexicalOnly?: boolean;
   /** Requête / intention utilisateur, utilisée pour la récupération. */
   query: string;
   module: AiModule | string;
