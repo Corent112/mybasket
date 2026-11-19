@@ -18,7 +18,7 @@
     "lucide-react": "^1.17.0",
     "mammoth": "^1.12.3",
     "mediabunny": "^1.61.5",
-    "next": "16.4.3",
+    "next": "16.4.6",
     "openai": "^7.23.0",
     "pdf-lib": "^1.17.1",
     "qrcode": "^1.5.4",
@@ -41,7 +41,7 @@
     "@types/react-dom": "^19",
     "@types/web-push": "^3.6.4",
     "eslint": "^9",
-    "eslint-config-next": "16.4.3",
+    "eslint-config-next": "16.4.6",
     "tailwindcss": "^4",
     "typescript": "^5"
   }

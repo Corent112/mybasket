@@ -53,3 +53,7 @@ Tests des tarifs et seuils 2026/2027, poids issus du catalogue, commande avec/sa
 Aucun paiement, email, SMS, push ou appel de génération IA réel n’a été déclenché par les tests. Les clés des fournisseurs et leurs résultats réels restent à vérifier en production. L’accès Vercel à l’équipe corent112-mybasket a été refusé (403) ; une autorisation de cette équipe a été demandée via le lien fourni par Vercel. Les vérifications de déploiement GitHub/Vercel et le build local sont consignés dans la description de la PR.
 
 Build production local validé avec police de substitution locale uniquement (aucune modification des polices de production). TypeScript sans erreur. ESLint des nouveaux composants/routes sans erreur ; trois avertissements sur les images distantes du scouting.
+
+### Correctif avant déploiement
+
+Le contrôle GitHub a détecté deux alertes modérées de cache sur Next.js 16.4.3 (GHSA-mfr8-8qww-v76h et GHSA-vc7v-qv4w-wrv8). Next.js et eslint-config-next passent à 16.4.6 ; le verrou de dépendances est mis à jour. Le contrôle npm audit et le build Vercel sont relancés sur cette version corrigée.
