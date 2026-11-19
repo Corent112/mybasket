@@ -1,6 +1,8 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import CheckoutAddresses, {type CheckoutDelivery} from "@/components/shop/CheckoutAddresses";
+import type {PostalAddress} from "@/lib/shop/shipping";
 import Link from "next/link";
 import { exerciseDrawingGroups, selectedDrawingGroups, type ExerciseDrawingGroup } from "@/lib/exercise-drawing-groups";
 import {downloadSessionPdf} from "@/lib/institutionnel/session-pdf-download";
@@ -358,9 +360,23 @@ const subtotal = useMemo(() => {
   }, 0);
 }, [purchaseItems]);
 
+  const [delivery,setDelivery]=useState<CheckoutDelivery>({shipping:{name:"",line1:"",line2:"",postalCode:"",city:"",country:"FR"},billing:{name:"",line1:"",line2:"",postalCode:"",city:"",country:"FR"},same:true});
+  const [shippingQuote,setShippingQuote]=useState<{cents:number;weightGrams:number;required:boolean;service:string}|null>(null);
+  const [shippingRevision,setShippingRevision]=useState(0);
+  const [shippingError,setShippingError]=useState("");
+  const [shippingLoading,setShippingLoading]=useState(false);
+  const shippingCartKey=JSON.stringify(purchaseItems.map(item=>[item.id,item.quantity]));
+  const hasProducts=productItems.length>0;
+  useEffect(()=>{
+    if(!hasProducts){setShippingQuote(null);setShippingError("");return;}
+    const controller=new AbortController();setShippingQuote(null);setShippingError("");setShippingLoading(true);
+    const timer=setTimeout(()=>{fetch("/api/checkout/shipping",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({country:delivery.shipping.country,postalCode:delivery.shipping.postalCode}),signal:controller.signal}).then(async response=>{const quote=await response.json();if(!response.ok)throw Error(quote.error||"Calcul de livraison indisponible");setShippingQuote(quote)}).catch(error=>{if(error.name!=="AbortError")setShippingError(error.message)}).finally(()=>{if(!controller.signal.aborted)setShippingLoading(false)})},200);
+    return()=>{clearTimeout(timer);controller.abort()};
+  },[hasProducts,shippingCartKey,delivery.shipping.country,delivery.shipping.postalCode,shippingRevision]);
+
   // Les prix de la boutique sont TTC : la TVA est incluse dans le sous-total.
   const tax = subtotal - subtotal / 1.2;
-  const total = subtotal;
+  const total = subtotal + (shippingQuote?.cents||0)/100;
 
   useEffect(() => {
     void loadCart();
@@ -734,8 +750,9 @@ setLoading(false);
   async function createCheckout(provider:"stripe"|"paypal"|"apple_pay"){
     if(checkoutLock.current)return;checkoutLock.current=true;setCheckoutBusy(true);setCheckoutError("");
     try{
-      const response=await fetch("/api/checkout/stripe",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({preferredMethod:provider==="stripe"?"card":provider})});
-      const data=await response.json();if(!response.ok)throw Error(data.error||"Paiement momentanément indisponible.");
+      if(hasProducts&&(!shippingQuote||shippingLoading))throw Error(shippingError||"Renseigne ton adresse pour calculer les frais de livraison.");
+      const response=await fetch("/api/checkout/stripe",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({preferredMethod:provider==="stripe"?"card":provider,shipping:delivery.shipping,billing:delivery.billing,sameAddress:delivery.same,shippingCents:shippingQuote?.cents})});
+      const data=await response.json();if(response.status===409)setShippingRevision(v=>v+1);if(!response.ok)throw Error(data.error||"Paiement momentanément indisponible.");
       const destination=new URL(data.url);if(destination.protocol!=="https:"||destination.hostname!=="checkout.stripe.com")throw Error("Adresse de paiement invalide.");
       window.location.assign(destination.href);
     }catch(error){setCheckoutError(error instanceof Error?error.message:"Paiement momentanément indisponible.");checkoutLock.current=false;setCheckoutBusy(false)}
@@ -2252,6 +2269,7 @@ setLoading(false);
         </div>
       </section>
 
+      {hasProducts&&shippingQuote?.required!==false&&<CheckoutAddresses value={delivery} onChange={setDelivery}/>}
       <section className="summary">
         <div>
           <h2>RÉSUMÉ DE COMMANDE</h2>
@@ -2261,6 +2279,9 @@ setLoading(false);
           <p>
             DONT TVA 20% <strong>{formatPrice(tax)}</strong>
           </p>
+          {hasProducts&&<p>Livraison Colissimo <strong>{shippingLoading ? "Calcul…" : shippingQuote ? formatPrice(shippingQuote.cents/100) : "Adresse à compléter"}</strong></p>}
+          {shippingQuote?.required&&<small>{shippingQuote.weightGrams} g · {shippingQuote.service}</small>}
+          {shippingError&&<p role="status" style={{color:"#8e3248",fontSize:12}}>{shippingError}</p>}
           <div className="total">
             TOTAL TTC <strong>{formatPrice(total)}</strong>
           </div>

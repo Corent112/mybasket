@@ -1,5 +1,6 @@
 "use client";
 
+import TeamMatchAnalysis from "@/components/equipes/TeamMatchAnalysis";
 import { useEffect, useMemo, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
 
@@ -378,6 +379,7 @@ function getAdvanced(stats: TeamStats) {
 export default function StatsEquipeModule() {
   const supabase = createClient();
 
+  const [analysisView,setAnalysisView]=useState(false);
   const [loading, setLoading] = useState(true);
   const [teams, setTeams] = useState<Team[]>([]);
   const [teamId, setTeamId] = useState("");
@@ -636,13 +638,15 @@ export default function StatsEquipeModule() {
         </select>
       </div>
 
-      {loading && <div className="empty">Chargement...</div>}
+      <div className="mode-switch"><button type="button" className={!analysisView?"on":""} onClick={()=>setAnalysisView(false)}>Statistiques</button><button type="button" className={analysisView?"on":""} onClick={()=>setAnalysisView(true)}>Analyse des matchs</button></div>
+      {analysisView&&teamId&&<TeamMatchAnalysis key={teamId} teamId={teamId} teamName={selectedTeam?.name}/>}
+      {loading && !analysisView && <div className="empty">Chargement...</div>}
 
       {!loading && !selectedTeam && (
         <div className="empty">Aucune équipe avec match enregistré.</div>
       )}
 
-      {!loading && selectedTeam && (
+      {!analysisView && !loading && selectedTeam && (
         <>
           <div className="category-switch">
             {([["championship","Championnat"],["friendly","Amical"],["cup","Coupe"],["all","Tous"]] as const).map(([value,label]) => (

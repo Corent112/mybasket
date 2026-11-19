@@ -499,3 +499,5 @@
 .connectionDate { white-space: nowrap; font-variant-numeric: tabular-nums; }
 @media (max-width: 1300px) { .filters { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
 @media (max-width: 900px) { .filters { grid-template-columns: 1fr; } .statsGrid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+
+.directoryTabs{display:flex;gap:10px;flex-wrap:wrap;margin:18px 0}.directoryTabs a{padding:11px 16px;border:1px solid #e1ccd5;border-radius:12px;background:#fff;color:#6b1a2c;text-decoration:none;font-size:13px;font-weight:800}.directoryTabs a[aria-current=page]{background:#6b1a2c;color:#fff}

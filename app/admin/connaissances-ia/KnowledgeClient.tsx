@@ -88,7 +88,9 @@ export default function KnowledgeClient({
         ? { label: "Erreurs d'indexation", dot: styles.dotWarn }
         : overview.indexation.status === "running"
           ? { label: "Indexation en cours", dot: styles.dotWarn }
-          : { label: "Cerveau IA opérationnel", dot: styles.dot };
+          : overview.chunks === 0 && overview.terms === 0
+            ? { label: "En attente de ressources", dot: styles.dotWarn }
+            : { label: "Connaissances disponibles", dot: styles.dot };
 
   const stats: Array<[string, string | number, string, string]> = [
     ["📄", overview.documents, "Documents", `${overview.chunks} passages indexés`],

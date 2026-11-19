@@ -20,6 +20,7 @@ export type DirectorySource = {
   name?: string | null;
   training_programs?: { name?: string | null } | null;
   user_metadata?: Record<string, unknown>;
+  app_metadata?: Record<string, unknown>;
 };
 
 export type DirectoryPerson = {
@@ -67,7 +68,8 @@ export function buildUserDirectory({
   for (const auth of authUsers ?? profiles) {
     const profile = profilesById.get(auth.id);
     const metadata = auth.user_metadata || {};
-    const lastLogin = authUsers ? auth.last_sign_in_at || null : null;
+    const stamps = [auth.last_sign_in_at, auth.app_metadata?.mybasket_last_connected_at].filter((v): v is string => typeof v === "string" && Number.isFinite(Date.parse(v)));
+    const lastLogin = authUsers ? stamps.sort((a,b)=>Date.parse(b)-Date.parse(a))[0] || null : null;
     add({
       id: auth.id, account_id: auth.id,
       email: auth.email || profile?.email || null,

@@ -208,7 +208,7 @@ export default async function AdminUtilisateursPage({ searchParams }: {
   const { supabase, user: currentUser } = await requireAdmin();
   const query = await searchParams;
   const param = (key: string) => typeof query[key] === "string" ? query[key] as string : "";
-  const filters = { q: param("q"), role: param("role") || "all", status: param("status") || "all", category: param("category") || "all" };
+  const filters = { q: param("q"), role: param("role") || "all", status: param("status") || "all", category: param("category") || "subscribers" };
   const adminClient = createAdminClient({ noStore: true });
   const readClient = adminClient || supabase;
   const warnings: string[] = [];
@@ -353,10 +353,11 @@ export default async function AdminUtilisateursPage({ searchParams }: {
         </section>
 
         <p className={styles.directoryNote}>Dernière connexion réelle, heure de Paris. Actualisation automatique chaque minute. Une personne peut être abonnée et inscrite à une formation. Les invités sont les comptes invités ou anonymes et les invitations en cours ; les visiteurs sans compte ni invitation ne sont pas identifiables.</p>
+        <nav className={styles.directoryTabs} aria-label="Répertoires"><Link href="/admin/utilisateurs?category=subscribers" aria-current={filters.category==="subscribers"?"page":undefined}>Utilisateurs abonnés</Link><Link href="/admin/utilisateurs?category=all" aria-current={filters.category==="all"?"page":undefined}>Contacts et prospects</Link><Link href="/admin/utilisateurs?category=training" aria-current={filters.category==="training"?"page":undefined}>Participants aux formations</Link></nav>
         <form method="get" className={styles.filters}>
           <input name="q" defaultValue={filters.q} aria-label="Rechercher une personne" placeholder="Nom, email, club, formation…" />
           <select name="category" defaultValue={filters.category} aria-label="Type de personne">
-            <option value="all">Toutes les personnes</option>
+            <option value="all">Contacts et prospects · toutes les personnes</option>
             <option value="subscribers">Abonnés</option>
             <option value="free">Accès offerts</option>
             <option value="guests">Invités</option>
@@ -388,7 +389,7 @@ export default async function AdminUtilisateursPage({ searchParams }: {
 
         <section className={styles.tableCard}>
           <div className={styles.tableHead}>
-            <h2>Liste des utilisateurs</h2>
+            <h2>{filters.category === "subscribers" ? "Utilisateurs abonnés" : "Contacts et prospects"}</h2>
             <span>{visiblePeople.length} / {profiles.length} personnes · {totalUsers} comptes</span>
           </div>
 
@@ -438,7 +439,7 @@ export default async function AdminUtilisateursPage({ searchParams }: {
 
                       <td>
                         <div className={styles.originBadges}>
-                          {user.account_id && <span className={styles.roleBadge}>{getRoleLabel(user.platform_role)}</span>}
+                          {user.account_id && <span className={styles.roleBadge}>{access.active ? getRoleLabel(user.platform_role) : user.trainings.length ? "Participant" : "Contact"}</span>}
                           {access.active && <span className={styles.planBadge}>{access.source === "free" ? "Accès offert" : "Abonné"}</span>}
                           {user.guest && <span className={styles.originBadge}>Invité</span>}
                           {user.trainings.length > 0 && <span className={styles.originBadge}>Formation institutionnelle</span>}

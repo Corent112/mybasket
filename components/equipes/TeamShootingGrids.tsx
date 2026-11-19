@@ -409,7 +409,7 @@ export default function TeamShootingGrids({
       if(error)throw error;
       const {error:rowError}=await supabase.from(tables.rows).insert(DEFAULT_ROWS.map((name,i)=>({grid_id:g.id,name,sort_order:i,target_attempts:10})));
       if(rowError)throw rowError;
-      await loadGrids(g.id);toast("Grille créée.");
+      await loadGrids(g.id);setShootingView("editor");setSessionPlayers({});setResults({});toast("Nouvelle grille vierge créée.");
     }catch(e){console.error(e);toast("Impossible de créer la grille.")}finally{setSaving(false)}
   }
 
@@ -940,7 +940,7 @@ export default function TeamShootingGrids({
         <>
           <div style={{...card,padding:"11px 12px",display:"grid",gridTemplateColumns:"minmax(220px,420px) minmax(0,1fr) auto",gap:10,alignItems:"end"}}>
             <div className="shooting-tabs" style={{display:"flex",gap:7,flexWrap:"wrap",marginBottom:10,gridColumn:"1 / -1"}}>
-              <button type="button" onClick={()=>setShootingView("editor")} style={{...chip,...(shootingView==="editor"?activeChip:{})}}>✏️ Créer / modifier</button>
+              <button type="button" onClick={createGrid} disabled={saving||!canEdit} style={{...chip,...(shootingView==="editor"?activeChip:{})}}>＋ Nouvelle grille</button>
               <button type="button" onClick={()=>setShootingView("library")} style={{...chip,...(shootingView==="library"?activeChip:{})}}>📚 Grilles de tir créées ({grids.length})</button>
             </div>
             {shootingView==="library"&&(

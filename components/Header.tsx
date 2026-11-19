@@ -211,7 +211,6 @@ export default function Header() {
                   DIRECTION TECHNIQUE
                 </Link>
                 <Link href="/accompagnement/formation">FORMATION</Link>
-                <Link href="/assistant">ANALYSE DE MATCH IA</Link>
                 <Link href="/accompagnement/scouting-video">
                   SCOUTING VIDEO
                 </Link>
@@ -272,7 +271,6 @@ export default function Header() {
             <div className="mobile-subnav">
               <Link href="/accompagnement/direction-technique" onClick={closeMobile}>Direction technique</Link>
               <Link href="/accompagnement/formation" onClick={closeMobile}>Formation</Link>
-              <Link href="/assistant" onClick={closeMobile}>Analyse de match IA</Link>
               <Link href="/accompagnement/scouting-video" onClick={closeMobile}>Scouting vidéo</Link>
             </div>
 

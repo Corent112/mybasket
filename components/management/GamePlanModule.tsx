@@ -90,6 +90,7 @@ type Team = {
   logo?: string;
   players?: Player[];
   teamType?: string;
+  competitionSource?:string;
   kind?: string;
   isScoutTeam?: boolean;
   scout?: boolean;
@@ -113,11 +114,14 @@ type Scouting = {
   montage?: GamePlanMontageItem[];
   scoutTeamId?: string;
   identity?: string;
+  offensiveKeys?: string;
+  defensiveKeys?: string;
+  teamStats?: Record<string,number|null>;
   offense?: string;
   defense?: string;
   depthChart?: Record<string, string[]>;
   importantStats?: Array<{ id: string; metric: string; limit: number }>;
-  playerCards?: Array<{ playerId: string; profile: string; profile2?: string; notes: string }>;
+  playerCards?: Array<{ playerId: string; profile: string; profile2?: string; notes: string; defend?:string }>;
 };
 
 type SystemSection = "offensive" | "scout" | "blob" | "slob" | "end";
@@ -199,6 +203,7 @@ function normalizeTeam(row: any): Team {
     name: String(row?.name ?? row?.nom ?? row?.teamName ?? "Équipe"),
     cat: String(row?.cat ?? row?.category ?? row?.categorie ?? ""),
     logo: row?.logo ?? row?.logo_url ?? row?.club_logo_url ?? "",
+    competitionSource: row?.competitionSource||row?.metadata?.competitionSource,
     teamType: String(row?.teamType ?? row?.team_type ?? row?.type ?? row?.metadata?.teamType ?? ""),
     kind: String(row?.kind ?? row?.metadata?.kind ?? ""),
     isScoutTeam: Boolean(row?.isScoutTeam ?? row?.is_scout_team ?? row?.metadata?.isScoutTeam),
@@ -212,7 +217,7 @@ function normalizeTeam(row: any): Team {
       photo: p?.photo ?? p?.photo_url ?? p?.avatar ?? "",
       posteSecondaire: p?.posteSecondaire ?? p?.position_secondary ?? "",
       taille: p?.taille ?? p?.height ?? "",
-      mainDominante: p?.mainDominante ?? p?.dominant_hand ?? "Droite",
+      mainDominante: p?.mainDominante ?? p?.dominant_hand ?? "",
     })),
   };
 }
@@ -2075,11 +2080,13 @@ async function exportGamePlanPdf(team: Team, gp: GamePlan, rotation: Rotation | 
       const half=(W-M*2-3)/2; const infoH=56; doc.setDrawColor(170,170,170);doc.rect(M,y,half,infoH);doc.rect(M+half+3,y,half,infoH);
       const infoCol=(x:number,label:string,txt:string)=>{doc.setTextColor(...burgundy);doc.setFont("helvetica","bold");doc.setFontSize(8);doc.text(label,x+3,y+6);doc.setTextColor(...black);doc.setFont("helvetica","normal");doc.setFontSize(7.2);doc.text(doc.splitTextToSize(txt||"",half-6).slice(0,13),x+3,y+12)};
       infoCol(M,"ATTAQUE",gp.scouting.offense || gp.scouting.style || ""); infoCol(M+half+3,"DÉFENSE",gp.scouting.defense || gp.scouting.defensivePlan || ""); y+=infoH+3;
+      if(gp.scouting.offensiveKeys) { ensure(infoH+3); infoCol(M,"NOS CLÉS OFFENSIVES",gp.scouting.offensiveKeys); y+=infoH+3; }
+      if(gp.scouting.defensiveKeys) { ensure(infoH+3); infoCol(M,"NOS CLÉS DÉFENSIVES",gp.scouting.defensiveKeys); y+=infoH+3; }
       if ((gp.scouting.importantStats||[]).length){doc.setFillColor(15,15,18);doc.rect(M,y,W-M*2,7,"F");doc.setTextColor(255,255,255);doc.text("STATS IMPORTANTES",W/2,y+5,{align:"center"});y+=10;doc.setTextColor(...black);doc.setFontSize(7);doc.text("Les tableaux sélectionnés dans MyBasket sont calculés automatiquement depuis les matchs codés.",M,y);y+=7;}
       const scoutSystems=gp.librarySystems.filter((system)=>sysSection(system)==="scout");
       if(scoutSystems.length){doc.addPage();y=10;doc.setFillColor(15,15,18);doc.rect(M,y,W-M*2,9,"F");doc.setTextColor(255,255,255);doc.setFontSize(11);doc.text("TOP PLAYS",W/2,y+6,{align:"center"});y+=14;for(const system of scoutSystems){ensure(58);doc.setTextColor(...black);doc.setFont("helvetica","bold");doc.setFontSize(9);doc.text(system.title,W/2,y,{align:"center"});y+=4;const imgs=(system.schemaImages?.length?system.schemaImages:[system.schemaImage]).filter(Boolean).slice(0,3);for(let i=0;i<imgs.length;i++){const im=await imageToDataUrl(String(imgs[i]));if(im)doc.addImage(im,"PNG",M+i*58,y,52,39)}y+=44;}}
       const cards=gp.scouting.playerCards||[];
-      if(cards.length){doc.addPage();y=10;for(const card of cards){const p=scoutPlayers.find((q:any)=>q.id===card.playerId);if(!p)continue;ensure(47);doc.setDrawColor(30,30,30);doc.rect(M,y,W-M*2,43);if(p.photo){const ph=await imageToDataUrl(p.photo);if(ph)doc.addImage(ph,"JPEG",M+1,y+1,28,41)}doc.setFillColor(75,75,77);doc.rect(M+30,y,W-M*2-30,7,"F");doc.setTextColor(255,255,255);doc.setFont("helvetica","bold");doc.setFontSize(8);doc.text(`#${p.num??"—"} · ${playerLabel(p)} · Poste ${p.poste||"—"} · ${p.taille||"—"} · ${p.mainDominante||""}`,M+33,y+5);doc.setTextColor(...burgundy);doc.setFontSize(8);doc.text(card.profile||"PROFIL",M+33,y+13);doc.setTextColor(...black);doc.setFont("helvetica","normal");doc.setFontSize(7.3);doc.text(doc.splitTextToSize(card.notes||"",W-M*2-38).slice(0,6),M+33,y+19);y+=47;}}
+      if(cards.length){doc.addPage();y=10;for(const card of cards){const p=scoutPlayers.find((q:any)=>q.id===card.playerId);if(!p)continue;ensure(47);doc.setDrawColor(30,30,30);doc.rect(M,y,W-M*2,43);if(p.photo){const ph=await imageToDataUrl(p.photo);if(ph)doc.addImage(ph,"JPEG",M+1,y+1,28,41)}doc.setFillColor(75,75,77);doc.rect(M+30,y,W-M*2-30,7,"F");doc.setTextColor(255,255,255);doc.setFont("helvetica","bold");doc.setFontSize(8);doc.text(`#${p.num??"—"} · ${playerLabel(p)} · Poste ${p.poste||"—"} · ${p.taille||"—"} · ${p.mainDominante||""}`,M+33,y+5);doc.setTextColor(...burgundy);doc.setFontSize(8);doc.text(card.profile||"PROFIL",M+33,y+13);doc.setTextColor(...black);doc.setFont("helvetica","normal");doc.setFontSize(7.3);doc.text(doc.splitTextToSize([card.notes,card.defend?`Défendre : ${card.defend}`:""].filter(Boolean).join("\n"),W-M*2-38).slice(0,6),M+33,y+19);y+=47;}}
     }
 
     const safeName = `${team.name || "game-plan"}-${gp.opponent || "match"}`.replace(/[^a-z0-9_-]+/gi, "-").replace(/-+/g, "-");

@@ -49,7 +49,7 @@ function mockClient(tables,cap=1000){return {from:table=>{
  const individual=computeLiveStats(data.completedPlayerMatchRows(rows,byId).filter(row=>row.player_id==='p1'),byId);
  assert.equal(individual.matches[0].minutes,1.5,'Stored seconds normalized for the per-match table');
  const client=mockClient({teams:[{id:'team',name:'U18'}],players:[{id:'p1',team_id:'team',first_name:'Alex',last_name:'ONDZE'},{id:'p2',team_id:'team',first_name:'Jaylan',last_name:'PORTER'}],match_player_stats:rows,match_stats:matches});
- const originalLoad=Module._load;Module._load=function(request,parent,isMain){if(request==='@/lib/supabase/client')return {createClient:()=>client};if(request==='@/lib/player-match-stats')return data;return originalLoad.call(this,request,parent,isMain)};
+ const originalLoad=Module._load;Module._load=function(request,parent,isMain){if(request==='@/lib/supabase/client')return {createClient:()=>client};if(request==='@/lib/player-match-stats')return data;if(request.startsWith('@/'))return originalLoad.call(this,path.resolve(__dirname,'..',request.slice(2)),parent,isMain);return originalLoad.call(this,request,parent,isMain)};
  const Management=require('../components/management/StatsJoueursModule.tsx').default;
  const m=createRoot(document.getElementById('management'));const p=createRoot(document.getElementById('player'));
  const flush=async()=>{await act(async()=>{await new Promise(resolve=>setTimeout(resolve,20))})};
@@ -58,12 +58,14 @@ function mockClient(tables,cap=1000){return {from:table=>{
  await act(async()=>{m.render(React.createElement(Management));p.render(React.createElement(PlayerMatchStatsTable,{matches:individual.matches}))});await flush();await flush();
  await click([...document.querySelectorAll('#management button')].find(button=>button.textContent.trim()==='Moyenne'));
  await change(document.querySelector('#management [aria-label="Type de matchs des statistiques joueurs"]'),'championship');
- const mr=document.querySelectorAll('#management tbody tr');assert.equal(mr[0].children[1].textContent,'2');assert.equal(mr[0].children[2].textContent,'1-2','Shots shown as per-game averages');assert.equal(mr[0].children[16].textContent,'5');assert.equal(mr[1].children[1].textContent,'1');assert.equal(mr[1].children[16].textContent,'8');
+ const cell=(row,label)=>{const headings=[...document.querySelectorAll('#management thead th')].map(h=>h.textContent.trim());return row.children[headings.indexOf(label)].textContent};
+ const mr=document.querySelectorAll('#management tbody tr');assert.equal(mr[0].children[1].textContent,'2');assert.equal(cell(mr[0],'FGM-A'),'1-2','Shots shown as per-game averages');assert.equal(cell(mr[0],'PTS'),'5');assert.equal(mr[1].children[1].textContent,'1');assert.equal(cell(mr[1],'PTS'),'8');
  await change(document.querySelector('#player [aria-label="Type de matchs du joueur"]'),'championship');
  assert.equal(document.querySelectorAll('#player tbody tr').length,2,'One row per filtered match');
- const foot=document.querySelectorAll('#player tfoot tr');assert.equal(foot[0].children[3].textContent,'10');assert.equal(foot[1].children[3].textContent,'5');assert.equal(foot[1].children[4].textContent,'1/2');assert.equal(foot[1].children[7].textContent,'50 %','Shooting percentage uses pooled attempts, not an average of percentages');
+ const pc=(row,label)=>{const target=[...document.querySelectorAll('#player thead th')].findIndex(c=>c.textContent===label);let index=0;for(const c of row.children){if(target>=index&&target<index+c.colSpan)return c.textContent;index+=c.colSpan}throw Error('Missing '+label)};
+ const foot=document.querySelectorAll('#player tfoot tr');assert.equal(pc(foot[0],'PTS'),'10');assert.equal(pc(foot[1],'PTS'),'5');assert.equal(pc(foot[1],'2PTS'),'1/2');assert.equal(pc(foot[1],'% Tir'),'50 %','Shooting percentage uses pooled attempts, not an average of percentages');
  // Switching types recalculates both numerators and played-match counts.
- await change(document.querySelector('#management [aria-label="Type de matchs des statistiques joueurs"]'),'friendly');assert.equal(document.querySelector('#management tbody tr').children[16].textContent,'20');assert.equal(document.querySelectorAll('#management tbody tr')[1].children[16].textContent,'—','An absent player has no fictitious average');
- await change(document.querySelector('#player [aria-label="Type de matchs du joueur"]'),'cup');assert.equal(document.querySelectorAll('#player tbody tr').length,1);assert.equal(document.querySelectorAll('#player tfoot tr')[1].children[3].textContent,'0');
+ await change(document.querySelector('#management [aria-label="Type de matchs des statistiques joueurs"]'),'friendly');assert.equal(cell(document.querySelector('#management tbody tr'),'PTS'),'20');assert.equal(cell(document.querySelectorAll('#management tbody tr')[1],'PTS'),'—','An absent player has no fictitious average');
+ await change(document.querySelector('#player [aria-label="Type de matchs du joueur"]'),'cup');assert.equal(document.querySelectorAll('#player tbody tr').length,1);assert.equal(pc(document.querySelectorAll('#player tfoot tr')[1],'PTS'),'0');
  await act(async()=>{m.unmount();p.unmount()});console.log('Stats: pagination exhaustive, catégories, absence, matchs à zéro, moyennes par joueur et tableaux réels validés.');process.exit(0);
 })().catch(error=>{console.error(error);process.exit(1)});

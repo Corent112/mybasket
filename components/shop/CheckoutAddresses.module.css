@@ -1,0 +1,57 @@
+.root {
+  border: 1px solid #eadfe2;
+  border-radius: 20px;
+  background: white;
+  padding: 24px;
+  margin: 22px 0;
+}
+.root h2,
+.root h3 {
+  color: #6b1a2c;
+  margin-top: 0;
+}
+.fields {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+}
+.fields label {
+  display: grid;
+  gap: 6px;
+  font-size: 12px;
+  font-weight: 700;
+  color: #65515b;
+}
+.fields input,
+.fields select {
+  width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+  border: 1px solid #e1d4da;
+  border-radius: 11px;
+  padding: 12px;
+  background: #fcfafb;
+  font: inherit;
+  font-size: 14px;
+  color: #281d23;
+}
+.check {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 13px;
+  margin: 20px 0 4px;
+}
+.check input {
+  accent-color: #6b1a2c;
+  width: 18px;
+  height: 18px;
+}
+@media (max-width: 550px) {
+  .fields {
+    grid-template-columns: 1fr;
+  }
+  .root {
+    padding: 18px;
+  }
+}

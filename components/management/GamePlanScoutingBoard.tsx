@@ -1,37 +1,749 @@
 "use client";
 import { useEffect, useMemo, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
+import {
+  loadMatchAnalysis,
+  loadOfficialTeamMatches,
+} from "@/lib/analytics/load-matches";
+import {
+  boxOf,
+  numeric,
+  ratio,
+  participation,
+  sumKnown,
+  type DataRow,
+} from "@/lib/analytics/matches";
+import { lnbFieldMap, fillLnbIdentity } from "@/lib/lnb-statistics-model";
+import styles from "./GamePlanScoutingBoard.module.css";
 
-type P={id:string;firstName?:string;lastName?:string;num?:string|number;poste?:string;posteSecondaire?:string;photo?:string;taille?:string;mainDominante?:string};
-type T={id:string;name?:string;logo?:string;players?:P[]};
-export type ScoutCard={playerId:string;profile:string;profile2?:string;notes:string};
-export type ScoutStat={id:string;metric:string;limit:number};
-export type ScoutBoardValue={scoutTeamId?:string;identity?:string;offense?:string;defense?:string;depthChart?:Record<string,string[]>;importantStats?:ScoutStat[];playerCards?:ScoutCard[]};
-type Agg={id:string;games:number;pts:number;reb:number;off_reb:number;def_reb:number;ast:number;stl:number;blk:number;turnovers:number;p2m:number;p2a:number;p3m:number;p3a:number;ftm:number;fta:number;min:number};
-type Zone={zone:string,made:number,att:number};
-const METRICS=[['pts','Meilleurs marqueurs'],['off_reb','Meilleurs rebondeurs offensifs'],['reb','Meilleurs rebondeurs'],['ast','Meilleurs passeurs'],['p3pct','Meilleurs shooteurs à 3 pts'],['p2pct','Meilleur % à 2 pts'],['ftpct','Meilleur % aux lancers'],['stl','Meilleurs intercepteurs'],['turnovers','Pertes de balle']];
-const PROFILES=['🎯 Shooteur','⚡ Driver','🧠 Créateur','🔄 P&R Handler','💪 Physique','🧲 Rebondeur','🏀 Post-up','🛡️ Défenseur','🚀 Slasher','🔥 Scoreur'];
-const n=(v:any)=>Number(v)||0, avg=(v:number,g:number)=>(g?v/g:0), pct=(m:number,a:number)=>(a?100*m/a:0);
-const label=(p?:P)=>p?[p.firstName,p.lastName].filter(Boolean).join(' ')||`Joueur ${p.num??''}`:'Joueur';
-export default function ScoutingBoard({value,onChange,scoutTeams,myTeam,date,systems,onAddSystem}:{value:ScoutBoardValue;onChange:(v:Partial<ScoutBoardValue>)=>void;scoutTeams:T[];myTeam?:T;date?:string;systems:any[];onAddSystem:()=>void}){
- const sb=createClient(); const [agg,setAgg]=useState<Record<string,Agg>>({}); const [zones,setZones]=useState<Record<string,Zone[]>>({}); const team=scoutTeams.find(t=>t.id===value.scoutTeamId); const players=team?.players||[];
- const [loading,setLoading]=useState(false);
- useEffect(()=>{let live=true;(async()=>{if(!team){setAgg({});setZones({});return} setLoading(true); const {data:matches}=await sb.from('match_stats').select('id').eq('team_id',team.id); const ids=(matches||[]).map((x:any)=>x.id); if(!ids.length){if(live){setAgg({});setZones({});setLoading(false)}return}
- const [{data:ps},{data:actions}]=await Promise.all([sb.from('match_player_stats').select('*').in('match_id',ids),sb.from('match_actions').select('player_id,shot_zone_id,shot_result').in('match_id',ids)]); const map:Record<string,Agg>={}; for(const r of ps||[]){const id=String((r as any).player_id||'');if(!id)continue;const a=map[id]||{id,games:0,pts:0,reb:0,off_reb:0,def_reb:0,ast:0,stl:0,blk:0,turnovers:0,p2m:0,p2a:0,p3m:0,p3a:0,ftm:0,fta:0,min:0};a.games++; for(const k of ['pts','reb','off_reb','def_reb','ast','stl','blk','turnovers','p2m','p2a','p3m','p3a','ftm','fta','min'] as const)(a as any)[k]+=n((r as any)[k]??(r as any)[k==='turnovers'?'to':k]);map[id]=a}
- const zm:Record<string,Record<string,Zone>>={};for(const r of actions||[]){const id=String((r as any).player_id||''),z=String((r as any).shot_zone_id||'');if(!id||!z)continue;zm[id] ||= {};const q=zm[id][z]||{zone:z,made:0,att:0};q.att++;if(String((r as any).shot_result||'').toLowerCase().includes('marq'))q.made++;zm[id][z]=q} if(live){setAgg(map);setZones(Object.fromEntries(Object.entries(zm).map(([k,v])=>[k,Object.values(v)])));setLoading(false)}})();return()=>{live=false}},[team?.id]);
- const depth=value.depthChart||{}; const cards=value.playerCards||[]; const stats=value.importantStats||[];
- const setDepth=(pos:string,id:string)=>{const next={...depth};Object.keys(next).forEach(k=>next[k]=(next[k]||[]).filter(x=>x!==id));next[pos]=[...(next[pos]||[]),id].slice(0,3);onChange({depthChart:next})};
- const metricValue=(a:Agg,m:string)=>m==='p3pct'?pct(a.p3m,a.p3a):m==='p2pct'?pct(a.p2m,a.p2a):m==='ftpct'?pct(a.ftm,a.fta):avg((a as any)[m]||0,a.games);
- const fmt=(v:number,m:string)=>m.includes('pct')?`${v.toFixed(1)}%`:v.toFixed(1).replace('.0','');
- const addCard=(id:string)=>{if(cards.some(c=>c.playerId===id))return;onChange({playerCards:[...cards,{playerId:id,profile:'🎯 Shooteur',profile2:'',notes:''}]})};
- return <div className="sb">
-  <header className="sb-head"><div className="sb-club">{team?.logo?<img src={team.logo}/>:<span>🏀</span>}<b>{team?.name||'ÉQUIPE SCOUTÉE'}</b></div><div className="sb-title"><strong>SCOUTING ADVERSE</strong><small>{date||'Date du match'}</small></div><div className="sb-club right"><b>{myTeam?.name||'MON ÉQUIPE'}</b>{myTeam?.logo?<img src={myTeam.logo}/>:<span>🏀</span>}</div></header>
-  <div className="sb-team-select"><label>Équipe scoutée</label><select value={value.scoutTeamId||''} onChange={e=>onChange({scoutTeamId:e.target.value,depthChart:{},playerCards:[]})}><option value="">Choisir l'adversaire…</option>{scoutTeams.map(t=><option key={t.id} value={t.id}>{t.name}</option>)}</select><small>Uniquement les équipes créées comme équipes scoutées.</small></div>
-  {team&&<>
-  <section className="sb-section"><h3>DEPTH CHART</h3><div className="sb-depth">{['1','2','3','4','5'].map(pos=><div key={pos}><b>POSTE {pos}</b>{(depth[pos]||[]).map(id=><span key={id}>#{players.find(p=>p.id===id)?.num??'—'} {label(players.find(p=>p.id===id))}</span>)}<select value="" onChange={e=>{if(e.target.value)setDepth(pos,e.target.value)}}><option value="">+ joueur</option>{players.filter(p=>!Object.values(depth).flat().includes(p.id)).map(p=><option key={p.id} value={p.id}>#{p.num??'—'} {label(p)}</option>)}</select></div>)}</div></section>
-  <section className="sb-section"><h3>TEAM INFORMATION</h3><div className="sb-three"><label><b>IDENTITÉ</b><textarea value={value.identity||''} onChange={e=>onChange({identity:e.target.value})} placeholder="Style, rythme, philosophie, joueurs moteurs…"/></label><label><b>ATTAQUE</b><textarea value={value.offense||''} onChange={e=>onChange({offense:e.target.value})} placeholder="Transition, P&R, post-up, spacing, habitudes…"/></label><label><b>DÉFENSE</b><textarea value={value.defense||''} onChange={e=>onChange({defense:e.target.value})} placeholder="Couvertures, transition, press, switch, zone…"/></label></div></section>
-  <section className="sb-section"><div className="sb-section-head"><h3>STATS IMPORTANTES</h3><button onClick={()=>onChange({importantStats:[...stats,{id:crypto.randomUUID(),metric:'off_reb',limit:3}]})}>+ Ajouter un tableau</button></div><div className="sb-statgrid">{stats.map(s=>{const rows=players.map(p=>({p,a:agg[p.id]})).filter(x=>x.a).sort((x,y)=>metricValue(y.a,s.metric)-metricValue(x.a,s.metric)).slice(0,s.limit);return <article key={s.id}><div><select value={s.metric} onChange={e=>onChange({importantStats:stats.map(x=>x.id===s.id?{...x,metric:e.target.value}:x)})}>{METRICS.map(([k,l])=><option key={k} value={k}>{l}</option>)}</select><select aria-label="Nombre de joueurs" value={s.limit} onChange={e=>onChange({importantStats:stats.map(x=>x.id===s.id?{...x,limit:Number(e.target.value)}:x)})}><option value={3}>Top 3</option><option value={5}>Top 5</option><option value={10}>Top 10</option></select><button onClick={()=>onChange({importantStats:stats.filter(x=>x.id!==s.id)})}>×</button></div><table><tbody>{rows.map(({p,a},i)=><tr key={p.id}><td>{i+1}</td><td>#{p.num??'—'} {label(p)}</td><td><b>{fmt(metricValue(a,s.metric),s.metric)}</b></td></tr>)}</tbody></table></article>})}{!stats.length&&<button className="sb-addstat" onClick={()=>onChange({importantStats:[{id:crypto.randomUUID(),metric:'off_reb',limit:3},{id:crypto.randomUUID(),metric:'p3pct',limit:3},{id:crypto.randomUUID(),metric:'ast',limit:3}]})}>Créer les 3 tableaux de départ</button>}</div></section>
-  <section className="sb-section"><div className="sb-section-head"><h3>SYSTÈMES ADVERSES</h3><button onClick={onAddSystem}>+ Importer / dessiner</button></div><div className="sb-plays">{systems.map((s:any)=><article key={s.id}><b>{s.title}</b><div>{(s.schemaImages?.length?s.schemaImages:[s.schemaImage]).filter(Boolean).slice(0,3).map((im:string,i:number)=><img key={i} src={im}/>)}</div></article>)}{!systems.length&&<p>Aucun système adverse ajouté.</p>}</div></section>
-  <section className="sb-section"><div className="sb-section-head"><h3>JOUEURS À METTRE EN AVANT</h3><select value="" onChange={e=>{if(e.target.value)addCard(e.target.value)}}><option value="">+ Ajouter un joueur</option>{players.filter(p=>!cards.some(c=>c.playerId===p.id)).map(p=><option key={p.id} value={p.id}>#{p.num??'—'} {label(p)}</option>)}</select></div>{cards.map(c=>{const p=players.find(x=>x.id===c.playerId),a=p?agg[p.id]:undefined,z=p?zones[p.id]||[]:[];if(!p)return null;return <article className="sb-player" key={p.id}><div className="sb-player-photo">{p.photo?<img src={p.photo}/>:<span>{p.firstName?.[0]}{p.lastName?.[0]}</span>}</div><div className="sb-player-main"><div className="sb-player-id"><b>#{p.num??'—'} · {label(p)}</b><span>POSTE {p.poste||'—'} · {p.taille||'—'} · {p.mainDominante||'Main à renseigner'}</span></div><div className="sb-player-stats">{[['PTS',a?avg(a.pts,a.games):0],['2P%',a?pct(a.p2m,a.p2a):0],['3P%',a?pct(a.p3m,a.p3a):0],['LF%',a?pct(a.ftm,a.fta):0],['RO',a?avg(a.off_reb,a.games):0],['REB',a?avg(a.reb,a.games):0],['PD',a?avg(a.ast,a.games):0],['BP',a?avg(a.turnovers,a.games):0],['INT',a?avg(a.stl,a.games):0]].map(([k,v])=><div key={String(k)}><small>{k}</small><b>{String(k).includes('%')?`${Number(v).toFixed(1)}%`:Number(v).toFixed(1)}</b></div>)}</div><div className="sb-player-edit"><div className="sb-profiles"><select value={c.profile} onChange={e=>onChange({playerCards:cards.map(x=>x.playerId===c.playerId?{...x,profile:e.target.value}:x)})}>{PROFILES.map(x=><option key={x}>{x}</option>)}</select><select value={c.profile2||''} onChange={e=>onChange({playerCards:cards.map(x=>x.playerId===c.playerId?{...x,profile2:e.target.value}:x)})}><option value="">2e profil (optionnel)</option>{PROFILES.filter(x=>x!==c.profile).map(x=><option key={x}>{x}</option>)}</select></div><textarea value={c.notes} onChange={e=>onChange({playerCards:cards.map(x=>x.playerId===c.playerId?{...x,notes:e.target.value}:x)})} placeholder="Caractéristiques · tendances · ce qu'il aime faire · comment le défendre…"/><button onClick={()=>onChange({playerCards:cards.filter(x=>x.playerId!==c.playerId)})}>Retirer</button></div></div><div className="sb-shot"><b>SHOT CHART</b>{z.length?<div>{z.slice(0,8).map(q=><span key={q.zone}><small>{q.zone}</small><strong>{Math.round(pct(q.made,q.att))}%</strong><i>{q.made}/{q.att}</i></span>)}</div>:<p>{loading?'Calcul…':'Aucun tir codé'}</p>}</div></article>})}</section>
-  </>}</div>
+type P = {
+  id: string;
+  firstName?: string;
+  lastName?: string;
+  num?: string | number;
+  poste?: string;
+  posteSecondaire?: string;
+  photo?: string;
+  taille?: string;
+  mainDominante?: string;
+  metadata?: Record<string, unknown>;
+};
+type T = {
+  id: string;
+  name?: string;
+  logo?: string;
+  players?: P[];
+  competitionSource?: string;
+};
+export type ScoutCard = {
+  playerId: string;
+  profile: string;
+  profile2?: string;
+  notes: string;
+  defend?: string;
+};
+export type ScoutStat = { id: string; metric: string; limit: number };
+export type ScoutBoardValue = {
+  scoutTeamId?: string;
+  identity?: string;
+  offense?: string;
+  defense?: string;
+  offensiveKeys?: string;
+  defensiveKeys?: string;
+  teamStats?: Record<string, number | null>;
+  depthChart?: Record<string, string[]>;
+  importantStats?: ScoutStat[];
+  playerCards?: ScoutCard[];
+};
+const PROFILES = [
+  "Shooteur",
+  "Driver",
+  "Créateur",
+  "P&R Handler",
+  "Physique",
+  "Rebondeur",
+  "Post-up",
+  "Défenseur",
+  "Slasher",
+  "Scoreur",
+];
+const label = (p: P) =>
+  [p.firstName, p.lastName].filter(Boolean).join(" ") || "Joueur";
+const fmt = (n: unknown) =>
+  numeric(n) == null
+    ? "—"
+    : Number(n).toLocaleString("fr-FR", { maximumFractionDigits: 1 });
+function score(row: DataRow, side: "us" | "them") {
+  const keys =
+    side === "us"
+      ? ["our_score", "us_score", "team_score", "score_for", "points_for"]
+      : [
+          "opponent_score",
+          "them_score",
+          "opponent_points",
+          "score_against",
+          "points_against",
+        ];
+  for (const key of keys) {
+    const v = numeric(row[key]);
+    if (v != null) return v;
+  }
+  return null;
+}
+function officialPlayer(row: DataRow) {
+  return Object.fromEntries(
+    Object.entries(lnbFieldMap).map(([key, field]) => [
+      (
+        { offReb: "off_reb", defReb: "def_reb", to: "turnovers" } as Record<
+          string,
+          string
+        >
+      )[key] || key,
+      numeric(row[field]),
+    ]),
+  );
+}
+type ScoutingProps = {
+  value: ScoutBoardValue;
+  onChange: (v: Partial<ScoutBoardValue>) => void;
+  scoutTeams: T[];
+  myTeam?: T;
+  date?: string;
+  systems: DataRow[];
+  onAddSystem: () => void;
+};
+export default function ScoutingBoard(props: ScoutingProps) {
+  return <ScoutingContent key={props.value.scoutTeamId || "none"} {...props} />;
+}
+function ScoutingContent({
+  value,
+  onChange,
+  scoutTeams,
+  myTeam,
+  date,
+  systems,
+  onAddSystem,
+}: ScoutingProps) {
+  const team = scoutTeams.find((t) => t.id === value.scoutTeamId);
+  const [tab, setTab] = useState<"team" | "players" | "plays">("team");
+  const [data, setData] = useState<{ matches: DataRow[]; rows: DataRow[] }>({
+    matches: [],
+    rows: [],
+  });
+  const [official, setOfficial] = useState<DataRow | null>(null);
+  const [fixtures, setFixtures] = useState<DataRow[]>([]);
+  const [loading, setLoading] = useState(Boolean(team));
+  const [errors, setErrors] = useState<string[]>([]);
+  const players = team?.players || [];
+  const cards = value.playerCards || [];
+  useEffect(() => {
+    let live = true;
+    const controller = new AbortController();
+    if (!team) return;
+    const db = createClient();
+    const coded = loadMatchAnalysis(db, team.id)
+      .then((r) => {
+        if (live) setData(r);
+      })
+      .catch(() => {
+        if (live)
+          setErrors((e) => [
+            ...e,
+            "Les statistiques codées ne sont pas disponibles.",
+          ]);
+      });
+    const synced = loadOfficialTeamMatches(db, team.id)
+      .then((rows) => {
+        if (live) setFixtures(rows);
+      })
+      .catch(() => {
+        if (live)
+          setErrors((e) => [
+            ...e,
+            "Les résultats officiels ne sont pas disponibles.",
+          ]);
+      });
+    const lnb =
+      team.competitionSource === "lnb"
+        ? fetch(`/api/lnb/player-stats?teamId=${encodeURIComponent(team.id)}`, {
+            signal: controller.signal,
+          })
+            .then(async (r) => {
+              const data = await r.json();
+              if (!r.ok) throw Error();
+              if (live && data.connected) setOfficial(data);
+            })
+            .catch(() => {
+              if (live)
+                setErrors((e) => [
+                  ...e,
+                  "Les statistiques LNB ne sont pas disponibles.",
+                ]);
+            })
+        : Promise.resolve();
+    Promise.allSettled([coded, synced, lnb]).finally(() => {
+      if (live) setLoading(false);
+    });
+    return () => {
+      live = false;
+      controller.abort();
+    };
+  }, [team]);
+  const recordSource: DataRow[] = fixtures.length
+    ? fixtures
+    : Array.isArray(official?.matches) && official.matches.length
+      ? official.matches
+      : data.matches;
+  const recordMatches = recordSource.filter(
+    (m) => score(m, "us") != null && score(m, "them") != null,
+  );
+  const uniqueMatches = [
+    ...new Map<string, DataRow>(
+      recordMatches.map((m) => [String(m.external_id || m.id), m]),
+    ).values(),
+  ];
+  const codedGames = new Set(data.rows.map((r) => r.match_id)).size;
+  const officialRows = (official?.players || []).filter(
+    (r: DataRow) => r.seasonTotals,
+  );
+  const sourceRows = officialRows.length
+    ? officialRows.map((r: DataRow) => ({
+        ...officialPlayer(r.seasonTotals),
+        fpf: numeric(r.seasonTotals.s_fouls_on_average),
+      }))
+    : data.rows;
+  const sourceBox = boxOf(sourceRows);
+  const maxPlayerGames = Math.max(
+    0,
+    ...officialRows.map((r: DataRow) => numeric(r.s_games) || 0),
+  );
+  const teamGames = officialRows.length
+    ? uniqueMatches.length >= maxPlayerGames
+      ? uniqueMatches.length
+      : 0
+    : codedGames;
+  const autoStats: Record<string, number | null> = {
+    reb: ratio(sumKnown(sourceRows, "reb"), teamGames),
+    stl: ratio(sumKnown(sourceRows, "stl"), teamGames),
+    blk: ratio(sumKnown(sourceRows, "blk"), teamGames),
+    pf: ratio(sumKnown(sourceRows, "pf"), teamGames),
+    fpf: ratio(sumKnown(sourceRows, "fpf"), teamGames),
+    pointsFor: ratio(
+      uniqueMatches.reduce((s, m) => s + score(m, "us")!, 0),
+      uniqueMatches.length,
+    ),
+    pointsAgainst: ratio(
+      uniqueMatches.reduce((s, m) => s + score(m, "them")!, 0),
+      uniqueMatches.length,
+    ),
+    p2pct: ratio(sourceBox.p2m, sourceBox.p2a, 100),
+    p3pct: ratio(sourceBox.p3m, sourceBox.p3a, 100),
+    p3a: ratio(sourceBox.p3a, teamGames),
+    ftpct: ratio(sourceBox.ftm, sourceBox.fta, 100),
+    off: ratio(sourceBox.off_reb, teamGames),
+    def: ratio(sourceBox.def_reb, teamGames),
+    ast: ratio(sourceBox.ast, teamGames),
+    to: ratio(sourceBox.turnovers, teamGames),
+  };
+  const appearances = useMemo(
+    () => participation(data.rows, new Map(data.matches.map((m) => [m.id, m]))),
+    [data],
+  );
+  function patchCard(id: string, patch: Partial<ScoutCard>) {
+    const existing = cards.find((c) => c.playerId === id);
+    onChange({
+      playerCards: existing
+        ? cards.map((c) => (c.playerId === id ? { ...c, ...patch } : c))
+        : [...cards, { playerId: id, profile: "", notes: "", ...patch }],
+    });
+  }
+  const statField = (key: string, title: string) => (
+    <label key={key}>
+      {title}
+      <input
+        type="number"
+        min={0}
+        step="0.1"
+        placeholder="—"
+        value={
+          Object.prototype.hasOwnProperty.call(value.teamStats || {}, key)
+            ? (value.teamStats?.[key] ?? "")
+            : (autoStats[key] ?? "")
+        }
+        onChange={(e) =>
+          onChange({
+            teamStats: {
+              ...value.teamStats,
+              [key]: e.target.value === "" ? null : Number(e.target.value),
+            },
+          })
+        }
+      />
+    </label>
+  );
+  return (
+    <div className={styles.root}>
+      <header className={styles.header}>
+        <div>
+          {team?.logo && <img src={team.logo} alt="" />}
+          <h3>{team?.name || "Scouting adverse"}</h3>
+        </div>
+        <small>
+          {myTeam?.name} · {date || "Prochain match"}
+        </small>
+      </header>
+      <label className={styles.team}>
+        Équipe scoutée
+        <select
+          value={value.scoutTeamId || ""}
+          onChange={(e) =>
+            onChange({
+              scoutTeamId: e.target.value,
+              depthChart: {},
+              playerCards: [],
+              teamStats: {},
+            })
+          }
+        >
+          <option value="">Choisir l’adversaire…</option>
+          {scoutTeams.map((t) => (
+            <option key={t.id} value={t.id}>
+              {t.name}
+            </option>
+          ))}
+        </select>
+      </label>
+      <nav className={styles.tabs} aria-label="Sections du scouting">
+        {(
+          [
+            ["team", "1 · Équipe"],
+            ["players", "2 · Joueurs"],
+            ["plays", "3 · Formes de jeu adverses"],
+          ] as const
+        ).map(([id, title]) => (
+          <button
+            key={id}
+            type="button"
+            aria-pressed={tab === id}
+            onClick={() => setTab(id)}
+          >
+            {title}
+          </button>
+        ))}
+      </nav>
+      {loading && <p role="status">Préremplissage depuis les données liées…</p>}
+      {!!errors.length && (
+        <p role="status" className={styles.note}>
+          {errors.join(" ")}
+        </p>
+      )}
+      {!team ? (
+        <p>
+          Choisis une équipe scoutée pour retrouver son effectif et ses données.
+        </p>
+      ) : (
+        <>
+          {tab === "team" && (
+            <>
+              <div className={styles.grid}>
+                <section className={styles.card}>
+                  <h3>Bilan de l’équipe</h3>
+                  <table>
+                    <thead>
+                      <tr>
+                        <th></th>
+                        <th>V</th>
+                        <th>D</th>
+                        <th>% V</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {[
+                        [
+                          "Domicile",
+                          uniqueMatches.filter(
+                            (m) => m.home === true || m.is_home === true,
+                          ),
+                        ],
+                        [
+                          "Extérieur",
+                          uniqueMatches.filter(
+                            (m) => m.home === false || m.is_home === false,
+                          ),
+                        ],
+                        ["Cumulé", uniqueMatches],
+                      ].map(([name, matches]) => {
+                        const rows = matches as DataRow[];
+                        const wins = rows.filter(
+                          (m) => score(m, "us")! > score(m, "them")!,
+                        ).length;
+                        const losses = rows.filter(
+                          (m) => score(m, "us")! < score(m, "them")!,
+                        ).length;
+                        return (
+                          <tr key={String(name)}>
+                            <th>{String(name)}</th>
+                            <td>{rows.length ? wins : "—"}</td>
+                            <td>{rows.length ? losses : "—"}</td>
+                            <td>{fmt(ratio(wins, rows.length, 100))}</td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                  <p className={styles.note}>
+                    Résultats officiels liés, sinon matchs codés. Les matchs non
+                    joués sont exclus.
+                  </p>
+                </section>
+                <section className={styles.card}>
+                  <h3>Statistiques de l’équipe</h3>
+                  <div className={styles.stats}>
+                    {[
+                      ["pointsFor", "Points marqués / match"],
+                      ["pointsAgainst", "Points encaissés / match"],
+                      ["p2pct", "2 PTS %"],
+                      ["p3pct", "3 PTS %"],
+                      ["p3a", "3 PTS tentés / match"],
+                      ["ftpct", "LF %"],
+                      ["off", "Rebonds offensifs"],
+                      ["def", "Rebonds défensifs"],
+                      ["ast", "Passes décisives"],
+                      ["to", "Ballons perdus"],
+                      ["reb", "Rebonds totaux"],
+                      ["stl", "Interceptions"],
+                      ["blk", "Contres"],
+                      ["pf", "Fautes"],
+                      ["fpf", "Fautes provoquées"],
+                    ].map(([key, title]) => statField(key, title))}
+                  </div>
+                  <p className={styles.note}>
+                    {officialRows.length
+                      ? "Statistiques LNB liées"
+                      : "Statistiques MyBasket"}{" "}
+                    · moyennes par match. Les champs restent modifiables.
+                  </p>
+                </section>
+              </div>
+              <section className={styles.card}>
+                <h3>Répartition par poste</h3>
+                <div className={styles.stats}>
+                  {["1", "2", "3", "4", "5"].map((pos) => (
+                    <label key={pos}>
+                      Poste {pos}
+                      {(value.depthChart?.[pos] || []).map((id) => (
+                        <button
+                          key={id}
+                          type="button"
+                          onClick={() =>
+                            onChange({
+                              depthChart: {
+                                ...value.depthChart,
+                                [pos]: (value.depthChart?.[pos] || []).filter(
+                                  (p) => p !== id,
+                                ),
+                              },
+                            })
+                          }
+                        >
+                          {players.find((p) => p.id === id)
+                            ? label(players.find((p) => p.id === id)!)
+                            : "Joueur"}{" "}
+                          ×
+                        </button>
+                      ))}
+                      <select
+                        value=""
+                        onChange={(e) => {
+                          if (e.target.value)
+                            onChange({
+                              depthChart: {
+                                ...value.depthChart,
+                                [pos]: [
+                                  ...(value.depthChart?.[pos] || []),
+                                  e.target.value,
+                                ],
+                              },
+                            });
+                        }}
+                      >
+                        <option value="">Ajouter un joueur</option>
+                        {players
+                          .filter(
+                            (p) =>
+                              !Object.values(value.depthChart || {})
+                                .flat()
+                                .includes(p.id),
+                          )
+                          .map((p) => (
+                            <option value={p.id} key={p.id}>
+                              {label(p)}
+                            </option>
+                          ))}
+                      </select>
+                    </label>
+                  ))}
+                </div>
+              </section>
+              <div className={styles.grid}>
+                {[
+                  [
+                    "identity",
+                    "Identité de jeu",
+                    "Style, rythme, joueurs moteurs…",
+                  ],
+                  [
+                    "offense",
+                    "Tendances offensives",
+                    "Transition, pick and roll, spacing…",
+                  ],
+                  [
+                    "defense",
+                    "Tendances défensives",
+                    "Couvertures, aides, pression, zone…",
+                  ],
+                  [
+                    "offensiveKeys",
+                    "Nos clés offensives",
+                    "Ce que nous voulons attaquer…",
+                  ],
+                  [
+                    "defensiveKeys",
+                    "Nos clés défensives",
+                    "Ce que nous voulons empêcher…",
+                  ],
+                ].map(([key, title, placeholder]) => (
+                  <label className={styles.card} key={key}>
+                    <h3>{title}</h3>
+                    <textarea
+                      value={String(value[key as keyof ScoutBoardValue] || "")}
+                      onChange={(e) => onChange({ [key]: e.target.value })}
+                      placeholder={placeholder}
+                    />
+                  </label>
+                ))}
+              </div>
+            </>
+          )}
+          {tab === "players" && (
+            <div className={styles.players}>
+              {players.map((player) => {
+                const published = official?.players?.find(
+                  (row: DataRow) => row.playerId === player.id,
+                );
+                const p = published
+                  ? fillLnbIdentity(player, published)
+                  : player;
+                const localRows = data.rows.filter(
+                  (r) => r.player_id === player.id && r.present !== false,
+                );
+                const b = boxOf(localRows);
+                const participationRow = appearances[player.id];
+                const games = published
+                  ? numeric(published.s_games)
+                  : participationRow?.games || null;
+                const avg = (key: string) =>
+                  published
+                    ? numeric(published[lnbFieldMap[key] || key])
+                    : ratio(
+                        sumKnown(
+                          localRows,
+                          (
+                            {
+                              offReb: "off_reb",
+                              defReb: "def_reb",
+                              to: "turnovers",
+                            } as Record<string, string>
+                          )[key] || key,
+                        ),
+                        games,
+                      );
+                const card = cards.find((c) => c.playerId === p.id);
+                const columns = [
+                  ["MJ", games],
+                  [
+                    "MIN",
+                    published
+                      ? numeric(published.s_minutes_average)
+                      : participationRow?.minutesKnown
+                        ? participationRow.seconds /
+                          60 /
+                          participationRow.minutesKnown
+                        : null,
+                  ],
+                  ["PTS", avg("pts")],
+                  ["2R", avg("p2m")],
+                  ["2T", avg("p2a")],
+                  [
+                    "2 %",
+                    published
+                      ? numeric(published.s_two_pointers_percentage)
+                      : ratio(b.p2m, b.p2a, 100),
+                  ],
+                  ["3R", avg("p3m")],
+                  ["3T", avg("p3a")],
+                  [
+                    "3 %",
+                    published
+                      ? numeric(published.s_three_pointers_percentage)
+                      : ratio(b.p3m, b.p3a, 100),
+                  ],
+                  ["LFR", avg("ftm")],
+                  ["LFT", avg("fta")],
+                  [
+                    "LF %",
+                    published
+                      ? numeric(published.s_free_throws_percentage)
+                      : ratio(b.ftm, b.fta, 100),
+                  ],
+                  ["RO", avg("offReb")],
+                  ["RD", avg("defReb")],
+                  ["PD", avg("ast")],
+                  ["BP", avg("to")],
+                  ["REB", avg("reb")],
+                  ["INT", avg("stl")],
+                  ["CTR", avg("blk")],
+                  ["F", avg("pf")],
+                  [
+                    "FP",
+                    published
+                      ? numeric(published.s_fouls_on_average)
+                      : avg("fpf"),
+                  ],
+                  [
+                    "ÉVAL",
+                    published ? numeric(published.s_efficiency_average) : null,
+                  ],
+                ];
+                return (
+                  <article className={styles.card} key={p.id}>
+                    <div className={styles.identity}>
+                      {p.photo ? (
+                        <img src={p.photo} alt="" />
+                      ) : (
+                        <span>#{p.num || "—"}</span>
+                      )}
+                      <div>
+                        <h3>
+                          #{p.num || "—"} {label(p)}
+                        </h3>
+                        <p>
+                          {p.taille ? `${p.taille} cm · ` : ""}
+                          {p.poste ||
+                            p.postePrincipal ||
+                            "Poste à renseigner"}{" "}
+                          · {p.mainDominante || "Main forte à renseigner"}
+                        </p>
+                      </div>
+                    </div>
+                    <div className={styles.scroll}>
+                      <table>
+                        <thead>
+                          <tr>
+                            {columns.map(([title]) => (
+                              <th key={String(title)}>{title}</th>
+                            ))}
+                          </tr>
+                        </thead>
+                        <tbody>
+                          <tr>
+                            {columns.map(([title, n]) => (
+                              <td key={String(title)}>{fmt(n)}</td>
+                            ))}
+                          </tr>
+                        </tbody>
+                      </table>
+                    </div>
+                    <div className={styles.grid}>
+                      <label>
+                        Profil
+                        <select
+                          value={card?.profile || ""}
+                          onChange={(e) =>
+                            patchCard(p.id, { profile: e.target.value })
+                          }
+                        >
+                          <option value="">Choisir le profil</option>
+                          {PROFILES.map((profile) => (
+                            <option key={profile}>{profile}</option>
+                          ))}
+                        </select>
+                        <select
+                          aria-label="Second profil"
+                          value={card?.profile2 || ""}
+                          onChange={(e) =>
+                            patchCard(p.id, { profile2: e.target.value })
+                          }
+                        >
+                          <option value="">Second profil (facultatif)</option>
+                          {PROFILES.map((profile) => (
+                            <option key={profile}>{profile}</option>
+                          ))}
+                        </select>
+                        <textarea
+                          value={card?.notes || ""}
+                          onChange={(e) =>
+                            patchCard(p.id, { notes: e.target.value })
+                          }
+                          placeholder="Qualités, habitudes et tendances…"
+                        />
+                      </label>
+                      <label>
+                        Comment le défendre
+                        <textarea
+                          value={card?.defend || ""}
+                          onChange={(e) =>
+                            patchCard(p.id, { defend: e.target.value })
+                          }
+                          placeholder="Orientation, distance, écrans, aides…"
+                        />
+                      </label>
+                    </div>
+                  </article>
+                );
+              })}
+              {!players.length && (
+                <p>
+                  L’effectif de cette équipe est vide. Ajoute ou importe ses
+                  joueurs dans la fiche équipe.
+                </p>
+              )}
+            </div>
+          )}
+          {tab === "plays" && (
+            <section className={styles.card}>
+              <div className={styles.header}>
+                <h3>Formes de jeu adverses</h3>
+                <button onClick={onAddSystem}>
+                  ＋ Ajouter ou dessiner un système
+                </button>
+              </div>
+              <div className={styles.plays}>
+                {systems.map((s) => (
+                  <article key={s.id}>
+                    <h4>{s.title}</h4>
+                    {(s.schemaImages?.length ? s.schemaImages : [s.schemaImage])
+                      .filter(Boolean)
+                      .map((src: string, i: number) => (
+                        <img
+                          key={i}
+                          src={src}
+                          alt={`${s.title} · schéma ${i + 1}`}
+                        />
+                      ))}
+                  </article>
+                ))}
+              </div>
+              {!systems.length && (
+                <p>
+                  Ajoute les systèmes depuis ton playbook, la bibliothèque ou
+                  l’outil dessin.
+                </p>
+              )}
+            </section>
+          )}
+        </>
+      )}
+    </div>
+  );
 }

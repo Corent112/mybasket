@@ -1,5 +1,6 @@
 "use client";
 
+import {participation} from "@/lib/analytics/matches";
 import { useEffect, useMemo, useState } from "react";
 import LnbPlayerStats from "@/components/equipes/LnbPlayerStats";
 import { loadPlayerMatchStats, completedPlayerMatchRows, summarizePlayerMatchRows, type PlayerMatchCategory } from "@/lib/player-match-stats";
@@ -232,7 +233,7 @@ function efficiency(stat: PlayerStats) {
   );
 }
 
-export default function StatsJoueursModule() {
+export default function StatsJoueursModule({initialTeamId,codedOnly=false}:{initialTeamId?:string;codedOnly?:boolean} = {}) {
   const [teams, setTeams] = useState<Team[]>([]);
   const [teamId, setTeamId] = useState("");
   const [matchRows, setMatchRows] = useState<Record<string, any>[]>([]);
@@ -257,7 +258,7 @@ export default function StatsJoueursModule() {
         if (current && loadedTeams.some((team) => team.id === current)) {
           return current;
         }
-        return loadedTeams[0]?.id || "";
+        return initialTeamId || loadedTeams[0]?.id || "";
       });
       setLoadingTeams(false);
     }
@@ -274,7 +275,7 @@ export default function StatsJoueursModule() {
     [teams, teamId]
   );
 
-  const officialVisible = selectedTeam?.competitionSource === "lnb" && !showCodedStats && (matchCategory === "all" || matchCategory === "championship");
+  const officialVisible = !codedOnly && selectedTeam?.competitionSource === "lnb" && !showCodedStats && (matchCategory === "all" || matchCategory === "championship");
 
   useEffect(() => {
     if (!selectedTeam) return;
@@ -289,6 +290,13 @@ export default function StatsJoueursModule() {
   }, [selectedTeam]);
 
   const filteredRows = useMemo(() => completedPlayerMatchRows(matchRows, matchesById, matchCategory), [matchRows, matchesById, matchCategory]);
+  const appearances = useMemo(() => participation(filteredRows,matchesById),[filteredRows,matchesById]);
+  const extraStats=useMemo(()=>{
+    const result:Record<string,{plus:number;known:number;fpfKnown:boolean}>={};
+    for(const row of filteredRows){if(row.present===false)continue;const r=result[String(row.player_id)]??={plus:0,known:0,fpfKnown:true};if(row.plus_minus!=null){r.plus+=Number(row.plus_minus);r.known++}if(row.fpf==null)r.fpfKnown=false;}
+    return result;
+  },[filteredRows]);
+  const percent=(m:number,a:number)=>a>0?`${(m/a*100).toFixed(1)} %`:"—";
   const stats = useMemo(() => summarizePlayerMatchRows(filteredRows), [filteredRows]);
   const matchCount = new Set(filteredRows.map(row => String(row.match_id))).size;
   const shown = (value: number, games: number) => displayMode === "average"
@@ -357,7 +365,7 @@ export default function StatsJoueursModule() {
         <select
           value={teamId}
           onChange={(e) => setTeamId(e.target.value)}
-          disabled={loadingTeams}
+          disabled={loadingTeams||!!initialTeamId}
         >
           {loadingTeams && <option value="">Chargement des équipes…</option>}
           {!loadingTeams && teams.length === 0 && (
@@ -372,8 +380,8 @@ export default function StatsJoueursModule() {
         </div>
       </div>
 
-      {selectedTeam?.competitionSource === "lnb" && <div style={{display:"flex",gap:8,margin:"12px 0"}}><button onClick={() => setShowCodedStats(false)}>Statistiques officielles LNB</button><button onClick={() => setShowCodedStats(true)}>Matchs codés MyBasket</button></div>}
-      {officialVisible && selectedTeam && <LnbPlayerStats key={selectedTeam.id} teamId={selectedTeam.id} />}
+      {!codedOnly && selectedTeam?.competitionSource === "lnb" && <div style={{display:"flex",gap:8,margin:"12px 0"}}><button onClick={() => setShowCodedStats(false)}>Statistiques officielles LNB</button><button onClick={() => setShowCodedStats(true)}>Matchs codés MyBasket</button></div>}
+      {officialVisible && selectedTeam && <LnbPlayerStats initialView="complete" key={selectedTeam.id} teamId={selectedTeam.id} />}
       {loading && !officialVisible && <div className="sj-empty">Chargement des stats...</div>}
 
       {!loadingTeams && !loading && !selectedTeam && (
@@ -389,11 +397,11 @@ export default function StatsJoueursModule() {
             <thead>
               <tr>
                 <th>Player</th>
-                <th title="Nombre de matchs joués">MJ</th>
-                <th>FGM-A</th>
-                <th>2PM-A</th>
-                <th>3PM-A</th>
-                <th>FTM-A</th>
+                <th title="Nombre de matchs joués">MJ</th><th title="Dans le cinq de départ">5D</th><th title="Minutes par match renseigné">MIN</th>
+                <th>FGM-A</th><th>FG %</th>
+                <th>2PM-A</th><th>2 %</th>
+                <th>3PM-A</th><th>3 %</th>
+                <th>FTM-A</th><th>LF %</th>
                 <th>OFF</th>
                 <th>DEF</th>
                 <th>TOT</th>
@@ -404,7 +412,7 @@ export default function StatsJoueursModule() {
                 <th>PF</th>
                 <th>FPF</th>
                 <th>EFF</th>
-                <th>PTS</th>
+                <th>PTS</th><th>+/−</th>
               </tr>
             </thead>
 
@@ -433,11 +441,11 @@ export default function StatsJoueursModule() {
                       </strong>
                     </td>
 
-                    <td>{stat.games}</td>
-                    <td>{shownPair(stat.fgm, stat.fga, stat.games)}</td>
-                    <td>{shownPair(stat.twoPm, stat.twoPa, stat.games)}</td>
-                    <td>{shownPair(stat.threePm, stat.threePa, stat.games)}</td>
-                    <td>{shownPair(stat.ftm, stat.fta, stat.games)}</td>
+                    <td>{stat.games}</td><td>{appearances[player.id]?.startsKnown ? `${appearances[player.id].startsKnown<appearances[player.id].games?"≥ ":""}${appearances[player.id].starts}` : "—"}</td><td>{appearances[player.id]?.minutesKnown ? (appearances[player.id].seconds / 60 / (displayMode === "average" ? appearances[player.id].minutesKnown : 1)).toFixed(1) : "—"}</td>
+                    <td>{shownPair(stat.fgm, stat.fga, stat.games)}</td><td>{percent(stat.fgm,stat.fga)}</td>
+                    <td>{shownPair(stat.twoPm, stat.twoPa, stat.games)}</td><td>{percent(stat.twoPm,stat.twoPa)}</td>
+                    <td>{shownPair(stat.threePm, stat.threePa, stat.games)}</td><td>{percent(stat.threePm,stat.threePa)}</td>
+                    <td>{shownPair(stat.ftm, stat.fta, stat.games)}</td><td>{percent(stat.ftm,stat.fta)}</td>
                     <td>{shown(stat.off, stat.games)}</td>
                     <td>{shown(stat.def, stat.games)}</td>
                     <td>{shown(reb, stat.games)}</td>
@@ -446,20 +454,20 @@ export default function StatsJoueursModule() {
                     <td>{shown(stat.to, stat.games)}</td>
                     <td>{shown(stat.bs, stat.games)}</td>
                     <td>{shown(stat.pf, stat.games)}</td>
-                    <td>{shown(stat.fpf, stat.games)}</td>
+                    <td>{extraStats[player.id]?.fpfKnown ? shown(stat.fpf, stat.games) : "—"}</td>
                     <td>{shown(efficiency(stat), stat.games)}</td>
-                    <td className="pts">{shown(pts, stat.games)}</td>
+                    <td className="pts">{shown(pts, stat.games)}</td><td>{extraStats[player.id]?.known ? shown(extraStats[player.id].plus,extraStats[player.id].known) : "—"}</td>
                   </tr>
                 );
               })}
 
               <tr className="totals">
                 <td>{displayMode === "average" ? "Équipe / match" : "Totaux équipe"}</td>
-                <td>{matchCount}</td>
-                <td>{shownPair(totals.fgm, totals.fga, matchCount)}</td>
-                <td>{shownPair(totals.twoPm, totals.twoPa, matchCount)}</td>
-                <td>{shownPair(totals.threePm, totals.threePa, matchCount)}</td>
-                <td>{shownPair(totals.ftm, totals.fta, matchCount)}</td>
+                <td>{matchCount}</td><td>—</td><td>—</td>
+                <td>{shownPair(totals.fgm, totals.fga, matchCount)}</td><td>{percent(totals.fgm,totals.fga)}</td>
+                <td>{shownPair(totals.twoPm, totals.twoPa, matchCount)}</td><td>{percent(totals.twoPm,totals.twoPa)}</td>
+                <td>{shownPair(totals.threePm, totals.threePa, matchCount)}</td><td>{percent(totals.threePm,totals.threePa)}</td>
+                <td>{shownPair(totals.ftm, totals.fta, matchCount)}</td><td>{percent(totals.ftm,totals.fta)}</td>
                 <td>{shown(totals.off, matchCount)}</td>
                 <td>{shown(totals.def, matchCount)}</td>
                 <td>{shown(totals.reb, matchCount)}</td>
@@ -472,7 +480,7 @@ export default function StatsJoueursModule() {
                 <td>{shown(efficiency(totals), matchCount)}</td>
                 <td className="pts">
                   {shown(totals.pts, matchCount)}
-                </td>
+                </td><td>—</td>
               </tr>
 
               <tr className="percentages">

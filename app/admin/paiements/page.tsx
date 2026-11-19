@@ -530,82 +530,7 @@ export default async function AdminPaiementsPage() {
         </section>
 
 
-        <section className={styles.tableCard}>
-          <div className={styles.tableHead}>
-            <div>
-              <h2>Abonnements des utilisateurs</h2>
-              <span>Change directement le forfait d’un compte MyBasket.</span>
-            </div>
-          </div>
 
-          <div className={styles.tableWrapper}>
-            <table>
-              <thead>
-                <tr>
-                  <th>Utilisateur</th>
-                  <th>Email</th>
-                  <th>Abonnement actuel</th>
-                  <th>Changer l’abonnement</th>
-                </tr>
-              </thead>
-              <tbody>
-                {profiles.map((profile) => {
-                  const access = accessByUser.get(profile.id)!;
-                  const currentPlan = access.active ? access.plan : null;
-                  const isPlatformAdmin = ["ceo", "superadmin"].includes(
-                    String(profile.platform_role || ""),
-                  );
-
-                  return (
-                    <tr key={profile.id}>
-                      <td>
-                        <strong>{profile.display_name || "Sans nom"}</strong>
-                      </td>
-                      <td>{profile.email || "—"}</td>
-                      <td>
-                        {isPlatformAdmin ? (
-                          <span className={`${styles.statusBadge} ${styles.active}`}>
-                            Accès total CEO
-                          </span>
-                        ) : (
-                          <div><strong>{currentPlan?.name || "Aucun abonnement actif"}</strong>{access.source === "free" && <small style={{display:"block"}}>Accès offert</small>}</div>
-                        )}
-                      </td>
-                      <td>
-                        {isPlatformAdmin ? (
-                          <span>Géré par le rôle plateforme</span>
-                        ) : (
-                          <form key={`${profile.id}-${currentPlan?.id || "none"}-${access.source}`} action={changeUserSubscriptionAction} className={styles.actions}>
-                            <input type="hidden" name="user_id" value={profile.id} />
-                            <select
-                              name="plan_id"
-                              defaultValue={currentPlan?.id || ""}
-                              required
-                              aria-label={`Abonnement de ${profile.email || profile.display_name || "l’utilisateur"}`}
-                            >
-                              {!currentPlan?.id ? (
-                                <option value="" disabled>
-                                  Choisir un abonnement
-                                </option>
-                              ) : null}
-                              {currentPlan?.id && !userPlans.some(plan => plan.id === currentPlan.id) ? <option value={currentPlan.id}>{currentPlan.name}</option> : null}
-                              {userPlans.map((plan) => (
-                                <option key={plan.id} value={plan.id}>
-                                  {plan.name || "Abonnement"}
-                                </option>
-                              ))}
-                            </select>
-                            <button type="submit">Appliquer</button>
-                          </form>
-                        )}
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
-        </section>
 
         <section className={styles.grid2}>
           <section className={styles.card}>
@@ -937,6 +862,82 @@ export default async function AdminPaiementsPage() {
               ) : null}
             </div>
           </section>
+        </section>
+        <section className={styles.tableCard}>
+          <div className={styles.tableHead}>
+            <div>
+              <h2>Abonnements des utilisateurs</h2>
+              <span>Change directement le forfait d’un compte MyBasket.</span>
+            </div>
+          </div>
+
+          <div className={styles.tableWrapper}>
+            <table>
+              <thead>
+                <tr>
+                  <th>Utilisateur</th>
+                  <th>Email</th>
+                  <th>Abonnement actuel</th>
+                  <th>Changer l’abonnement</th>
+                </tr>
+              </thead>
+              <tbody>
+                {profiles.map((profile) => {
+                  const access = accessByUser.get(profile.id)!;
+                  const currentPlan = access.active ? access.plan : null;
+                  const isPlatformAdmin = ["ceo", "superadmin"].includes(
+                    String(profile.platform_role || ""),
+                  );
+
+                  return (
+                    <tr key={profile.id}>
+                      <td>
+                        <strong>{profile.display_name || "Sans nom"}</strong>
+                      </td>
+                      <td>{profile.email || "—"}</td>
+                      <td>
+                        {isPlatformAdmin ? (
+                          <span className={`${styles.statusBadge} ${styles.active}`}>
+                            Accès total CEO
+                          </span>
+                        ) : (
+                          <div><strong>{currentPlan?.name || "Aucun abonnement actif"}</strong>{access.source === "free" && <small style={{display:"block"}}>Accès offert</small>}</div>
+                        )}
+                      </td>
+                      <td>
+                        {isPlatformAdmin ? (
+                          <span>Géré par le rôle plateforme</span>
+                        ) : (
+                          <form key={`${profile.id}-${currentPlan?.id || "none"}-${access.source}`} action={changeUserSubscriptionAction} className={styles.actions}>
+                            <input type="hidden" name="user_id" value={profile.id} />
+                            <select
+                              name="plan_id"
+                              defaultValue={currentPlan?.id || ""}
+                              required
+                              aria-label={`Abonnement de ${profile.email || profile.display_name || "l’utilisateur"}`}
+                            >
+                              {!currentPlan?.id ? (
+                                <option value="" disabled>
+                                  Choisir un abonnement
+                                </option>
+                              ) : null}
+                              {currentPlan?.id && !userPlans.some(plan => plan.id === currentPlan.id) ? <option value={currentPlan.id}>{currentPlan.name}</option> : null}
+                              {userPlans.map((plan) => (
+                                <option key={plan.id} value={plan.id}>
+                                  {plan.name || "Abonnement"}
+                                </option>
+                              ))}
+                            </select>
+                            <button type="submit">Appliquer</button>
+                          </form>
+                        )}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
         </section>
       </div>
     </main>

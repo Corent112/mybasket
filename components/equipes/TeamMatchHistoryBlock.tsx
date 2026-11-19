@@ -1,4 +1,5 @@
 "use client";
+import PostMatchSummary from "./PostMatchSummary";
 
 import { useEffect, useMemo, useState } from "react";
 import { createPortal } from "react-dom";
@@ -680,6 +681,8 @@ export default function TeamMatchHistoryBlock({ teamId }: { teamId: string }) {
                   </div>
                 </div>
               )}
+
+              {!details.loading && activeTab === "resume" && selectedMatch && <section style={{padding:20,borderRadius:16,background:"#faf7f4",marginTop:16}}><h3>Analyse après-match</h3><PostMatchSummary matchId={selectedMatch.id}/></section>}
 
               {!details.loading && activeTab === "individual" && (
                 <div className="table-shell">

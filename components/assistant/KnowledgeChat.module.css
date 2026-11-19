@@ -1,0 +1,144 @@
+.root {
+  position: fixed;
+  right: 22px;
+  bottom: calc(24px + env(safe-area-inset-bottom));
+  z-index: 950;
+  color: #24171d;
+  font-family: var(--font-roboto), sans-serif;
+}
+.launch {
+  width: 58px;
+  height: 58px;
+  float: right;
+  border: 2px solid #e4bc76;
+  border-radius: 50%;
+  background: #6b1a2c;
+  color: white;
+  font-size: 29px;
+  box-shadow: 0 8px 25px #3b122933;
+  cursor: pointer;
+}
+.panel {
+  width: min(390px, calc(100vw - 28px));
+  height: min(600px, calc(100dvh - 120px));
+  margin-bottom: 12px;
+  display: flex;
+  flex-direction: column;
+  background: #fff;
+  border: 1px solid #e9dce0;
+  border-radius: 22px;
+  overflow: hidden;
+  box-shadow: 0 16px 60px #23091533;
+}
+.panel header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 19px;
+  background: #6b1a2c;
+  color: white;
+}
+.panel small {
+  display: block;
+  font-size: 11px;
+  margin-top: 5px;
+  color: #f0dee3;
+}
+.panel header button {
+  background: transparent;
+  border: 0;
+  color: white;
+  font-size: 26px;
+}
+.messages {
+  flex: 1;
+  overflow: auto;
+  padding: 16px;
+  min-height: 0;
+}
+.messages p {
+  white-space: pre-wrap;
+  line-height: 1.55;
+  margin: 0;
+  font-size: 14px;
+}
+.messages article {
+  padding: 13px;
+  margin: 10px 0;
+  border-radius: 15px;
+}
+.user {
+  background: #f3e8ec;
+  margin-left: 28px !important;
+}
+.assistant {
+  background: #faf8f4;
+}
+.messages details {
+  font-size: 11px;
+  color: #6b1a2c;
+  margin-top: 10px;
+}
+.messages ul {
+  padding-left: 18px;
+}
+.suggestion,
+.choices button {
+  display: block;
+  border: 1px solid #eadce0;
+  border-radius: 12px;
+  background: #fff;
+  color: #6b1a2c;
+  padding: 10px;
+  margin-top: 10px;
+  cursor: pointer;
+  font-size: 12px;
+}
+.choices {
+  display: flex;
+  gap: 8px;
+  padding: 0 16px 8px;
+}
+.panel form {
+  display: flex;
+  gap: 8px;
+  border-top: 1px solid #eee3e6;
+  padding: 13px;
+}
+.panel input {
+  min-width: 0;
+  flex: 1;
+  border: 1px solid #eadce0;
+  background: #faf8f9;
+  border-radius: 12px;
+  padding: 12px;
+  font-size: 14px;
+}
+.panel form button {
+  border: 0;
+  border-radius: 12px;
+  background: #6b1a2c;
+  color: #fff;
+  width: 42px;
+  font-size: 23px;
+}
+.panel button:disabled {
+  opacity: 0.45;
+}
+.error {
+  color: #9d1936;
+  font-size: 12px;
+  padding: 0 16px;
+}
+:global(body:has(.app-dock)) .root {
+  bottom: calc(90px + env(safe-area-inset-bottom));
+}
+@media (max-width: 600px) {
+  .root {
+    right: 14px;
+    bottom: calc(16px + env(safe-area-inset-bottom));
+  }
+  .panel {
+    height: min(540px, calc(100dvh - 170px));
+  }
+}

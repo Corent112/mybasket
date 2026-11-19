@@ -1,3 +1,4 @@
+import {resolveShippingQuote,validateAddress,type PostalAddress} from "@/lib/shop/shipping";
 import { NextResponse } from "next/server";
 import Stripe from "stripe";
 import { createClient } from "@/lib/supabase/server";
@@ -86,7 +87,7 @@ async function resolveSafeItem(supabase: Awaited<ReturnType<typeof createClient>
       .eq("status", "active")
       .maybeSingle();
 
-    if (error || !data) return null;
+    if (error || !data || /institution/i.test(String(data.name))) return null;
 
     const plan = data as {
       id: string;
@@ -124,7 +125,7 @@ export async function POST(request: Request) {
     if(!isSameOriginMutation(request))return NextResponse.json({error:"Requête refusée."},{status:403});
     if(!process.env.STRIPE_SECRET_KEY||!process.env.STRIPE_WEBHOOK_SECRET)return NextResponse.json({error:"Le paiement en ligne est momentanément indisponible."},{status:503});
     const stripe = getStripe();
-    const body = await request.json().catch(() => ({})) as { preferredMethod?: string };
+    const body = await request.json().catch(() => ({})) as { preferredMethod?: string; shipping?: unknown; billing?: unknown; sameAddress?:boolean; shippingCents?:number };
     const preferredMethod = ["apple_pay","paypal"].includes(String(body.preferredMethod)) ? body.preferredMethod : "card";
     const supabase = await createClient();
 
@@ -162,7 +163,7 @@ export async function POST(request: Request) {
     }
 
     if(payableItems.filter(i=>i.item_type==="subscription").length>1)return NextResponse.json({error:"Choisis un seul abonnement par commande."},{status:400});
-    const totalCents = payableItems.reduce(
+    let totalCents = payableItems.reduce(
       (sum, item) => {
         const line = item.unitCents * item.quantity;
         return sum + (item.taxMode === "HT" ? Math.round(line * 1.2) : line);
@@ -175,6 +176,18 @@ export async function POST(request: Request) {
         ? Math.round(line * 0.2)
         : Math.round(line - line / 1.2));
     }, 0);
+    let shipping: Awaited<ReturnType<typeof resolveShippingQuote>>;
+    let shippingAddress: PostalAddress|null=null; let billingAddress: PostalAddress|null=null;
+    try {
+      const destination=body.shipping as Partial<PostalAddress>|undefined;
+      shipping=await resolveShippingQuote(supabase,cartItems,String(destination?.country||"FR"),String(destination?.postalCode||""));
+      if(shipping.required){
+        shippingAddress=validateAddress(body.shipping);
+        billingAddress=body.sameAddress ? shippingAddress : validateAddress(body.billing);
+        if(body.shippingCents!==shipping.cents)return NextResponse.json({error:"Les frais de livraison ont changé. Vérifie le montant actualisé avant de payer."},{status:409});
+      }
+    } catch(error){return NextResponse.json({error:(error as Error).message},{status:400})}
+    totalCents+=shipping.cents;
     const subtotalCents = totalCents - taxCents;
 
     if(!Number.isSafeInteger(totalCents)||totalCents<50||totalCents>99999999)return NextResponse.json({error:"Montant du panier invalide."},{status:400});
@@ -219,6 +232,7 @@ export async function POST(request: Request) {
       sort_order: item.sort_order ?? 0,
       metadata: {
         cart_item_id:item.id,
+        ...(item.item_type === "product" && shipping.required ? {delivery:{shippingAddress,billingAddress,...shipping}} : {}),
         billing_period: item.item_type === "subscription" ? item.assigned_to : null,
       },
       created_at: new Date().toISOString(),
@@ -249,11 +263,13 @@ export async function POST(request: Request) {
           unit_amount: item.taxMode === "HT" ? Math.round(item.unitCents * 1.2) : item.unitCents,
           product_data: {
             name: item.item_type === "subscription" ? `Abonnement MyBasket - ${item.safeTitle}` : item.safeTitle,
-            description: item.safeDescription ?? undefined,
+            // Keep hosted checkout concise: title and photograph only.
             images: item.safeImageUrl ? [item.safeImageUrl] : undefined,
           },
         },
       })),
+      ...(shipping.required ? {shipping_options:[{shipping_rate_data:{type:"fixed_amount" as const,fixed_amount:{amount:shipping.cents,currency:"eur"},display_name:shipping.service}}]} : {}),
+      ...(shippingAddress ? {payment_intent_data:{shipping:{name:shippingAddress.name,address:{line1:shippingAddress.line1,line2:shippingAddress.line2,city:shippingAddress.city,postal_code:shippingAddress.postalCode,country:shippingAddress.country}}}} : {}),
       success_url: `${getSiteUrl(request)}/panier/success?order=${order.id}`,
       cancel_url: `${getSiteUrl(request)}/panier`,
       metadata: {

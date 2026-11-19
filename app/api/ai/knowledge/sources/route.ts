@@ -181,3 +181,5 @@ export async function POST(request: Request) {
     return apiServerError("sources.post", error);
   }
 }
+
+export const maxDuration=300;

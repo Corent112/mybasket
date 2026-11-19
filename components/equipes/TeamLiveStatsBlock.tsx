@@ -233,7 +233,7 @@ export default function TeamLiveStatsBlock({ teamId }: { teamId: string }) {
 
   return (
     <div className="tls">
-      <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:12,flexWrap:"wrap"}}><h3 className="tls-h">📊 Analyse LiveStat</h3><a href="/assistant" style={{padding:"10px 14px",borderRadius:10,background:"#6b1a2c",color:"white",fontSize:12,fontWeight:750,textDecoration:"none"}}>Analyser une feuille de stats avec l’IA</a></div>
+      <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:12,flexWrap:"wrap"}}><h3 className="tls-h">📊 Analyse LiveStat</h3><a href={`/equipes/${teamId}?tab=analysis`} style={{padding:"10px 14px",borderRadius:10,background:"#6b1a2c",color:"white",fontSize:12,fontWeight:750,textDecoration:"none"}}>Analyse après-match</a></div>
 
       {/* Filtres */}
       <div className="tls-filters">

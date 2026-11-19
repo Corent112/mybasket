@@ -47,3 +47,6 @@ assert.equal(conflict.find(p=>p.id==='b').trainings.length,0);
 // A stale profile timestamp must never replace a missing Auth login.
 assert.equal(buildUserDirectory({...data,authUsers:[{id:'a',email:'alice@club.fr'}]}).find(p=>p.id==='a').last_sign_in_at,null);
 console.log('Directory regression scenarios passed');
+
+const reconnected=buildUserDirectory({...data,authUsers:data.authUsers.map(a=>a.id==='a'?{...a,app_metadata:{mybasket_last_connected_at:'2026-11-19T09:15:00Z'}}:a)}).find(p=>p.id==='a');
+assert.equal(formatLastConnection(reconnected),'19/11/2026 10:15');
