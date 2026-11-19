@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import {createClient} from "@/lib/supabase/client";
 import type { AiKnowledgeCategory, AiKnowledgeSource } from "@/lib/ai/knowledge/types";
 import { API, api } from "../api";
 import styles from "../page.module.css";
@@ -340,7 +341,8 @@ function UploadModal({
   onDone: () => void;
 }) {
   const fileRef = useRef<HTMLInputElement>(null);
-  const [file, setFile] = useState<File | null>(null);
+  const [files, setFiles] = useState<File[]>([]);
+  const [results, setResults] = useState<string[]>([]);
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
   const [categorySlug, setCategorySlug] = useState("");
@@ -349,57 +351,45 @@ function UploadModal({
   const [busy, setBusy] = useState(false);
 
   const submit = async () => {
-    if (!file) {
+    if (!files.length) {
       notify("Sélectionne un fichier.", "error");
       return;
     }
 
-    setBusy(true);
-    try {
-      const formData = new FormData();
-      formData.append("file", file);
-      formData.append("title", title || file.name.replace(/\.[^.]+$/, ""));
-      if (description) formData.append("description", description);
-      if (categorySlug) formData.append("category", categorySlug);
-      if (provenance) formData.append("provenance", provenance);
-      if (author) formData.append("author", author);
-
-      const data = await api.post<{
-        indexation: { ok: boolean; chunkCount: number; warnings: string[]; error?: string };
-      }>(API.sources, formData);
-
-      if (data.indexation.ok) {
-        notify(`Document importé et indexé (${data.indexation.chunkCount} passages).`, "success");
-      } else {
-        notify(
-          `Document importé mais non indexé : ${data.indexation.error || "erreur inconnue"}`,
-          "error"
-        );
+    setBusy(true); setResults([]);
+    const remaining: File[] = [];
+    for (const [index, file] of files.entries()) {
+      setResults(old => [...old, `${index + 1}/${files.length} · ${file.name} — analyse en cours…`]);
+      try {
+        const prepared=await api.post<{sourceId:string;path:string;token:string;bucket:string;mimeType:string}>(`${API.sources}/prepare`,{name:file.name,type:file.type,size:file.size,title:files.length===1&&title?title:file.name.replace(/\.[^.]+$/,""),description,category:categorySlug,provenance,author});
+        const uploaded=await createClient().storage.from(prepared.bucket).uploadToSignedUrl(prepared.path,prepared.token,file,{contentType:prepared.mimeType||file.type||"application/octet-stream"});
+        if(uploaded.error){await api.delete(`${API.sources}/${prepared.sourceId}`).catch(()=>{});throw new Error("Envoi impossible. Tu peux réessayer ce document.")}
+        const data=await api.post<{indexation:{ok:boolean;chunkCount:number;warnings:string[];error?:string}}>(`${API.sources}/${prepared.sourceId}/reindex`);
+        const outcome = data.indexation.ok ? data.indexation.chunkCount ? `✓ ${data.indexation.chunkCount} passages indexés` : "Stocké sans contenu indexé" : `Importé, indexation à reprendre : ${data.indexation.error || "consulter le document"}`;
+        setResults(old => [...old.slice(0, -1), `${file.name} — ${outcome}${data.indexation.warnings?.length ? " · "+data.indexation.warnings.join(" · ") : ""}`]);
+      } catch (error) {
+        remaining.push(file);
+        setResults(old => [...old.slice(0, -1), `${file.name} — ${error instanceof Error ? error.message : "Import impossible"}`]);
       }
-      data.indexation.warnings?.forEach((w) => notify(w, "info"));
-
-      onDone();
-    } catch (error) {
-      notify(error instanceof Error ? error.message : "Import impossible.", "error");
-    } finally {
-      setBusy(false);
     }
+    setFiles(remaining); setBusy(false);
+    notify(remaining.length ? `${remaining.length} fichier(s) à réessayer. Les autres sont conservés.` : "Import terminé. Consulte le résultat de chaque document.", remaining.length ? "error" : "success");
   };
 
   return (
     <Modal
-      title="Importer un document"
+      title="Importer des ressources"
       onClose={busy ? () => {} : onClose}
       footer={
         <>
-          <button type="button" className={styles.btn} onClick={onClose} disabled={busy}>
-            Annuler
+          <button type="button" className={styles.btn} onClick={results.length ? onDone : onClose} disabled={busy}>
+            {results.length ? "Terminer" : "Annuler"}
           </button>
           <button
             type="button"
             className={`${styles.btn} ${styles.btnPrimary}`}
             onClick={submit}
-            disabled={busy || !file}
+            disabled={busy || !files.length}
           >
             {busy ? "Import et indexation…" : "Importer et indexer"}
           </button>
@@ -417,23 +407,28 @@ function UploadModal({
       </Notice>
 
       <Field
-        label="Fichier"
-        hint="PDF, DOCX, TXT, Markdown, CSV — 50 Mo maximum. PPTX et images sont stockés mais pas encore indexés."
+        label="Documents"
+        hint="PDF, DOCX, PowerPoint, TXT, Markdown, CSV et images — 50 Mo par fichier. Les résultats d’analyse sont indiqués pour chaque document."
       >
         <input
           ref={fileRef}
           type="file"
+          multiple
+          disabled={busy}
           className={styles.input}
           accept={ACCEPT}
           onChange={(e) => {
-            const selected = e.target.files?.[0] || null;
-            setFile(selected);
-            if (selected && !title) setTitle(selected.name.replace(/\.[^.]+$/, ""));
+            const selected = Array.from(e.target.files || []);
+            setFiles(selected); setResults([]);
+            if (selected.length === 1) setTitle(selected[0].name.replace(/\.[^.]+$/, ""));
+            else setTitle("");
           }}
         />
       </Field>
 
-      <Field label="Titre">
+      {!!files.length && <p>{files.length} document(s) sélectionné(s)</p>}
+      {!!results.length && <div role="status" style={{display:"grid",gap:8,fontSize:13}}>{results.map((line,i)=><p key={i}>{line}</p>)}</div>}
+      <Field label="Titre (un document)">
         <input
           className={styles.input}
           value={title}

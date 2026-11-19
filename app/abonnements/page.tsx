@@ -522,7 +522,8 @@ function PlansSection({
 }
 
 function PlanCard({ plan, billing }: { plan: Plan; billing: Billing }) {
-  const features = toFeatureList(plan.features);
+  const features = toFeatureList(plan.features).filter(feature => !/stockage|\b\d+\s*(go|gb|to|tb)\b/i.test(feature));
+  const onQuote = /institution/i.test(`${plan.slug || ""} ${plan.name}`);
   const priceCents = getPriceCents(plan, billing);
   const saving = getSaving(plan);
   const isClub = plan.target === "club";
@@ -614,20 +615,17 @@ function PlanCard({ plan, billing }: { plan: Plan; billing: Billing }) {
 
       {plan.description && <p className="desc">{plan.description}</p>}
 
-      <div className="price">
-        {formatPrice(priceCents)}
-        {priceCents !== 0 && (
+      <div className={`price${onQuote ? " quote" : ""}`}>
+        {onQuote ? "Devis sur mesure" : formatPrice(priceCents)}
+        {!onQuote && priceCents !== 0 && (
           <span>{billing === "yearly" ? "/ an" : "/ mois"}</span>
         )}
       </div>
 
-      {billing === "yearly" && saving > 0 && (
+      {!onQuote && billing === "yearly" && saving > 0 && (
         <div className="saving">Économisez {formatPrice(saving)}</div>
       )}
 
-      {plan.storage_gb !== null && (
-        <div className="storage">☁️ {plan.storage_gb} Go de stockage</div>
-      )}
 
       <ul>
         {features.length > 0 ? (
@@ -637,10 +635,9 @@ function PlanCard({ plan, billing }: { plan: Plan; billing: Billing }) {
         )}
       </ul>
 
-      <button type="button" className="cta" onClick={addToCart}>
-        <span className="cart-icon">🛒</span>
-        Ajouter au panier
-      </button>
+      {onQuote ? <Link href="/contact?objet=devis-institution" className="cta">Demander un devis</Link> : <button type="button" className="cta" onClick={addToCart}>
+        <span className="cart-icon">🛒</span> Ajouter au panier
+      </button>}
 
       <style jsx>{`
         .card {
@@ -729,11 +726,14 @@ function PlanCard({ plan, billing }: { plan: Plan; billing: Billing }) {
         }
 
         .price {
+          overflow-wrap: normal;
           color: #17121a;
           font-size: 44px;
           font-weight: 1000;
           margin-bottom: 12px;
         }
+
+        .price.quote { font-size:clamp(22px,2.2vw,29px); line-height:1.2; }
 
         .price span {
           display: block;
@@ -776,6 +776,7 @@ function PlanCard({ plan, billing }: { plan: Plan; billing: Billing }) {
         }
 
         .cta {
+          display:flex; justify-content:center; align-items:center; text-decoration:none;
           margin-top: auto;
           width: 100%;
           border: none;

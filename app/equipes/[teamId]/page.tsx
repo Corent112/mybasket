@@ -22,6 +22,8 @@ import PlayerTeamAttachment from "@/components/equipes/PlayerTeamAttachment";
 import PlayerForm from "@/components/equipes/PlayerForm";
 import TeamForm from "@/components/equipes/TeamForm";
 import TeamStaffManager from "@/components/equipes/TeamStaffManager";
+import TeamMatchAnalysis from "@/components/equipes/TeamMatchAnalysis";
+import StatsJoueursModule from "@/components/management/StatsJoueursModule";
 import TeamAdvancedStats from "@/components/equipes/TeamAdvancedStats";
 import TeamShootingGrids from "@/components/equipes/TeamShootingGrids";
 import TeamAvailabilityLoad from "@/components/equipes/TeamAvailabilityLoad";
@@ -99,7 +101,8 @@ type TeamMainTab =
   | "resources"
   | "activity"
   | "stats"
-  | "advanced";
+  | "advanced"
+  | "analysis";
 
 type TeamDashboardData = {
   loading: boolean;
@@ -786,6 +789,7 @@ export default function EquipeDetailPage({
     const tab=new URL(window.location.href).searchParams.get("tab");
     if(tab==="shooting") setActiveTab("shooting");
     if(tab==="load") setActiveTab("load");
+    if(tab==="analysis") setActiveTab("analysis");
   },[teamId]);
   const [playerForm, setPlayerForm] = useState<{
     open: boolean;
@@ -1474,6 +1478,7 @@ export default function EquipeDetailPage({
             <Ic d={ICONS.filter} size={16} />
             Stats avancées {!canUseLiveStats && team.isShared ? "🔒" : ""}
           </button>
+          <button className={activeTab === "analysis" ? "active" : ""} onClick={() => { if(canUseLiveStats) setActiveTab("analysis"); }}>📊 Analyse des matchs {!canUseLiveStats && team.isShared ? "🔒" : ""}</button>
         </section>
 
         {activeTab === "presentation" && (
@@ -1755,10 +1760,13 @@ export default function EquipeDetailPage({
           </div>
         )}
 
+        {activeTab === "analysis" && canUseLiveStats && <div className="team-tab-panel stats-panel"><TeamMatchAnalysis teamId={linkedStatsTeamId} teamName={team.name}/></div>}
+
         {activeTab === "advanced" && (
           <div className="team-tab-panel stats-panel">
+            {(team.competitionSource!=="lnb"||showCodedStats)&&<StatsJoueursModule key={linkedStatsTeamId} initialTeamId={linkedStatsTeamId} codedOnly/>}
             {team.competitionSource === "lnb" && <button className="tl-btn" onClick={() => setShowCodedStats(v => !v)}>{showCodedStats ? "Voir les données LNB" : "Voir aussi l’analyse des matchs codés"}</button>}
-            {team.competitionSource === "lnb" && <LnbPlayerStats teamId={teamId} revision={competitionRevision} externalData={officialStats.data} externalLoading={officialStats.loading} externalError={officialStats.error} />}
+            {team.competitionSource === "lnb" && !showCodedStats && <LnbPlayerStats initialView="complete" teamId={teamId} revision={competitionRevision} externalData={officialStats.data} externalLoading={officialStats.loading} externalError={officialStats.error} />}
             {(team.competitionSource !== "lnb" || showCodedStats) && <TeamAdvancedStats
               teamId={linkedStatsTeamId}
               team={team}
@@ -3761,7 +3769,7 @@ function TeamMatchStatsBlock({ teamId, matchCategory }: { teamId: string; matchC
       const { data: matchData, error: matchError } = await supabase
         .from("match_stats")
         .select(
-          "id, team_id, opponent, match_date, us_score, them_score, result, home, match_category, project_state",
+          "id, team_id, opponent, match_date, us_score, them_score, result, home, match_category, project_state, project_status",
         )
         .eq("team_id", teamId)
         .order("match_date", { ascending: false });
@@ -3776,7 +3784,7 @@ function TeamMatchStatsBlock({ teamId, matchCategory }: { teamId: string; matchC
         return;
       }
 
-      const allMatchRows = (matchData ?? []) as SupaMatchRow[];
+      const allMatchRows = ((matchData ?? []) as (SupaMatchRow & {project_status?:string})[]).filter(m=>m.project_status==null||m.project_status==="completed");
       const matchRows = matchCategory === "all" ? allMatchRows : allMatchRows.filter((match) => matchCategoryOf(match) === matchCategory);
       setMatches(matchRows);
 
@@ -3830,7 +3838,12 @@ function TeamMatchStatsBlock({ teamId, matchCategory }: { teamId: string; matchC
       {} as Record<string, SupaStatRow[]>,
     );
 
-    return STAT_SPLITS.map((split) => {
+    const perMatch=matches.map(match=>{
+      const stats=emptyTeamStats();addMatchToTeamStats(stats,match);
+      (rowsByMatch[match.id]||[]).forEach(row=>addLineToTeamStats(stats,row));
+      return {key:`match-${match.id}`,label:`${String(match.match_date||'').slice(0,10)} · ${match.opponent||'Adversaire'}`,stats};
+    });
+    return [...perMatch,...STAT_SPLITS.map((split) => {
       const sourceMatches = matches.filter((match) =>
         matchPassesSplit(match, split.key),
       );
@@ -3848,7 +3861,7 @@ function TeamMatchStatsBlock({ teamId, matchCategory }: { teamId: string; matchC
         label: split.label,
         stats,
       };
-    });
+    })];
   }, [matches, statsRows]);
 
   const total =

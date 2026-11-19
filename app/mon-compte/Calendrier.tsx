@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { getTeams } from "@/lib/equipes-store";
 import { calendarCompetitionAge, calendarOpponent, calendarTeamAge, reconcileCalendarFixtures } from "@/lib/calendar-fixtures";
@@ -13,7 +13,7 @@ import { calendarCompetitionAge, calendarOpponent, calendarTeamAge, reconcileCal
  * MODIF : l’« Équipe associée » et les événements proviennent désormais de Supabase.
  * ===================================================================== */
 
-type EventType = "match" | "entrainement" | "tournoi" | "autre";
+type EventType = "match" | "entrainement" | "tournoi" | "rendezvous" | "autre";
 type Venue = "home" | "away" | "";
 
 type Attachment = {
@@ -24,6 +24,7 @@ type Attachment = {
 
 type CalEvent = {
   id: string;
+  readOnly?: boolean;
   date: string;        // "YYYY-MM-DD"
   title: string;
   type: EventType;
@@ -75,6 +76,7 @@ function normalizeTeamForCalendar(team: any): Team {
 function dbTypeToCalendarType(value: string | null | undefined): EventType {
   const type = String(value ?? "").toLowerCase();
 
+  if (type === "health" || type === "appointment") return "rendezvous";
   if (type === "game" || type === "match") return "match";
   if (type === "training" || type === "entrainement" || type === "entraînement") return "entrainement";
   if (type === "formation" || type === "tournoi") return "tournoi";
@@ -83,6 +85,7 @@ function dbTypeToCalendarType(value: string | null | undefined): EventType {
 }
 
 function calendarTypeToDbType(value: EventType): string {
+  if (value === "rendezvous") return "health";
   if (value === "match") return "game";
   if (value === "entrainement") return "training";
   if (value === "tournoi") return "formation";
@@ -93,6 +96,7 @@ function calendarTypeToDbType(value: EventType): string {
 function normalizeCalendarRow(row: any): CalEvent {
   return {
     id: String(row.id ?? ""),
+    readOnly: row.can_edit === false,
     date: String(row.event_date ?? ""),
     title: String(row.title ?? "Évènement"),
     type: dbTypeToCalendarType(row.event_type),
@@ -211,6 +215,14 @@ export default function MonCalendrier() {
   const [fEndTime, setFEndTime] = useState("");
   const [fRepeat, setFRepeat] = useState<"none" | "weekly" | "biweekly" | "monthly">("none");
   const [fRepeatUntil, setFRepeatUntil] = useState("");
+  const savingLock=useRef(false);
+  const [saving,setSaving]=useState(false);
+  const [notice,setNotice]=useState("");
+  const [channels,setChannels]=useState<string[]>([]);
+  const [available,setAvailable]=useState({email:false,push:false,sms:false});
+  const [readOnlyEvent,setReadOnlyEvent]=useState<CalEvent|null>(null);
+  useEffect(()=>{fetch("/api/calendar/notify").then(r=>r.ok?r.json():null).then(value=>{if(value)setAvailable(value)}).catch(()=>{})},[]);
+  const [appointmentType,setAppointmentType] = useState("Médical");
   const [fType, setFType] = useState<EventType>("entrainement");
   const [fVenue, setFVenue] = useState<Venue>("home");
   const [fOpp, setFOpp] = useState("");
@@ -269,12 +281,10 @@ export default function MonCalendrier() {
       return;
     }
 
-    const { data, error } = await supabase
-      .from("calendar_events")
-      .select("*")
-      .or(`user_id.eq.${user.id},owner_id.eq.${user.id}`)
-      .order("event_date", { ascending: true })
-      .order("start_time", { ascending: true });
+    const response = await fetch("/api/calendar/feed");
+    const feed = await response.json().catch(()=>({}));
+    const data = feed.events;
+    const error = response.ok ? null : {message: feed.error || "Calendrier indisponible",code: response.status,details:null,hint:null};
 
     if (error) {
       console.error("Erreur chargement calendrier:", {
@@ -303,7 +313,7 @@ export default function MonCalendrier() {
 
   /* Modale événement */
   const openCreate = (ds: string) => {
-    setEditingId(null);
+    setEditingId(null); setChannels([]); setAppointmentType("Médical");
     setFTitle(""); setFDate(ds); setFTime(""); setFEndTime(""); setFRepeat("none"); setFRepeatUntil(""); setFType("entrainement");
     setFVenue("home"); setFOpp(""); setFLoc("");
     setFTeam(""); setFPlayers([]); setFStatuses({}); setFNotes(""); setFAttach(null);
@@ -311,15 +321,25 @@ export default function MonCalendrier() {
   };
   const openEdit = (id: string) => {
     const e = events.find((x) => x.id === id); if (!e) return;
+    if(e.readOnly){setReadOnlyEvent(e);return;}
     setEditingId(id);
     setFTitle(e.title); setFDate(e.date); setFTime(e.time || ""); setFEndTime(""); setFRepeat("none"); setFRepeatUntil(""); setFType(e.type);
     setFVenue(e.venue || "home"); setFOpp(e.opponent || ""); setFLoc(e.loc || "");
     setFTeam(e.teamId || ""); setFPlayers(e.assignedPlayers || []); setFStatuses(e.participantStatuses || {});
-    setFNotes(e.notes || ""); setFAttach(e.attachment || null);
+    setAppointmentType(e.notes?.match(/Type de rendez-vous : ([^•\n]+)/)?.[1]?.trim() || "Médical"); setFNotes((e.notes || "").replace(/Type de rendez-vous : [^•\n]+[•]?/g,"")); setFAttach(e.attachment || null);
     setOpen(true);
   };
+  async function notifyEvent(eventId:string){
+    if(!channels.length||!fPlayers.length)return;
+    try {
+    setNotice("Évènement enregistré · Envoi des notifications…");
+    const response=await fetch("/api/calendar/notify",{method:"POST",keepalive:true,headers:{"Content-Type":"application/json"},body:JSON.stringify({eventId,channels})});
+    const result=await response.json().catch(()=>({}));
+    setNotice(response.ok?`Évènement enregistré · ${result.sent||0} notification(s) transmise(s)${result.missing?` · ${result.missing} contact(s) ou appareil(s) non renseigné(s)`:""}${result.failed?` · ${result.failed} envoi(s) impossible(s)`:""}`:result.error||"Évènement enregistré ; notifications indisponibles.");
+    } catch {setNotice("Évènement enregistré ; les notifications n’ont pas pu être transmises.")}
+  }
   const saveEvent = async () => {
-    if (!fDate) return; // seule la date est requise (le titre est optionnel)
+    if (!fDate || savingLock.current) return; // seule la date est requise (le titre est optionnel)
 
     const {
       data: { user },
@@ -331,15 +351,19 @@ export default function MonCalendrier() {
       return;
     }
 
+    savingLock.current=true;setSaving(true);setNotice("");
+    try {
     const payload = {
+      id: editingId || crypto.randomUUID(),
       user_id: user.id,
       owner_id: user.id,
       team_id: fTeam || null,
       title:
         fType === "match"
           ? (fTitle.trim() || `Match${fOpp.trim() ? ` vs ${fOpp.trim()}` : ""}`)
-          : (fTitle.trim() || "Entraînement"),
+          : (fTitle.trim() || (fType === "rendezvous" ? `Rendez-vous · ${appointmentType}` : fType === "tournoi" ? "Tournoi" : fType === "autre" ? "Évènement" : "Entraînement")),
       description: [
+        fType === "rendezvous" ? `Type de rendez-vous : ${appointmentType}` : "",
         fNotes.trim(),
         fType === "match" && fVenue === "home" ? "Domicile" : "",
         fType === "match" && fVenue === "away" ? "Extérieur" : "",
@@ -373,7 +397,7 @@ export default function MonCalendrier() {
         guard += 1;
       }
       const seriesId = crypto.randomUUID();
-      const recurringRows = dates.map((eventDate) => ({ ...payload, event_date: eventDate, series_id: seriesId, recurrence_rule: fRepeat }));
+      const recurringRows = dates.map((eventDate,index) => ({ ...payload, id:index===0?payload.id:crypto.randomUUID(), event_date: eventDate, series_id: seriesId, recurrence_rule: fRepeat }));
       const { error } = await supabase.from("calendar_events").insert(recurringRows);
       if (error) {
         console.error("Erreur création récurrence:", error);
@@ -381,6 +405,7 @@ export default function MonCalendrier() {
         return;
       }
       await loadEvents();
+      void notifyEvent(payload.id);
       setOpen(false);
       return;
     }
@@ -418,7 +443,9 @@ export default function MonCalendrier() {
     }
 
     await loadEvents();
+    void notifyEvent(payload.id);
     setOpen(false);
+    } catch(error){setNotice(error instanceof Error?error.message:"Enregistrement impossible.")} finally{savingLock.current=false;setSaving(false)}
   };
 
   const deleteEvent = async () => {
@@ -480,6 +507,8 @@ export default function MonCalendrier() {
 
   return (
     <div className="mb-cal">
+      {notice&&<p role="status" style={{padding:12,background:"#faf5ee",borderRadius:12,color:"#6b1a2c"}}>{notice}</p>}
+      {readOnlyEvent&&<div className="cal-overlay" onClick={()=>setReadOnlyEvent(null)}><section role="dialog" aria-modal="true" aria-label="Évènement partagé" className="cal-modal" onClick={e=>e.stopPropagation()}><h3>{readOnlyEvent.title}</h3><p>{readOnlyEvent.date} · {readOnlyEvent.time}</p><p>{readOnlyEvent.loc}</p><p style={{whiteSpace:"pre-wrap"}}>{readOnlyEvent.notes}</p><p>Évènement partagé par ton équipe.</p><button type="button" className="btn btn-outline" onClick={()=>setReadOnlyEvent(null)}>Fermer</button></section></div>}
       {/* En-tête : titre + navigation + ajout (markup d'origine) */}
       <div className="cal-head">
         <h2 className="cal-title">{title}</h2>
@@ -586,9 +615,12 @@ export default function MonCalendrier() {
                   <option value="match">Match</option>
                   <option value="entrainement">Entraînement</option>
                   <option value="tournoi">Tournoi</option>
+                  <option value="rendezvous">Rendez-vous</option>
                   <option value="autre">Autre</option>
                 </select>
               </div>
+
+              {fType === "rendezvous" && <div className="cal-fld"><label>Type de rendez-vous</label><select value={appointmentType} onChange={e=>setAppointmentType(e.target.value)}>{["Médical","Kinésithérapie","Préparation physique","Scolaire","Entretien individuel","Administratif","Autre"].map(type=><option key={type}>{type}</option>)}</select></div>}
 
               {fType === "match" && (
                 <div className="cal-fld">
@@ -620,10 +652,10 @@ export default function MonCalendrier() {
                 <input type="text" value={fTitle} onChange={(e) => setFTitle(e.target.value)} placeholder="Entraînement" />
               </div>
 
-              <div className="cal-fld">
+              {fType === "match" && <div className="cal-fld">
                 <label>Adversaire</label>
                 <input type="text" value={fOpp} onChange={(e) => setFOpp(e.target.value)} placeholder="Ex : Massy" />
-              </div>
+              </div>}
 
               <div className="cal-fld">
                 <label>Lieu (salle / gymnase)</label>
@@ -657,6 +689,7 @@ export default function MonCalendrier() {
                 )}
               </div>
 
+              {!!fPlayers.length&&<div className="cal-fld"><label>Informer les joueurs</label><div style={{display:"flex",gap:12,flexWrap:"wrap"}}>{([['email','E-mail'],['push','Notification'],['sms','SMS']] as const).map(([id,label])=><label key={id} style={{display:"flex",alignItems:"center",gap:6,fontSize:12}}><input type="checkbox" disabled={!available[id]} checked={channels.includes(id)} onChange={e=>setChannels(old=>e.target.checked?[...old,id]:old.filter(c=>c!==id))}/>{label}{!available[id]?" · à configurer":""}</label>)}</div></div>}
               {editingId && fPlayers.length > 0 && (
                 <div className="cal-fld">
                   <label>Convocations / présences</label>
@@ -706,7 +739,7 @@ export default function MonCalendrier() {
               {editingId && <button type="button" className="cal-del" onClick={deleteEvent}>Supprimer</button>}
               <span className="spacer" />
               <button type="button" className="btn btn-outline" onClick={() => setOpen(false)}>Annuler</button>
-              <button type="button" className="btn btn-black" onClick={saveEvent}>💾 Sauvegarder</button>
+              <button type="button" className="btn btn-black" disabled={saving} onClick={saveEvent}>{saving?"Enregistrement…":"💾 Sauvegarder"}</button>
             </div>
           </div>
         </div>

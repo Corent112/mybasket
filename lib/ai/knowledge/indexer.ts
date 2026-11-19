@@ -1,5 +1,5 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { AI_EMBEDDING_MODEL, AI_STORAGE_BUCKET } from "@/lib/ai/config";
+import { AI_EMBEDDING_MODEL, AI_STORAGE_BUCKET, AI_MAX_FILE_SIZE } from "@/lib/ai/config";
 import { buildChunks, estimateTokens } from "./chunking";
 import { embedTexts, toPgVector } from "./embeddings";
 import { extractDocumentText, isIndexableType, resolveSourceType } from "./extract";
@@ -78,6 +78,8 @@ export async function indexSource(
     if (downloadError || !file) {
       throw new Error(downloadError?.message || "Téléchargement du fichier impossible.");
     }
+
+    if(file.size>AI_MAX_FILE_SIZE)throw new Error("Le document dépasse 50 Mo.");
 
     /* --- 2. Extraction -------------------------------------------- */
     const sourceType = resolveSourceType(source.mime_type, source.original_filename);

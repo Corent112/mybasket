@@ -205,7 +205,8 @@ export default function PlaybookProfitability({ playbookId, systems }: { playboo
         .pbp-table { width: 100%; border-collapse: collapse; font-size: 12.5px; min-width: 720px; }
         .pbp-table th, .pbp-table td { padding: 8px 10px; text-align: center; border-bottom: 1px solid #f0e9eb; }
         .pbp-table th.l, .pbp-table td.l { text-align: left; }
-        .pbp-table th { color: #9a8f93; font-size: 11px; text-transform: uppercase; }
+        .pbp-table th { white-space:nowrap; overflow-wrap:normal; word-break:normal; color: #9a8f93; font-size: 10px; text-transform: uppercase; }
+        .pbp-table td { overflow-wrap:normal; word-break:normal; }
         .pbp-table td.click { cursor: pointer; color: #6B1A2C; font-weight: 800; }
         .pbp-table td.click:hover { text-decoration: underline; }
         .pbp-table .cell { border: none; background: transparent; font: inherit; font-weight: 800; cursor: pointer; color: #1c7c46; padding: 2px 6px; border-radius: 6px; }

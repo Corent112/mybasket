@@ -64,10 +64,11 @@ export async function unregisterPush(db:SupabaseClient,userId:string,endpoint:st
  const result=await bucket.remove([`users/${userId}/${hash(endpoint)}.json`]);
  if(result.error)throw new MessagingAccessError('Désactivation impossible.',503);
 }
-export async function sendMessagePush(db:SupabaseClient,userIds:string[],input:{title:string;conversationId:string}){
+export async function sendMessagePush(db:SupabaseClient,userIds:string[],input:{title:string;conversationId:string;url?:string;body?:string;tag?:string}){
+ let sent=0;
  try{
-  const bucket=await privateBucket(db);if(!bucket)return;
-  const keys=await readJson<{publicKey:string;privateKey:string}>(bucket,'system/vapid.json');if(!keys)return;
+  const bucket=await privateBucket(db);if(!bucket)return 0;
+  const keys=await readJson<{publicKey:string;privateKey:string}>(bucket,'system/vapid.json');if(!keys)return 0;
   const targets:Array<{userId:string;file:string;registration:Registration}>=[];
   await Promise.all([...new Set(userIds)].map(async userId=>{
    const files=await bucket.list(`users/${userId}`,{limit:20});
@@ -80,9 +81,10 @@ export async function sendMessagePush(db:SupabaseClient,userIds:string[],input:{
   await Promise.all(Array.from({length:Math.min(8,targets.length)},async()=>{
    while(cursor<targets.length&&Date.now()<deadline){
     const {userId,file,registration}=targets[cursor++];
-    try{await webpush.sendNotification(registration.subscription,JSON.stringify({title:input.title.slice(0,80),body:'Nouveau message sur MyBasket',userId,url:`/mon-compte?tab=messagerie&conversation=${input.conversationId}`,tag:`message-${input.conversationId}`}),{TTL:3600,timeout:3000,vapidDetails:{subject:'https://mybasket.vercel.app',...keys}})}
+    try{await webpush.sendNotification(registration.subscription,JSON.stringify({title:input.title.slice(0,80),body:input.body||'Nouveau message sur MyBasket',userId,url:input.url||`/mon-compte?tab=messagerie&conversation=${input.conversationId}`,tag:input.tag||`message-${input.conversationId}`}),{TTL:3600,timeout:3000,vapidDetails:{subject:'https://mybasket.vercel.app',...keys}});sent++}
     catch(error){const status=(error as {statusCode?:number}).statusCode;if(status===404||status===410)await bucket.remove([`users/${userId}/${file}`])}
    }
   }));
- }catch{console.warn('Notification de message non distribuée ; le message reste disponible dans la messagerie.')}
+ }catch{console.warn('Notification non distribuée ; le contenu reste disponible sur MyBasket.')}
+ return sent;
 }

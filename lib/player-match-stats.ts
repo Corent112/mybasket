@@ -40,7 +40,9 @@ export async function loadPlayerMatchStats(supabase: SupabaseClient, teamId: str
     const actions=Array.isArray(state?.actions)?state.actions:[];
     const hasLineups=actions.some((action:any)=>Array.isArray(action.lineup)&&action.lineup.length>0);
     const plusMinus=row.plus_minus??(hasLineups?actions.reduce((sum:number,action:any)=>Array.isArray(action.lineup)&&action.lineup.includes(String(row.player_id))?sum+ptsOf(action)-themPtsOf(action):sum,0):null);
-    row={...row,plus_minus:plusMinus};
+    const actionList=Array.isArray(state?.actions)?state.actions:null;
+    const drawn=row.fpf??(actionList?actionList.filter((a:any)=>a.actionType==='faute-provoquee'&&String(a.playerId)===String(row.player_id)).length:null);
+    row={...row,plus_minus:plusMinus,fpf:drawn};
     const saved=state?.minutesByPlayer;
     if(!saved||!Object.prototype.hasOwnProperty.call(saved,String(row.player_id)))return row;
     const raw=saved[String(row.player_id)];
@@ -86,7 +88,7 @@ export function summarizePlayerMatchRows(rows: Record<string, any>[]) {
     current.off += stat(row.off_reb); current.def += stat(row.def_reb);
     current.reb += row.reb == null ? stat(row.off_reb) + stat(row.def_reb) : stat(row.reb);
     current.pts += row.pts == null ? stat(row.p2m) * 2 + stat(row.p3m) * 3 + stat(row.ftm) : stat(row.pts);
-    current.ast += stat(row.ast); current.st += stat(row.stl); current.to += stat(row.turnovers); current.bs += stat(row.blk); current.pf += stat(row.pf);
+    current.ast += stat(row.ast); current.st += stat(row.stl); current.to += stat(row.turnovers); current.bs += stat(row.blk); current.pf += stat(row.pf); current.fpf += stat(row.fpf);
   }
   return players;
 }

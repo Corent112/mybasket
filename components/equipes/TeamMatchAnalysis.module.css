@@ -1,0 +1,172 @@
+.root {
+  display: grid;
+  gap: 18px;
+  color: #2a2025;
+  min-width: 0;
+}
+.header {
+  display: flex;
+  justify-content: space-between;
+  gap: 20px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+.header h2 {
+  margin: 6px 0;
+  color: #6b1a2c;
+}
+.header p {
+  margin: 6px 0;
+}
+.header small {
+  font-size: 10px;
+  font-weight: 900;
+  letter-spacing: 1.4px;
+  color: #95713d;
+}
+.controls {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  align-items: center;
+}
+.root button,
+.root select {
+  padding: 9px 12px;
+  border: 1px solid #dfcfd5;
+  border-radius: 10px;
+  background: white;
+  color: #6b1a2c;
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+  max-width: 100%;
+}
+.root button:disabled {
+  opacity: 0.5;
+}
+.note {
+  font-size: 12px;
+  color: #776970;
+  margin: 0;
+}
+.kpis {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(145px, 1fr));
+  gap: 12px;
+}
+.kpis article {
+  display: grid;
+  gap: 7px;
+  padding: 20px 16px;
+  border: 1px solid #eadfe3;
+  background: white;
+  border-radius: 16px;
+}
+.kpis strong {
+  font-size: 29px;
+  color: #6b1a2c;
+}
+.kpis b {
+  font-size: 12px;
+}
+.kpis small {
+  font-size: 10px;
+  color: #8b7e83;
+}
+.grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+}
+.card {
+  min-width: 0;
+  border: 1px solid #e9dde2;
+  border-radius: 18px;
+  background: white;
+  padding: 20px;
+}
+.card h3 {
+  font-size: 16px;
+  margin: 0 0 19px;
+  color: #6b1a2c;
+}
+.card table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+.card th,
+.card td {
+  padding: 12px 6px;
+  text-align: left;
+  border-bottom: 1px solid #f1e8ec;
+  white-space: nowrap;
+  word-break: normal;
+}
+.card th {
+  font-size: 10px;
+  text-transform: uppercase;
+}
+.card meter {
+  display: block;
+  max-width: 85px;
+  width: 100%;
+  height: 6px;
+  margin-top: 5px;
+  accent-color: #6b1a2c;
+}
+.distribution {
+  display: flex;
+  border-radius: 9px;
+  overflow: hidden;
+  min-height: 38px;
+}
+.distribution div {
+  color: white;
+  text-align: center;
+  padding: 10px 3px;
+  font-size: 10px;
+  white-space: nowrap;
+}
+.card dl {
+  font-size: 13px;
+}
+.card dl > div {
+  display: flex;
+  justify-content: space-between;
+  padding: 11px 0;
+  border-bottom: 1px solid #f0e8eb;
+}
+.card dd {
+  margin: 0;
+  font-weight: 700;
+}
+.chart {
+  height: 240px;
+  width: 100%;
+  margin-top: 15px;
+}
+.scroll {
+  overflow: auto;
+}
+.card ul {
+  padding-left: 20px;
+  font-size: 13px;
+  line-height: 1.7;
+}
+@media (max-width: 800px) {
+  .grid {
+    grid-template-columns: 1fr;
+  }
+  .card {
+    padding: 15px;
+  }
+  .controls {
+    width: 100%;
+  }
+  .controls select {
+    flex: 1;
+    min-width: 150px;
+  }
+}

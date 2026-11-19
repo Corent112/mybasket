@@ -855,7 +855,7 @@ export async function finalizeLiveMatch(args: {
         match_category: payload.matchCategory ?? "friendly",
       })
       .eq("id", matchId);
-    if (matchError) logSupabaseError("finalizeLiveMatch: update match_stats (non bloquant)", matchError);
+    if (matchError) return {ok:false,error:supabaseErrorMessage(matchError)};
 
     // 2) Upsert final du boxscore joueurs
     const rows = payload.lines
@@ -865,7 +865,7 @@ export async function finalizeLiveMatch(args: {
       const { error: linesError } = await supabase
         .from("match_player_stats")
         .upsert(rows, { onConflict: "match_id,player_id" });
-      if (linesError) logSupabaseError("finalizeLiveMatch: upsert match_player_stats (non bloquant)", linesError);
+      if (linesError) return {ok:false,error:supabaseErrorMessage(linesError)};
     }
 
     // 3) Le calendrier ne reçoit le match qu'ici, une fois le match terminé.
@@ -880,6 +880,8 @@ export async function finalizeLiveMatch(args: {
     });
 
     // NB : on NE réécrit PAS match_actions (déjà en base au fil de l'eau).
+    // Trigger the post-match report without delaying match finalization.
+    void fetch("/api/ai/post-match",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({matchId}),keepalive:true}).catch(()=>{});
     return { ok: true, matchId };
   } catch (error: any) {
     logSupabaseError("finalizeLiveMatch", error);
@@ -1086,6 +1088,7 @@ export async function saveLiveMatch(
       home: payload.home,
     });
 
+    void fetch("/api/ai/post-match",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({matchId:match.id}),keepalive:true}).catch(()=>{});
     return { ok: true, matchId: match.id, warning };
   } catch (error: any) {
     console.error("Erreur saveLiveMatch complète:", {

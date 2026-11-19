@@ -78,7 +78,6 @@ const APP_LINKS = [
 ];
 
 const ACCOMPAGNEMENT = [
-  { label: "Analyse de match IA", href: "/assistant" },
   { label: "Direction technique", href: "/accompagnement/direction-technique" },
   { label: "Formation", href: "/accompagnement/formation" },
   { label: "Scouting vidéo", href: "/accompagnement/scouting-video" },

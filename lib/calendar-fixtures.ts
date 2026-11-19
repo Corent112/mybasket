@@ -68,7 +68,7 @@ export function reconcileCalendarFixtures<T extends CalendarRow>(rows: T[], team
     const identity = marker && scope
       ? JSON.stringify([scope, marker])
       : null;
-    const key = JSON.stringify([scope, age, row.event_date, row.start_time?.slice(0, 5), side, normalizedOpponent]);
+    const key = JSON.stringify([scope, age, row.event_date, row.start_time?.slice(0, 5), normalizedOpponent]);
     if (!row.event_date || !normalizedOpponent || (!scope && !age)) {
       result.push(corrected);
       continue;
@@ -89,5 +89,23 @@ export function reconcileCalendarFixtures<T extends CalendarRow>(rows: T[], team
     if (identity) fixtures.set(identity, slot);
   }
 
-  return result;
+  // A finished LiveStats game and its imported fixture are one calendar event.
+  // Different explicit start times still represent separate games (double-headers).
+  const games=new Map<string,number[]>();const canonical:T[]=[];
+  const rank=(row:T)=>(row.attachment_url?2:0)+(Array.isArray(row.assigned_player_ids)&&row.assigned_player_ids.length?1:0)+((row as T&{can_edit?:boolean}).can_edit?4:0);
+  for(const row of result){
+    if(!['game','match'].includes(row.event_type||'')||!row.event_date||!row.team_id){canonical.push(row);continue;}
+    const opponent=calendarOpponent(row.title||'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase().replace(/[^a-z0-9]+/g,' ').trim();
+    if(!opponent){canonical.push(row);continue;}
+    const key=JSON.stringify([row.team_id,row.event_date,opponent]);const candidates=games.get(key)||[];
+    const time=row.start_time?.slice(0,5)||'';const index=candidates.find(index=>{const other=canonical[index].start_time?.slice(0,5)||'';return !time||!other||time===other});
+    if(index==null){candidates.push(canonical.length);games.set(key,candidates);canonical.push(row)}
+    else if(rank(row)>rank(canonical[index])||(rank(row)===rank(canonical[index])&&(row.updated_at||'')>(canonical[index].updated_at||'')))canonical[index]=row;
+  }
+  // Non-fixture copies share the exact schedule, participants and content.
+  const seen = new Set<string>();
+  return canonical.filter(row => {
+    const key = JSON.stringify([row.team_id, row.event_date, row.start_time?.slice(0,5), (row as CalendarRow & {end_time?:string}).end_time?.slice(0,5), row.event_type, row.title?.trim(), row.location?.trim(), row.description?.trim(), Array.isArray(row.assigned_player_ids) ? [...row.assigned_player_ids].sort() : []]);
+    if(seen.has(key))return false;seen.add(key);return true;
+  });
 }

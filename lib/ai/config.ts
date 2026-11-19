@@ -86,11 +86,11 @@ export const AI_ALLOWED_MIME_TYPES: Record<
   "application/vnd.openxmlformats-officedocument.presentationml.presentation": {
     sourceType: "pptx",
     extensions: ["pptx"],
-    indexable: false,
+    indexable: true,
   },
-  "image/png": { sourceType: "image", extensions: ["png"], indexable: false },
-  "image/jpeg": { sourceType: "image", extensions: ["jpg", "jpeg"], indexable: false },
-  "image/webp": { sourceType: "image", extensions: ["webp"], indexable: false },
+  "image/png": { sourceType: "image", extensions: ["png"], indexable: true },
+  "image/jpeg": { sourceType: "image", extensions: ["jpg", "jpeg"], indexable: true },
+  "image/webp": { sourceType: "image", extensions: ["webp"], indexable: true },
 };
 
 export type AiSourceType =
@@ -110,6 +110,7 @@ export type AiSourceType =
 /* --------------------------------------------------------------------- */
 
 export const AI_MODULES = [
+  { key: "post-match", label: "Analyse après-match" },
   { key: "coach-chat", label: "Coach IA" },
   { key: "exercise-generation", label: "Création d'exercice" },
   { key: "system-generation", label: "Création de système" },

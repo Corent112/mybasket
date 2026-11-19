@@ -173,6 +173,8 @@ export default function ProductForm({
           price_cents: priceTtcCents,
           metadata: {
             ...(draft.metadata || {}),
+            weight_g: productMetadata.weight_g ?? (/cahier/i.test(`${draft.category} ${draft.name}`) ? 250 : null),
+            requires_shipping:productMetadata.requires_shipping!==false,
             price_ht_cents: priceHtCents,
             tax_rate: taxRate,
             published_at:
@@ -398,6 +400,12 @@ export default function ProductForm({
                       }
                     />
                   </div>
+                </div>
+
+                <div className={styles.field}>
+                  <label className={styles.label} htmlFor="weight">Poids expédié, emballage compris (g)</label>
+                  <input id="weight" className={styles.input} type="number" min={1} max={30000} step={1} value={String(productMetadata.weight_g ?? (/cahier/i.test(`${draft.category} ${draft.name}`) ? 250 : ""))} placeholder="Ex. : 250 pour un cahier" onChange={e=>set("metadata",{...productMetadata,weight_g:e.target.value ? Number(e.target.value) : null})}/>
+                  <label style={{display:"flex",alignItems:"center",gap:8,marginTop:12}}><input type="checkbox" checked={productMetadata.requires_shipping!==false} onChange={e=>set("metadata",{...productMetadata,requires_shipping:e.target.checked})}/> Produit physique à expédier</label>
                 </div>
 
                 <div className={styles.priceSummary}>

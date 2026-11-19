@@ -1,6 +1,7 @@
 "use client";
+import {reconcileCalendarFixtures} from "@/lib/calendar-fixtures";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
 
 type CalendarRow = {
@@ -54,19 +55,23 @@ export default function PlayerCalendar({
   playerName,
   guardianEmails = [],
   school,
+  onlyKind,
 }: {
   teamId: string;
   playerId: string;
   playerName: string;
   guardianEmails?: string[];
   school?: string;
+  onlyKind?: EventKind;
 }) {
   const supabase = useMemo(() => createClient(), []);
   const [cursor, setCursor] = useState(() => mondayOf(new Date()));
   const [events, setEvents] = useState<CalendarRow[]>([]);
+  const loadSequence=useRef(0);
+  const[feedError,setFeedError]=useState("");
   const [loading, setLoading] = useState(true);
   const [open, setOpen] = useState(false);
-  const [kind, setKind] = useState<EventKind>("health");
+  const [kind, setKind] = useState<EventKind>(onlyKind||"health");
   const [title, setTitle] = useState("");
   const [date, setDate] = useState(iso(new Date()));
   const [startTime, setStartTime] = useState("");
@@ -98,28 +103,27 @@ export default function PlayerCalendar({
   }, [view, cursor, week]);
 
   async function reload() {
-    setLoading(true);
+    const sequence=++loadSequence.current;
+    setLoading(true);setFeedError("");
     const start = range.start;
     const end = range.end;
-    const { data, error } = await supabase
-      .from("calendar_events")
-      .select("id,title,description,event_date,start_time,end_time,location,event_type,assigned_player_ids,participant_statuses")
-      .eq("team_id", teamId)
-      .gte("event_date", start)
-      .lte("event_date", end)
-      .order("event_date")
-      .order("start_time");
+    const params=new URLSearchParams({teamId,playerId,start,end});
+    const response=await fetch(`/api/calendar/feed?${params}`);
+    const feed=await response.json().catch(()=>({}));
+    const data=feed.events;
+    const error=response.ok?null:feed.error||"Calendrier indisponible";
 
-    if (error) console.error("Calendrier joueur :", error);
+    if(sequence!==loadSequence.current)return;
+    if (error) {console.error("Calendrier joueur :", error);setFeedError(String(error));}
     const rows = ((data || []) as CalendarRow[]).filter((row) => {
       const assigned = Array.isArray(row.assigned_player_ids) ? row.assigned_player_ids.map(String) : [];
       return assigned.length === 0 || assigned.includes(String(playerId));
     });
-    setEvents(rows);
+    setEvents(reconcileCalendarFixtures(rows,[]).filter(row=>!onlyKind||eventKind(row)===onlyKind));
     setLoading(false);
   }
 
-  useEffect(() => { void reload(); }, [teamId, playerId, cursor, view]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { void reload(); const update=()=>void reload();window.addEventListener("mybasket:calendar-updated",update);return()=>{loadSequence.current++;window.removeEventListener("mybasket:calendar-updated",update)} }, [teamId, playerId, cursor, view,onlyKind]); // eslint-disable-line react-hooks/exhaustive-deps
 
   function movePeriod(delta: number) {
     setCursor((current) => {
