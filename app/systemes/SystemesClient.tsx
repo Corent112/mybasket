@@ -115,13 +115,16 @@ function SystemCard({
   onToggleFavorite: (item: SystemItem) => void;
 }) {
   const previewImages = schemaPreviewImages(item);
+  const [previewHovered, setPreviewHovered] = useState(false);
 
   const firstTempsFort = item.tempsForts?.[0];
   const detailHref = `/systemes/${item.id}`;
   const editHref = `/systemes/creer?id=${item.id}`;
 
   return (
-    <article className="mb-system-card" style={{position:"relative"}}>
+    <article className="mb-system-card" style={{position:"relative"}}
+      onPointerEnter={(event) => { if (event.pointerType !== "touch") setPreviewHovered(true); }}
+      onPointerLeave={() => setPreviewHovered(false)}>
       <button
         type="button"
         className={`mb-favorite-star ${isFavorite ? "is-favorite" : ""}`}
@@ -136,7 +139,7 @@ function SystemCard({
         {isFavorite ? "★" : "☆"}
       </button>
       <Link href={detailHref} className="mb-system-cover">
-        <SchemaPreview video={libraryPreviewVideo(item)} images={previewImages} alt={item.title || "Schéma"} />
+        <SchemaPreview cardHovered={previewHovered} video={libraryPreviewVideo(item)} images={previewImages} alt={item.title || "Schéma"} />
       </Link>
 
       <div className="mb-system-body">

@@ -93,7 +93,7 @@ export function summarizePlayerMatchRows(rows: Record<string, any>[]) {
   return players;
 }
 
-function ptsOf(a: any) {
+export function ptsOf(a: Pick<import("./stats-supabase").LiveMatchAction, "actionType" | "foulOutcome" | "ftMade" | "specialCase" | "context" | "shotType" | "shotResult">) {
   if (a.actionType === 'faute-technique' && a.foulOutcome === 'technical-for') return a.ftMade || 0;
   // Une antisportive provoquée donne sa réparation à notre équipe, quel que soit
   // le contexte depuis lequel elle a été saisie (attaque ou défense).
