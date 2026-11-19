@@ -170,3 +170,28 @@
     min-width: 150px;
   }
 }
+
+.factorSettings {
+  margin: 8px 0 12px;
+}
+.factorSettings summary {
+  color: #6b1a2c;
+  cursor: pointer;
+  font-weight: 700;
+}
+.factorSettings fieldset {
+  display: grid;
+  gap: 8px;
+  margin: 8px 0 0;
+  padding: 10px 12px;
+  border: 1px solid #dfcfd5;
+  border-radius: 10px;
+}
+.factorSettings label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.factorSettings input {
+  accent-color: #6b1a2c;
+}

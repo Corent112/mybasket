@@ -17,6 +17,6 @@ export function previewVideoSource(value:unknown):PreviewVideo|null{
 export function libraryPreviewVideo(input:unknown):string|undefined{
  if(!input||typeof input!=='object')return;
  const row=input as Record<string,unknown>;
- const candidates=[...(Array.isArray(row.videos)?row.videos:[]),row.videoUrl,row.video_url,row.youtube_url,row.schemaVideo,row.schema_video];
+ const candidates=[...(Array.isArray(row.videos)?row.videos:[row.videos]),row.videoUrl,row.video_url,row.youtube_url,row.schemaVideo,row.schema_video];
  return candidates.find((value):value is string=>typeof value==='string'&&Boolean(previewVideoSource(value)));
 }

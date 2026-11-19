@@ -23,10 +23,12 @@ import {
   automaticInsights,
   opponentBoxOf,
   matchMinutes,
+  fastBreakPoints,
   type DataRow,
 } from "@/lib/analytics/matches";
 import { playerMatchCategoryOf } from "@/lib/player-match-stats";
 import ShotChart from "@/components/prise-stats-pro/ShotChart";
+import { fetchTeamTags } from "@/lib/livestat-tags";
 import PostMatchSummary from "./PostMatchSummary";
 import styles from "./TeamMatchAnalysis.module.css";
 
@@ -34,6 +36,7 @@ const fmt = (n: number | null, decimals = 1) =>
   n == null
     ? "—"
     : n.toLocaleString("fr-FR", { maximumFractionDigits: decimals });
+const defaultFactors = ["efg", "tov", "orb", "ftr", "jr"];
 type AnalysisProps = { teamId: string; teamName?: string };
 export default function TeamMatchAnalysis(props: AnalysisProps) {
   return <MatchAnalysis key={props.teamId} {...props} />;
@@ -50,11 +53,32 @@ function MatchAnalysis({ teamId, teamName = "Équipe" }: AnalysisProps) {
   const [matchId, setMatchId] = useState("all");
   const [metric, setMetric] = useState("net");
   const [exporting, setExporting] = useState(false);
+  const [factorKeys, setFactorKeys] = useState(defaultFactors);
+  const [tags, setTags] = useState<ReadonlyMap<string, string>>(new Map());
+  const [factorPreference, setFactorPreference] = useState<string | null>(null);
+  function toggleFactor(key: string) {
+    const next = factorKeys.includes(key)
+      ? factorKeys.filter((factor) => factor !== key)
+      : [...factorKeys, key];
+    setFactorKeys(next);
+    try { if (factorPreference) localStorage.setItem(factorPreference, JSON.stringify(next)); } catch {}
+  }
   useEffect(() => {
     let live = true;
-    loadMatchAnalysis(createClient(), teamId)
-      .then((result) => {
-        if (live) setData(result);
+    const db = createClient();
+    Promise.all([loadMatchAnalysis(db, teamId), fetchTeamTags(teamId), db.auth.getUser().catch(() => null)])
+      .then(([result, teamTags, identity]) => {
+        if (!live) return;
+        setData(result);
+        setTags(new Map(teamTags.map((tag) => [tag.key, tag.label])));
+        const owner = identity?.data.user?.id;
+        if (!owner) return;
+        const preference = `mybasket:x-factors:${owner}:${teamId}`;
+        setFactorPreference(preference);
+        try {
+          const saved: unknown = JSON.parse(localStorage.getItem(preference) ?? "null");
+          if (Array.isArray(saved)) setFactorKeys(saved.filter((key) => typeof key === "string"));
+        } catch {}
       })
       .catch((e) => {
         if (live) setError(e.message);
@@ -84,11 +108,9 @@ function MatchAnalysis({ teamId, teamName = "Équipe" }: AnalysisProps) {
     ...boxOf(rows),
     pts: sumKnown(covered, "us_score") ?? boxOf(rows).pts,
   };
-  const opponents = addBoxes(
-    covered.map((m) => opponentBoxOf(m, data.actions)),
-  );
+  const opponentBoxes = new Map(selected.map((match) => [match.id, opponentBoxOf(match, data.actions)]));
+  const opponents = addBoxes(covered.map((match) => opponentBoxes.get(match.id)!));
   const values = indicators(totals, opponents);
-  const defense = indicators(opponents, totals);
   const periods = [1, 2, 3, 4].map((q) => {
     const scores = selected
       .map((m) => m.per_q?.[q])
@@ -126,7 +148,7 @@ function MatchAnalysis({ teamId, teamName = "Équipe" }: AnalysisProps) {
     const b = boxOf(data.rows.filter((r) => r.match_id === m.id));
     const metrics = indicators(
       { ...b, pts: numeric(m.us_score) ?? b.pts },
-      opponentBoxOf(m, data.actions),
+      opponentBoxes.get(m.id),
     );
     return { name: m.opponent || m.match_date, ...metrics };
   });
@@ -146,11 +168,23 @@ function MatchAnalysis({ teamId, teamName = "Équipe" }: AnalysisProps) {
       courtY: a.court_y,
     }));
   const coverage = populated.size;
+  const selectedActions = data.actions.filter((action) => selectedIds.has(action.match_id));
+  const fastBreak = fastBreakPoints(selectedActions, tags);
+  const defensiveCoverage = covered.filter((match) => opponentBoxes.get(match.id)?.p2a != null);
+  const pairedOwn = boxOf(rows.filter((row) => defensiveCoverage.some((match) => match.id === row.match_id)));
+  const pairedOpponents = addBoxes(defensiveCoverage.map((match) => opponentBoxes.get(match.id)!));
+  const pairedDefense = indicators(pairedOpponents, pairedOwn);
   const factors = [
-    ["Adresse effective · eFG %", values.efg, defense.efg, "%"],
-    ["Ballons perdus · TOV %", values.tov, defense.tov, "%"],
-    ["Rebond offensif · ORB %", values.orb, defense.orb, "%"],
-    ["LF tentés / tir", values.ftr, defense.ftr, ""],
+    ["efg", "Adresse effective · eFG %", values.efg, pairedDefense.efg, "%"],
+    ["tov", "Ballons perdus · TOV %", values.tov, pairedDefense.tov, "%"],
+    ["orb", "Rebond offensif · ORB %", indicators(pairedOwn, pairedOpponents).orb, pairedDefense.orb, "%"],
+    ["ftr", "LF tentés / tir", values.ftr, pairedDefense.ftr, ""],
+    ["jr", "Points marqués en jeu rapide · JR", fastBreak, fastBreakPoints(selectedActions, tags, "defense"), " pts"],
+    ["ts", "Adresse globale · TS %", values.ts, pairedDefense.ts, "%"],
+    ["ast", "Paniers assistés", values.assists, pairedDefense.assists, "%"],
+    ["astTo", "Passes décisives / ballons perdus", values.astTo, pairedDefense.astTo, ""],
+    ["pps", "Points par tir de champ", values.pointsPerShot, pairedDefense.pointsPerShot, ""],
+    ["three", "Part des tirs à 3 points", values.threeRate, pairedDefense.threeRate, "%"],
   ] as const;
   const points = [
     {
@@ -344,7 +378,21 @@ function MatchAnalysis({ teamId, teamName = "Équipe" }: AnalysisProps) {
           </article>
           <div className={styles.grid}>
             <article className={styles.card}>
-              <h3>Les quatre facteurs</h3>
+              <h3>Mes X Factors</h3>
+              <details className={styles.factorSettings}>
+                <summary>Choisir mes statistiques</summary>
+                <fieldset>
+                  <legend>Indicateurs affichés</legend>
+                  {factors.map(([key, label]) => (
+                    <label key={key}>
+                      <input type="checkbox" checked={factorKeys.includes(key)} onChange={() => toggleFactor(key)} />
+                      {label}
+                    </label>
+                  ))}
+                </fieldset>
+              </details>
+              <p>Codage adverse vérifié sur {defensiveCoverage.length} / {selected.length} match(s). Le rebond offensif utilise ces mêmes matchs.</p>
+              {factorKeys.includes("jr") && <p>JR totalise les points des actions codées « Jeu rapide », « JR », « Fast Break » ou « Contre-attaque ». Un tiret indique qu’aucune action n’a été identifiée sur la période.</p>}
               <table>
                 <thead>
                   <tr>
@@ -354,26 +402,18 @@ function MatchAnalysis({ teamId, teamName = "Équipe" }: AnalysisProps) {
                   </tr>
                 </thead>
                 <tbody>
-                  {factors.map(([label, value, opp, unit]) => (
-                    <tr key={label}>
+                  {factors.filter(([key]) => factorKeys.includes(key)).map(([key, label, value, opp, unit]) => (
+                    <tr key={key}>
                       <td>{label}</td>
                       <td>
                         {fmt(value)}
                         {value != null ? unit : ""}
-                        <meter
-                          min={0}
-                          max={unit === "%" ? 100 : 1}
-                          value={value ?? 0}
-                        />
+                        {unit === "%" && value != null && <meter min={0} max={100} value={value} />}
                       </td>
                       <td>
                         {fmt(opp)}
                         {opp != null ? unit : ""}
-                        <meter
-                          min={0}
-                          max={unit === "%" ? 100 : 1}
-                          value={opp ?? 0}
-                        />
+                        {unit === "%" && opp != null && <meter min={0} max={100} value={opp} />}
                       </td>
                     </tr>
                   ))}
@@ -400,7 +440,8 @@ function MatchAnalysis({ teamId, teamName = "Équipe" }: AnalysisProps) {
                   ["Tirs à 3 points", values.threeRate, "%"],
                   ["Paniers assistés", values.assists, "%"],
                   ["PD / BP", values.astTo, ""],
-                  ["Points / tir", values.pointsPerShot, ""],
+                  ["Points / tir de champ", values.pointsPerShot, ""],
+                  ["Points en jeu rapide · JR", fastBreak, " pts"],
                   [
                     "Matchs serrés (≤ 5 pts)",
                     close.length ? closeWins : null,

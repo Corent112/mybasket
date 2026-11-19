@@ -1,5 +1,6 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { loadPlayerMatchStats } from "@/lib/player-match-stats";
+import { mapActionRowToLiveAction, mergeProjectAndSqlActions } from "@/lib/stats-supabase";
 import type { DataRow } from "./matches";
 
 /** Paginate every table; Supabase's default row limit must not truncate a season. */
@@ -41,12 +42,39 @@ export async function loadMatchAnalysis(db: SupabaseClient, teamId: string) {
       pos += page.length;
     }
   }
+  const byMatch = new Map<string, DataRow[]>();
+  for (const action of actions) {
+    const group = byMatch.get(action.match_id) ?? [];
+    group.push(action);
+    byMatch.set(action.match_id, group);
+  }
+  const mergedActions = completed.flatMap((match) => {
+    const snapshot = match.project_state?.actions;
+    const saved = (byMatch.get(match.id) ?? []).map(mapActionRowToLiveAction);
+    return mergeProjectAndSqlActions(Array.isArray(snapshot) ? snapshot : [], saved)
+      .map((action) => ({
+        ...action,
+        match_id: match.id,
+        action_type: action.actionType,
+        shot_type: action.shotType,
+        shot_result: action.shotResult,
+        special_case: action.specialCase,
+        foul_outcome: action.foulOutcome,
+        ft_attempts: action.ftAttempts,
+        ft_made: action.ftMade,
+        rebound_type: action.reboundType,
+        temps_fort: action.tempsFort,
+        court_x: action.courtX,
+        court_y: action.courtY,
+        shot_zone_id: action.zone,
+      }));
+  });
   return {
     matches: completed.sort((a, b) =>
       String(a.match_date).localeCompare(String(b.match_date)),
     ),
     rows,
-    actions,
+    actions: mergedActions,
   };
 }
 

@@ -387,3 +387,17 @@ const school = require("../lib/school-timetable.ts");
   .finally(() => {
     Module._load = original;
   });
+
+{
+  const tags = new Map([['custom-identifier', 'Jeu rapide']]);
+  const action = {context:'attaque',action_type:'tir',shot_type:'2PTS',shot_result:'made',temps_fort:'custom-identifier'};
+  assert.equal(analytics.fastBreakPoints([
+    action,
+    {...action,shot_type:'3PTS',special_case:'3pts+1lf',ft_made:1},
+    {...action,context:'defense'},
+    {...action,temps_fort:'transition'},
+  ], tags), 6);
+  assert.equal(analytics.fastBreakPoints([{...action,shot_result:'missed'}], tags), 0);
+  assert.equal(analytics.fastBreakPoints([], tags), null);
+  assert.equal(analytics.indicators({...analytics.boxOf([]),p2m:1,p2a:1,p3m:1,p3a:1,ftm:2,pts:7}).pointsPerShot, 2.5);
+}

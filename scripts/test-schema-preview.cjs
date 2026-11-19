@@ -13,7 +13,7 @@ const fakeReact={
  useEffect(callback,deps){const index=cursor++,old=effects[index];if(!old||deps.some((value,i)=>!Object.is(value,old.deps[i]))){queue.push(()=>{old?.cleanup?.();effects[index]={deps,cleanup:callback()}})}}
 };
 const jsx=(type,props)=>({type,props});
-const videoContext={exports:{}};vm.createContext(videoContext);vm.runInContext(transpile('lib/library/video-previews.ts'),videoContext);
+const videoContext={exports:{},URL};vm.createContext(videoContext);vm.runInContext(transpile('lib/library/video-previews.ts'),videoContext);
 const context={exports:{},document:{visibilityState:'visible',addEventListener:()=>{},removeEventListener:()=>{}},Image:class{},window:{setInterval(callback,delay){assert.equal(delay,2000);const id=nextTimer++;timers.set(id,callback);return id},clearInterval:id=>timers.delete(id)},require:name=>name==='@/lib/library/video-previews'?videoContext.exports:name==='react'?fakeReact:name==='react/jsx-runtime'?{jsx,jsxs:jsx}:{default:new Proxy({},{get:(_,name)=>String(name)})}};
 vm.createContext(context);vm.runInContext(transpile('components/library/SchemaPreview.tsx'),context);const Preview=context.exports.default;
 const props={images:['first','second','third'],alt:'Horns'};
@@ -30,3 +30,15 @@ tree.props.onBlur({currentTarget:{contains:()=>false},relatedTarget:null});tree=
 tree.props.onPointerEnter({pointerType:"mouse"});tree=render();assert.equal(timers.size,1);tree=render({images:['only']});assert.equal(timers.size,0);assert.equal(image(tree),'only');
 tree=render({images:[]});assert.equal(image(tree),undefined);for(const effect of effects)effect?.cleanup?.();assert.equal(timers.size,0);
 console.log('PASS: complete ordered image extraction, duplicates, nested session previews, 2000ms hover progression, wraparound, stop/reset, keyboard focus, single/empty content and timer cleanup.');
+
+assert.equal(videoContext.exports.libraryPreviewVideo({videos:'https://example.com/video.mp4'}), 'https://example.com/video.mp4');
+tree=render({...props,video:'https://example.com/video.mp4',cardHovered:true});
+assert.equal(timers.size,0);
+const videoLayer=tree.props.children.find(child=>child?.props?.className==='video');
+assert.equal(videoLayer?.props?.children?.props?.source?.url,'https://example.com/video.mp4');
+videoLayer.props.children.props.onFailure();
+tree=render({...props,video:'https://example.com/video.mp4',cardHovered:true});
+assert.equal(timers.size,1,'A failed video falls back to the diagrams');
+tree=render({...props,video:'https://example.com/video.mp4',cardHovered:false});
+assert.equal(timers.size,0);
+console.log('PASS: full-card hover gives video priority and restores diagram playback on failure.');
