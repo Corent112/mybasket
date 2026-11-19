@@ -33,10 +33,15 @@ export type IndexResult = {
   error?: string;
 };
 
+// Longer than the maximum duration of any route that indexes a source.
+export const INDEX_LEASE_MS = 15 * 60_000;
+export const MAX_AUTOMATIC_INDEX_ATTEMPTS = 3;
+
 export async function indexSource(
   supabase: SupabaseClient,
   writer: SupabaseClient,
-  sourceId: string
+  sourceId: string,
+  options?: { scheduledVersion: string },
 ): Promise<IndexResult> {
   const warnings: string[] = [];
 
@@ -59,11 +64,45 @@ export async function indexSource(
   }
 
   const source = data as AiKnowledgeSource;
+  const automatic = options !== undefined;
+  const attempts = Number(source.metadata?.automatic_index_attempts ?? 0) || 0;
+  const unavailable =
+    !source.is_active ||
+    source.status === "archived" ||
+    (source.index_status === "running" &&
+      Date.now() - Date.parse(source.updated_at) < INDEX_LEASE_MS) ||
+    (automatic &&
+      (source.updated_at !== options.scheduledVersion ||
+        !["pending", "failed", "running"].includes(source.index_status) ||
+        attempts >= MAX_AUTOMATIC_INDEX_ATTEMPTS));
 
-  await writer
+  // Compare the version when claiming the source so manual and daily jobs
+  // cannot replace the same passages at the same time.
+  const claim = unavailable ? null : await writer
     .from("ai_knowledge_sources")
-    .update({ status: "processing", index_status: "running", index_error: null })
-    .eq("id", sourceId);
+    .update({
+      status: "processing",
+      index_status: "running",
+      index_error: null,
+      metadata: {
+        ...source.metadata,
+        automatic_index_attempts: automatic ? attempts + 1 : 0,
+        automatic_index_exhausted: automatic && attempts + 1 >= MAX_AUTOMATIC_INDEX_ATTEMPTS,
+      },
+    })
+    .eq("id", sourceId)
+    .eq("updated_at", source.updated_at)
+    .eq("is_active", true)
+    .neq("status", "archived")
+    .select("id")
+    .maybeSingle();
+
+  if (!claim?.data || claim.error) {
+    return {
+      ok: false, sourceId, chunkCount: 0, tokenCount: 0, strategy: "stored-only", warnings,
+      error: claim?.error ? "Impossible de démarrer l’indexation." : "Le document est déjà en cours de traitement ou a changé.",
+    };
+  }
 
   try {
     /* --- 1. Récupération du fichier ------------------------------- */
@@ -150,14 +189,15 @@ export async function indexSource(
       );
     }
 
-    if (!vectors) {
+    if (!vectors && warnings.every((warning) => !warning.includes("embeddings"))) {
       warnings.push(
         "OPENAI_API_KEY absente : indexation lexicale uniquement (recherche plein texte)."
       );
     }
 
     /* --- 5. Écriture des chunks ----------------------------------- */
-    await writer.from("ai_knowledge_chunks").delete().eq("source_id", sourceId);
+    const { error: deleteError } = await writer.from("ai_knowledge_chunks").delete().eq("source_id", sourceId);
+    if (deleteError) throw new Error("Impossible de remplacer les passages précédents.");
 
     const rows = chunks.map((chunk, i) => ({
       source_id: sourceId,
@@ -188,7 +228,7 @@ export async function indexSource(
 
     const tokenCount = chunks.reduce((sum, c) => sum + c.tokenCount, 0);
 
-    await writer
+    const { error: finishError } = await writer
       .from("ai_knowledge_sources")
       .update({
         status: "indexed",
@@ -199,6 +239,7 @@ export async function indexSource(
         token_count: tokenCount,
       })
       .eq("id", sourceId);
+    if (finishError) throw new Error("Impossible d’enregistrer la fin de l’indexation.");
 
     return {
       ok: true,
