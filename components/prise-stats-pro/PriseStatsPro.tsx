@@ -878,7 +878,7 @@ export default function PriseStatsProPage() {
       const loaded = await readTeams();
       setTeams(loaded);
       setAnalysisScope('scout');
-      setTeamId(created.id);
+      selectSetupTeam(created.id);
       setStarters([]);
       flash("Équipe scoutée créée. Ajoute maintenant son effectif dans Mes équipes.");
     } catch (error) {
@@ -942,11 +942,13 @@ export default function PriseStatsProPage() {
   // playerId -> numéro porté pour CE match (utile aujourd'hui pour le codage, demain pour l'IA vidéo).
   const [matchJerseyNumbers, setMatchJerseyNumbers] = useState<Record<string, number>>({});
 
-  useEffect(() => {
+  const selectSetupTeam = (nextTeamId: string) => {
+    if (nextTeamId === teamId) return;
+    setTeamId(nextTeamId);
     setMatchPlayerIds([]);
     setStarters([]);
     setMatchJerseyNumbers({});
-  }, [teamId]);
+  };
 
   const [roster, setRoster] = useState<Player[]>([]);
   const [teamName, setTeamName] = useState('');
@@ -1991,13 +1993,14 @@ export default function PriseStatsProPage() {
         : {};
       setMatchJerseyNumbers(restoredMatchNumbers);
 
-      const restoredMatchPlayerIds = Array.isArray(s.matchPlayerIds)
+      const restoredMatchPlayerIds = Array.isArray(s.matchPlayerIds) && s.matchPlayerIds.length > 0
         ? s.matchPlayerIds
             .map(String)
             .filter((id: string) => team.players.some((player) => player.id === id))
             .slice(0, 12)
         : Array.from(new Set([
             ...(Array.isArray(s.onCourt) ? s.onCourt : []),
+            ...Object.keys(s.minutesByPlayer || {}),
             ...(Array.isArray(s.actions)
               ? s.actions.flatMap((action: any) => [
                   action.playerId,
@@ -2841,22 +2844,20 @@ export default function PriseStatsProPage() {
   const setupTeams = analysisScope === 'scout' ? scoutTeams : coachedTeams;
 
   useEffect(() => {
-    if (!teams.length) return;
+    if (screen !== 'setup' || !teams.length) return;
     const params = new URLSearchParams(window.location.search);
     const requestedScout = params.get('scoutTeamId');
     if (requestedScout && scoutTeams.some((team) => team.id === requestedScout)) {
       setAnalysisScope('scout');
-      setTeamId(requestedScout);
-      setStarters([]);
+      selectSetupTeam(requestedScout);
       return;
     }
 
     const currentStillExists = setupTeams.some((team) => team.id === teamId);
     if (!teamId || !currentStillExists) {
-      setTeamId(setupTeams[0]?.id || '');
-      setStarters([]);
+      selectSetupTeam(setupTeams[0]?.id || '');
     }
-  }, [teams, teamId, analysisScope]);
+  }, [teams, teamId, analysisScope, screen]);
 
   // V10 · Raccourcis clavier : ESPACE = play/pause vidéo, B = chrono start/stop,
   // SHIFT + flèche = reculer/avancer la vidéo. (Compat V7 : Tab+flèche marche aussi.)
@@ -5085,10 +5086,10 @@ export default function PriseStatsProPage() {
               <section className="cm-card cm-purpose-card">
                 <div className="cm-card-t">🎯 QUE VEUX-TU CODER ?</div>
                 <div className="cm-purpose">
-                  <button type="button" className={analysisScope === 'coached' ? 'on' : ''} onClick={() => { setAnalysisScope('coached'); setTeamId(coachedTeams[0]?.id || ''); setOpponent(''); }}>
+                  <button type="button" className={analysisScope === 'coached' ? 'on' : ''} onClick={() => { setAnalysisScope('coached'); selectSetupTeam(coachedTeams[0]?.id || ''); setOpponent(''); }}>
                     <span>🏀</span><b>Mon équipe</b><small>Coder un match de ton équipe.</small>
                   </button>
-                  <button type="button" className={analysisScope === 'scout' ? 'on scout' : ''} onClick={() => { setAnalysisScope('scout'); setTeamId(scoutTeams[0]?.id || ''); setOpponent(''); }}>
+                  <button type="button" className={analysisScope === 'scout' ? 'on scout' : ''} onClick={() => { setAnalysisScope('scout'); selectSetupTeam(scoutTeams[0]?.id || ''); setOpponent(''); }}>
                     <span>👁️</span><b>Scouting adverse</b><small>Observer une équipe pour préparer un futur match.</small>
                   </button>
                 </div>
@@ -5228,7 +5229,7 @@ export default function PriseStatsProPage() {
                     <div className="cm-input"><span>📅</span><input type="date" value={date} onChange={(e) => setDate(e.target.value)} /></div></label>
                   <label className="cm-field">{analysisScope === 'scout' ? 'Équipe observée' : 'Équipe Supabase'}
                     <div className="cm-input"><span>🅧</span>
-                      <select value={teamId} onChange={(e) => { setTeamId(e.target.value); setStarters([]); }}>
+                      <select value={teamId} onChange={(e) => selectSetupTeam(e.target.value)}>
                         {setupTeams.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
                       </select>
                     </div>
