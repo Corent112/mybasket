@@ -1,4 +1,5 @@
 "use client";
+import KnowledgeDiagram from "@/components/assistant/KnowledgeDiagram";
 import type { AuthChangeEvent, Session, User } from "@supabase/supabase-js";
 
 import { useEffect, useRef, useState } from "react";
@@ -196,6 +197,7 @@ export default function KnowledgeChat() {
                 className={m.role === "user" ? styles.user : styles.assistant}
               >
                 <p>{m.text || "Je consulte les ressources…"}</p>
+                <KnowledgeDiagram citations={m.citations} />
                 {!!m.citations?.length && (
                   <details>
                     <summary>Ressources consultées</summary>

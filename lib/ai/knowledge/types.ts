@@ -176,6 +176,7 @@ export type AiCitation = {
   label: string;
   detail?: string | null;
   score?: number | null;
+  diagramUrl?: string;
 };
 
 export type AiMessage = {
@@ -214,7 +215,7 @@ export type KnowledgeChunkMatch = {
 export type TermMatch = Pick<
   AiTerm,
   "id" | "term" | "definition" | "synonyms" | "examples" | "notes" | "source" | "priority"
-> & { similarity: number };
+> & { similarity: number; schema_url?: string | null };
 
 export type CorrectionMatch = Pick<
   AiCorrection,

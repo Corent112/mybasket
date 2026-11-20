@@ -1,3 +1,5 @@
+import { diagramImageUrl, documentaryQuery, relevantExcerpt } from "@/lib/ai/knowledge/document-answer";
+import { formatChunkProvenance } from "@/lib/ai/knowledge/search";
 import {
   AI_CHAT_MODEL,
   AI_CHAT_RATE_LIMIT,
@@ -142,8 +144,9 @@ export async function POST(request: Request) {
     /* --- 3. Contexte Knowledge Engine ----------------------------- */
     const scope = buildScopeContext(actor);
 
+    const query = client ? message : documentaryQuery(message);
     const context = await buildAIContext(actor.supabase, {
-      query: message,
+      query,
       module: moduleKey,
       scope,
       includeDocuments: true,
@@ -165,12 +168,16 @@ export async function POST(request: Request) {
     const encoder = new TextEncoder();
     const finalConversationId = conversationId;
     const term = !client ? context.terms?.[0] : undefined;
-    const excerpts = !client && !term ? (context.chunks ?? []).slice(0, 2) : [];
-    const sources = new Set(excerpts.map((excerpt) => excerpt.source_id));
-    const citations: AiCitation[] = client ? context.citations : context.citations.filter(
-      (citation) => term ? citation.kind === "term" && citation.id === term.id
-        : citation.kind === "document" && sources.has(citation.id),
-    );
+    const match = !client && !term ? (context.chunks ?? [])
+      .flatMap((chunk) => {
+        const excerpt = relevantExcerpt(chunk.content, query);
+        return excerpt ? [{ chunk, excerpt }] : [];
+      })
+      .sort((a, b) => b.excerpt.score - a.excerpt.score)[0]
+      : undefined;
+    const citations: AiCitation[] = client ? context.citations : term
+      ? [{ kind: "term", id: term.id, label: `Lexique MyBasket — ${term.term}`, diagramUrl: diagramImageUrl(term.schema_url) }]
+      : match ? [{ kind: "document", id: match.chunk.source_id, label: formatChunkProvenance(match.chunk) }] : [];
 
     const stream = new ReadableStream<Uint8Array>({
       async start(controller) {
@@ -194,13 +201,8 @@ export async function POST(request: Request) {
           if (!client) {
             if (term) {
               answer = `${term.term} — ${term.definition}`;
-            } else if (excerpts.length) {
-              answer = excerpts.map((excerpt) => {
-                const passage = excerpt.content.trim();
-                const limit = passage.length > 750 ? passage.lastIndexOf(" ", 750) : -1;
-                const text = passage.length > 750 ? passage.slice(0, limit > 0 ? limit : 750) + "…" : passage;
-                return `${excerpt.source_title}${excerpt.page_from ? ` · p. ${excerpt.page_from}` : ""}\n${text}`;
-              }).join("\n\n");
+            } else if (match) {
+              answer = match.excerpt.text;
             } else {
               answer = "Je n’ai pas trouvé de définition ni de passage correspondant dans les ressources MyBasket. Essaie avec le nom précis du terme ou quelques mots-clés.";
             }

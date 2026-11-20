@@ -47,7 +47,7 @@ export async function getRelevantTerms(
   const { data: allTerms, error: lexicalError } = await supabase
     .from("ai_terms")
     .select(
-      "id, term, definition, synonyms, examples, notes, source, priority, scope, club_id, owner_id"
+      "id, term, definition, synonyms, examples, notes, source, priority, schema_url, scope, club_id, owner_id"
     )
     .eq("is_active", true)
     .in("scope", scopes)
@@ -66,7 +66,7 @@ export async function getRelevantTerms(
       .map(normalizeForMatch)
       .filter((c) => c.length >= 3);
 
-    const hit = candidates.some((candidate) => haystack.includes(candidate));
+    const hit = candidates.some((candidate) => (` ${haystack} `).includes(` ${candidate} `));
     if (!hit) continue;
 
     results.set(raw.id, {
@@ -77,6 +77,7 @@ export async function getRelevantTerms(
       examples: raw.examples || [],
       notes: raw.notes,
       source: raw.source,
+      schema_url: raw.schema_url,
       priority: raw.priority,
       similarity: 1,
     });
