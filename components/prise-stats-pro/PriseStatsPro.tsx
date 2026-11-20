@@ -3817,9 +3817,10 @@ export default function PriseStatsProPage() {
       // Défense + faute provoquée -> Attaque
       next = 'attaque';
     }
+    // Une faute offensive donne la balle à l’adversaire, y compris via « Touche ».
+    else if (a.actionType === 'faute-commise' && a.context === 'attaque') next = 'defense';
     else if (a.foulOutcome === 'touche') { if (a.context === 'defense') next = 'defense'; else { next = 'attaque'; inbound = true; } }
     else if (a.actionType === 'faute-commise' && a.context === 'defense') next = 'attaque';
-    else if (a.actionType === 'faute-commise' && a.context === 'attaque') next = 'defense';
     else next = POSS(a.context);
     const fresh = emptyDraft(); fresh.context = next;
     // Live collectif : RO / touche conservée = nouvelle ATTAQUE mais même POSSESSION.

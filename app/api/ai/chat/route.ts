@@ -1,5 +1,5 @@
-import { diagramImageUrl, documentaryQuery, relevantExcerpt } from "@/lib/ai/knowledge/document-answer";
-import { formatChunkProvenance } from "@/lib/ai/knowledge/search";
+import { diagramImageUrl, documentaryPassages, documentaryQuery, relaxedDocumentQuery } from "@/lib/ai/knowledge/document-answer";
+import { formatChunkProvenance, searchKnowledge } from "@/lib/ai/knowledge/search";
 import {
   AI_CHAT_MODEL,
   AI_CHAT_RATE_LIMIT,
@@ -145,7 +145,8 @@ export async function POST(request: Request) {
     const scope = buildScopeContext(actor);
 
     const query = client ? message : documentaryQuery(message);
-    const context = await buildAIContext(actor.supabase, {
+    const relaxedQuery = client ? null : relaxedDocumentQuery(query);
+    const [context, relatedDocuments] = await Promise.all([buildAIContext(actor.supabase, {
       query,
       module: moduleKey,
       scope,
@@ -154,7 +155,9 @@ export async function POST(request: Request) {
       lexicalOnly: !client,
       includeCorrections: !!client,
       includeReferences: !!client && boolOr(body.includeReferences, false),
-    });
+    }), relaxedQuery
+      ? searchKnowledge(actor.supabase, { query: relaxedQuery, scope, limit: 18, lexicalOnly: true })
+      : null]);
 
     /* --- 4. Message utilisateur ----------------------------------- */
     await actor.supabase.from("ai_messages").insert({
@@ -168,16 +171,22 @@ export async function POST(request: Request) {
     const encoder = new TextEncoder();
     const finalConversationId = conversationId;
     const term = !client ? context.terms?.[0] : undefined;
-    const match = !client && !term ? (context.chunks ?? [])
-      .flatMap((chunk) => {
-        const excerpt = relevantExcerpt(chunk.content, query);
-        return excerpt ? [{ chunk, excerpt }] : [];
-      })
-      .sort((a, b) => b.excerpt.score - a.excerpt.score)[0]
-      : undefined;
-    const citations: AiCitation[] = client ? context.citations : term
-      ? [{ kind: "term", id: term.id, label: `Lexique MyBasket — ${term.term}`, diagramUrl: diagramImageUrl(term.schema_url) }]
-      : match ? [{ kind: "document", id: match.chunk.source_id, label: formatChunkProvenance(match.chunk) }] : [];
+    const passages = client ? [] : documentaryPassages([
+      ...(context.chunks ?? []),
+      ...(relatedDocuments?.chunks ?? []),
+    ], query);
+    const documentCitations = new Map<string, AiCitation>();
+    for (const { chunk } of passages) {
+      const label = formatChunkProvenance(chunk);
+      documentCitations.set(`${chunk.source_id}:${label}`, { kind: "document", id: chunk.source_id, label });
+    }
+    const diagramUrl = diagramImageUrl(term?.schema_url);
+    const citations: AiCitation[] = client ? context.citations : [
+      ...documentCitations.values(),
+      ...(term && (!passages.length || diagramUrl)
+        ? [{ kind: "term" as const, id: term.id, label: `Lexique MyBasket — ${term.term}`, diagramUrl }]
+        : []),
+    ];
 
     const stream = new ReadableStream<Uint8Array>({
       async start(controller) {
@@ -199,10 +208,12 @@ export async function POST(request: Request) {
 
         try {
           if (!client) {
-            if (term) {
+            if (passages.length) {
+              answer = passages.map(({ chunk, excerpt }) =>
+                `${formatChunkProvenance(chunk)}\n${excerpt.text}`
+              ).join("\n\n");
+            } else if (term) {
               answer = `${term.term} — ${term.definition}`;
-            } else if (match) {
-              answer = match.excerpt.text;
             } else {
               answer = "Je n’ai pas trouvé de définition ni de passage correspondant dans les ressources MyBasket. Essaie avec le nom précis du terme ou quelques mots-clés.";
             }
@@ -210,7 +221,7 @@ export async function POST(request: Request) {
           } else {
             const openaiStream = await client.responses.create({
               model,
-              instructions: context.systemPrompt,
+              instructions: context.systemPrompt + "\nDonne une réponse détaillée. Réunis les informations complémentaires des sources et cite les pages disponibles. Évite les répétitions et signale les éléments que les sources ne permettent pas de préciser.",
               input: [
                 ...previous.map((m) => ({ role: m.role, content: m.content })),
                 { role: "user" as const, content: message },

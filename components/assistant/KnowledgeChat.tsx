@@ -203,7 +203,7 @@ export default function KnowledgeChat() {
                     <summary>Ressources consultées</summary>
                     <ul>
                       {m.citations.map((c) => (
-                        <li key={`${c.kind}:${c.id}`}>{c.label}</li>
+                        <li key={`${c.kind}:${c.id}:${c.label}`}>{c.label}</li>
                       ))}
                     </ul>
                   </details>
