@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { AI_MAX_FILE_SIZE } from "@/lib/ai/config";
 import {createClient} from "@/lib/supabase/client";
 import type { AiKnowledgeCategory, AiKnowledgeSource } from "@/lib/ai/knowledge/types";
 import { API, api } from "../api";
@@ -356,20 +357,46 @@ function UploadModal({
       return;
     }
 
+    if (busy) return;
     setBusy(true); setResults([]);
     const remaining: File[] = [];
     for (const [index, file] of files.entries()) {
-      setResults(old => [...old, `${index + 1}/${files.length} · ${file.name} — analyse en cours…`]);
+      const label = `${index + 1}/${files.length} · ${file.name} (${formatBytes(file.size)})`;
+      setResults(old => [...old, `${label} — préparation…`]);
+      let sent = false;
       try {
-        const prepared=await api.post<{sourceId:string;path:string;token:string;bucket:string;mimeType:string}>(`${API.sources}/prepare`,{name:file.name,type:file.type,size:file.size,title:files.length===1&&title?title:file.name.replace(/\.[^.]+$/,""),description,category:categorySlug,provenance,author});
-        const uploaded=await createClient().storage.from(prepared.bucket).uploadToSignedUrl(prepared.path,prepared.token,file,{contentType:prepared.mimeType||file.type||"application/octet-stream"});
-        if(uploaded.error){await api.delete(`${API.sources}/${prepared.sourceId}`).catch(()=>{});throw new Error("Envoi impossible. Tu peux réessayer ce document.")}
-        const data=await api.post<{indexation:{ok:boolean;chunkCount:number;warnings:string[];error?:string}}>(`${API.sources}/${prepared.sourceId}/reindex`);
+        let uploadFile = file;
+        const compact = file.size > AI_MAX_FILE_SIZE && /\.pptx$/i.test(file.name);
+        if (compact) {
+          const { extractLargePowerPointText, MAX_LOCAL_POWERPOINT_BYTES } = await import("@/lib/ai/knowledge/powerpoint-text");
+          if (file.size > MAX_LOCAL_POWERPOINT_BYTES) {
+            throw new Error("Ce PowerPoint dépasse 300 Mo. Divise la présentation avant l’import.");
+          }
+          const text = extractLargePowerPointText(new Uint8Array(await file.arrayBuffer()));
+          uploadFile = new File([text], file.name.replace(/\.pptx$/i, ".txt"), { type: "text/plain" });
+        }
+        const prepared = await api.post<{sourceId:string;path:string;token:string;bucket:string;mimeType:string}>(`${API.sources}/prepare`, {
+          name: uploadFile.name, type: uploadFile.type, size: uploadFile.size,
+          title: files.length === 1 && title ? title : file.name.replace(/\.[^.]+$/, ""),
+          description, category: categorySlug, provenance: provenance || (compact ? file.name : ""), author,
+        });
+        setResults(old => [...old.slice(0, -1), `${label} — envoi…`]);
+        const uploaded = await createClient().storage.from(prepared.bucket).uploadToSignedUrl(
+          prepared.path, prepared.token, uploadFile, {contentType: prepared.mimeType},
+        );
+        if (uploaded.error) {
+          await api.delete(`${API.sources}/${prepared.sourceId}`).catch(() => {});
+          throw new Error("L’envoi a échoué. Tu peux réessayer ce fichier.");
+        }
+        sent = true;
+        setResults(old => [...old.slice(0, -1), `${label} — analyse…`]);
+        const data = await api.post<{indexation:{ok:boolean;chunkCount:number;warnings:string[];error?:string}}>(`${API.sources}/${prepared.sourceId}/reindex`);
         const outcome = data.indexation.ok ? data.indexation.chunkCount ? `✓ ${data.indexation.chunkCount} passages indexés` : "Stocké sans contenu indexé" : `Importé, indexation à reprendre : ${data.indexation.error || "consulter le document"}`;
-        setResults(old => [...old.slice(0, -1), `${file.name} — ${outcome}${data.indexation.warnings?.length ? " · "+data.indexation.warnings.join(" · ") : ""}`]);
+        setResults(old => [...old.slice(0, -1), `${label} — ${outcome}${compact ? " · Texte des diapositives et notes uniquement" : ""}${data.indexation.warnings?.length ? " · "+data.indexation.warnings.join(" · ") : ""}`]);
       } catch (error) {
-        remaining.push(file);
-        setResults(old => [...old.slice(0, -1), `${file.name} — ${error instanceof Error ? error.message : "Import impossible"}`]);
+        if (!sent) remaining.push(file);
+        const reason = error instanceof Error ? error.message : "Import impossible";
+        setResults(old => [...old.slice(0, -1), `${label} — ${sent ? "Fichier enregistré. Relance l’indexation depuis la liste. " : ""}${reason}`]);
       }
     }
     setFiles(remaining); setBusy(false);
@@ -408,7 +435,7 @@ function UploadModal({
 
       <Field
         label="Documents"
-        hint="PDF, DOCX, PowerPoint, TXT, Markdown, CSV et images — 50 Mo par fichier. Les résultats d’analyse sont indiqués pour chaque document."
+        hint="PDF, DOCX, TXT, Markdown, CSV et images : 50 Mo par fichier. Pour un PowerPoint .pptx entre 50 et 300 Mo, seuls le texte des diapositives et les notes sont transmis."
       >
         <input
           ref={fileRef}
