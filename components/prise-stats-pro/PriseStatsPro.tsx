@@ -5766,8 +5766,8 @@ export default function PriseStatsProPage() {
             className={`live3 ${videoMaximized ? 'videoMaximized' : 'resizableLive3'} ${showVideoPanel ? '' : 'videoPanelHidden'}`}
             style={videoMaximized ? undefined : {
               gridTemplateColumns: codingMode === 'match-review'
-                ? (matchReviewLayout.showVideo ? `${videoPanePct}% 7px minmax(360px,1fr) 0px 0px` : `0px 0px minmax(360px,1fr) 0px 0px`)
-                : `${videoPanePct}% 7px minmax(280px,1fr) 7px ${rightPanePx}px`,
+                ? (matchReviewLayout.showVideo ? `min(${videoPanePct}%, calc(100% - 399px)) 7px minmax(360px,1fr) 0px 0px` : '0px 0px minmax(0,1fr) 0px 0px')
+                : `min(${videoPanePct}%, calc(100% - min(${rightPanePx}px, 28%) - 366px)) 7px minmax(320px,1fr) 7px min(${rightPanePx}px, 28%)`,
             }}
           >
             {/* ============ GAUCHE · PILOTAGE LIVE / VIDÉO OPTIONNELLE ============ */}
@@ -7372,9 +7372,7 @@ export default function PriseStatsProPage() {
         const rest = systemeButtons.filter((item) => !['contre-attaque', 'transition', 'libre'].includes(item.id));
         return <><div className="stageHeadWithConfig">{head('Système de jeu', playbookId ? 'Systèmes du playbook associé' : 'Organisation de la possession')}<button className="stageConfigBtn" onClick={() => openCodingSettings('buttons')} title="Créer, renommer ou masquer des systèmes">⚙</button></div>
           <div className="systemChoiceLayout">
-            {tileGrid(firstLine, draft.systemeJeu, systemePick)}
-            {libre && <div className="systemLibreRow">{tileGrid([libre], draft.systemeJeu, systemePick)}</div>}
-            {tileGrid(rest, draft.systemeJeu, systemePick)}
+            {tileGrid([...firstLine, ...(libre ? [libre] : []), ...rest], draft.systemeJeu, systemePick)}
           </div>
         </>;
       }
@@ -10772,8 +10770,6 @@ function Style() {
       .fdots { grid-column: 2 / 4; grid-row: 2; gap: 5px; }
       .fdots i { width: 8px; height: 8px; border-width: 1px; }
       .systemChoiceLayout { display:grid; gap:10px; }
-      .systemLibreRow { display:grid; grid-template-columns:minmax(0,1fr); }
-      .systemLibreRow .grid { grid-template-columns:1fr !important; }
       .historyToolbar { display:grid; grid-template-columns:minmax(220px,1fr) auto auto; gap:10px; align-items:center; margin-bottom:10px; }
       .historyToolbar input { height:36px; border:1px solid #2b354b; border-radius:9px; background:#0b1220; color:#fff; padding:0 11px; }
       .historyScopes { display:flex; gap:5px; flex-wrap:wrap; }
@@ -11197,7 +11193,6 @@ function Style() {
       .lc-body .bt:hover{background:#1d263b!important;border-color:rgba(212,162,76,.55)!important}
       .lc-body .bt.active{background:linear-gradient(180deg,var(--bordeaux2),var(--bordeaux))!important;border-color:var(--bordeaux2)!important;color:#fff!important}
       .lc-body .bt .ic{font-size:20px!important;min-width:24px}.lc-body .bt .lbl{font-size:13px!important;text-align:left!important}
-      .systemLibreRow .bt{min-height:50px!important}
       .technicalUnderQualification{margin:7px 0 2px;position:relative}
       .technicalQuickBtn{width:100%;display:flex;align-items:center;gap:9px;padding:8px 10px;border:1px solid rgba(174,107,255,.38);border-radius:10px;background:rgba(115,70,180,.10);color:#f5f7fb;cursor:pointer;text-align:left}
       .technicalQuickBtn:hover,.technicalQuickBtn.on{border-color:#b77cff;background:rgba(115,70,180,.18)}
@@ -11271,8 +11266,11 @@ function Style() {
         .actionEvaluationLabel span { white-space:normal; line-height:1.25; overflow-wrap:anywhere; }
         .actionEvaluationButtons { flex-wrap:wrap; }
 
-        /* Uniformisation V7 : toutes les tuiles de choix du panneau central
-           reprennent exactement la hauteur de référence Pick Side / Pick Top. */
+        /* Même hauteur pour les choix de codage, adaptée à l’espace vertical. */
+        .lc-body { --coding-choice-height: 58px; }
+        @media (max-height: 900px) {
+          .lc-body { --coding-choice-height: 52px; }
+        }
         .lc-body .bt,
         .lc-body .chip,
         .lc-body .res,
@@ -11283,9 +11281,9 @@ function Style() {
         .lc-body .pickCompactChoice,
         .lc-body .technicalQuickBtn,
         .lc-body .technicalQuickChoices button {
-          height:58px !important;
-          min-height:58px !important;
-          max-height:58px !important;
+          height:var(--coding-choice-height) !important;
+          min-height:var(--coding-choice-height) !important;
+          max-height:var(--coding-choice-height) !important;
           box-sizing:border-box;
           display:flex;
           align-items:center;
@@ -11303,12 +11301,11 @@ function Style() {
           overflow-wrap:normal;
           word-break:normal;
         }
-        .systemLibreRow .bt { height:58px !important; min-height:58px !important; max-height:58px !important; }
         /* Les grilles de structure contiennent aussi des libellés/sections :
            on n'impose la hauteur qu'aux grilles composées uniquement de boutons. */
         .resultAllActionsGrid,
         .pickResultActions,
-        .foulOutcomeGrid { align-items:stretch; grid-auto-rows:58px; }
+        .foulOutcomeGrid { align-items:stretch; grid-auto-rows:var(--coding-choice-height); }
         .lc-body .grid { align-items:stretch; }
 
         /* Let labels and their controls take their natural height in the scrollable panel. */
@@ -11330,9 +11327,9 @@ function Style() {
         .resultStage .pickResultActions,
         .resultStage .foulOutcomeGrid { grid-auto-rows: auto; }
         .lc-body .resultStage :is(.chip, .res, .segb, .resultActionBtn) {
-          height: auto !important;
-          min-height: 44px !important;
-          max-height: none !important;
+          height: var(--coding-choice-height) !important;
+          min-height: var(--coding-choice-height) !important;
+          max-height: var(--coding-choice-height) !important;
           margin-bottom: 0;
           text-align: center;
           white-space: normal;
@@ -11343,8 +11340,7 @@ function Style() {
           grid-template-columns: 24px minmax(0, 1fr) 24px;
           column-gap: 5px;
           align-items: center;
-          height: auto !important;
-          max-height: none !important;
+          overflow: hidden;
         }
         .lc-body .systemChoiceLayout .bt .ic { grid-column: 1; }
         .lc-body .systemChoiceLayout .bt .lbl {
@@ -11352,6 +11348,23 @@ function Style() {
           color: #fff !important;
           text-align: center !important;
           overflow-wrap: anywhere;
+        }
+        .live3 > .lc { min-width: 0; }
+        .lc-code { container-type: inline-size; }
+        @container (min-width: 430px) {
+          .lc-body .systemChoiceLayout .grid {
+            grid-template-columns: repeat(3, minmax(0, 1fr));
+          }
+        }
+        @media (max-height: 900px) {
+          .lc-body .systemChoiceLayout { gap: 6px; }
+          .lc-body .systemChoiceLayout .grid { gap: 5px; }
+          .lc-body .systemChoiceLayout .bt {
+            padding: 5px 7px !important;
+            grid-template-columns: 20px minmax(0, 1fr) 20px;
+          }
+          .lc-body .systemChoiceLayout .bt .ic { min-width: 0; font-size: 16px !important; }
+          .lc-body .systemChoiceLayout .bt .lbl { font-size: 12px !important; }
         }
         .lc-right .scZone .sc {
           margin-inline: auto;
