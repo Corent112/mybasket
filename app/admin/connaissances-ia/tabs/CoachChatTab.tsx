@@ -1,5 +1,6 @@
 "use client";
 
+import KnowledgeDiagram from "@/components/assistant/KnowledgeDiagram";
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { AiCitation, AiConversation, AiMessage } from "@/lib/ai/knowledge/types";
 import { API, api } from "../api";
@@ -307,6 +308,7 @@ export default function CoachChatTab({ notify }: Props) {
                     {message.content}
                     {message.pending ? <span className={styles.cursor} /> : null}
 
+                    {message.role === "assistant" && !message.pending && <KnowledgeDiagram citations={message.citations} />}
                     {message.role === "assistant" &&
                     !message.pending &&
                     message.citations.length > 0 ? (
