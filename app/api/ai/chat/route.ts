@@ -1,4 +1,4 @@
-import { diagramImageUrl, documentaryPassages, documentaryQuery, relaxedDocumentQuery } from "@/lib/ai/knowledge/document-answer";
+import { diagramImageUrl, documentaryPassages, documentaryQuery, documentaryTopics, relaxedDocumentQuery } from "@/lib/ai/knowledge/document-answer";
 import { searchKnowledge } from "@/lib/ai/knowledge/search";
 import {
   AI_CHAT_MODEL,
@@ -175,25 +175,14 @@ export async function POST(request: Request) {
       ...(context.chunks ?? []),
       ...(relatedDocuments?.chunks ?? []),
     ], query);
-    // Follow up on variants found in the selected coverage, even when they are
-    // explained in a different document. Keep the original coverage first.
-    if (!client && /\b(?:protect|drop)\b/i.test(query) && passages.length) {
-      const variants = ["short roll", "long roll"];
-      const mentionsVariant = (value: string, variant: string) =>
-        value.toLowerCase().replace(/[-–\s]+/g, " ").includes(variant);
-      const mentioned = variants.filter((variant) =>
-        passages.some(({ excerpt }) => mentionsVariant(excerpt.text, variant))
-      );
-      const extraPassages = await Promise.all(mentioned.map(async (variant) => {
+    if (!client && passages.length) {
+      const topics = documentaryTopics(passages.map(({ excerpt }) => excerpt.text), query);
+      const extraPassages = await Promise.all(topics.map(async (topic) => {
         const documents = await searchKnowledge(actor.supabase, {
-          query: `"${variant}"`, scope, limit: 20, lexicalOnly: true,
+          query: `"${topic}"`, scope, limit: 20, lexicalOnly: true,
         });
-        const eligible = documents.chunks.filter(({ content }) =>
-          /\b(?:protect|drop)\b/i.test(content)
-          || content.split("\n").some((line) => line.trim().toLowerCase().replace(/[-–\s]+/g, " ") === variant)
-        );
-        return documentaryPassages(eligible, variant).filter(({ excerpt }) =>
-          mentionsVariant(excerpt.text, variant)
+        return documentaryPassages(documents.chunks, topic).filter(({ excerpt }) =>
+          excerpt.text.toLowerCase().replace(/[-–\s]+/g, " ").includes(topic)
         );
       }));
       const fingerprints = passages.map(({ excerpt }) => excerpt.text.replace(/\s+/g, " ").trim());
@@ -240,7 +229,7 @@ export async function POST(request: Request) {
           } else {
             const openaiStream = await client.responses.create({
               model,
-              instructions: context.systemPrompt + "\nDonne une réponse détaillée. Réunis tous les éléments pertinents disponibles, en présentant directement toutes les options, leurs conditions, les consignes et les exemples. Quand le sujet est le protect ou le drop, détaille le short roll et le long roll si la documentation les décrit. N’affiche aucun nom de source, fichier, numéro de page ni citation. Évite les répétitions et signale les éléments que les sources ne permettent pas de préciser.",
+              instructions: context.systemPrompt + "\nDonne une réponse détaillée. Réunis tous les éléments pertinents disponibles, en présentant directement toutes les options, leurs conditions, les consignes et les exemples. N’affiche aucun nom de source, fichier, numéro de page ni citation. Évite les répétitions et signale les éléments que les sources ne permettent pas de préciser.",
               input: [
                 ...previous.map((m) => ({ role: m.role, content: m.content })),
                 { role: "user" as const, content: message },

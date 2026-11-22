@@ -94,6 +94,24 @@ export function documentaryPassages<T extends { content: string }>(chunks: T[], 
   return passages;
 }
 
+/** Extract named options from the answer evidence before looking for more detail. */
+export function documentaryTopics(excerpts: string[], query: string): string[] {
+  const original = ` ${words(query).join(" ")} `;
+  const topics = new Set<string>();
+  for (const excerpt of excerpts) {
+    const labels = excerpt.matchAll(/(?:^|\n)\s*(?:[•–-]\s*)?([^\n:]{3,55})\s*:|\b(?:en|avec un|avec une)\s+([\p{L}-]+(?:\s+[\p{L}-]+){1,3})(?=,)/giu);
+    for (const match of labels) {
+      const label = (match[1] ?? match[2]).trim();
+      const tokens = words(label);
+      if (!tokens.length || tokens.length > 5 || !keywords(label).length) continue;
+      const key = tokens.join(" ");
+      if (!original.includes(` ${key} `)) topics.add(key);
+      if (topics.size === 8) return [...topics];
+    }
+  }
+  return [...topics];
+}
+
 export function diagramImageUrl(value?: string | null): string | undefined {
   if (!value) return undefined;
   try {
