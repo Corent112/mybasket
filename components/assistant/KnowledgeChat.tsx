@@ -198,16 +198,6 @@ export default function KnowledgeChat() {
               >
                 <p>{m.text || "Je consulte les ressources…"}</p>
                 <KnowledgeDiagram citations={m.citations} />
-                {!!m.citations?.length && (
-                  <details>
-                    <summary>Ressources consultées</summary>
-                    <ul>
-                      {m.citations.map((c) => (
-                        <li key={`${c.kind}:${c.id}:${c.label}`}>{c.label}</li>
-                      ))}
-                    </ul>
-                  </details>
-                )}
               </article>
             ))}
             <div ref={end} />

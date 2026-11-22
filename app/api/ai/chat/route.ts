@@ -1,5 +1,5 @@
 import { diagramImageUrl, documentaryPassages, documentaryQuery, relaxedDocumentQuery } from "@/lib/ai/knowledge/document-answer";
-import { formatChunkProvenance, searchKnowledge } from "@/lib/ai/knowledge/search";
+import { searchKnowledge } from "@/lib/ai/knowledge/search";
 import {
   AI_CHAT_MODEL,
   AI_CHAT_RATE_LIMIT,
@@ -156,7 +156,7 @@ export async function POST(request: Request) {
       includeCorrections: !!client,
       includeReferences: !!client && boolOr(body.includeReferences, false),
     }), relaxedQuery
-      ? searchKnowledge(actor.supabase, { query: relaxedQuery, scope, limit: 18, lexicalOnly: true })
+      ? searchKnowledge(actor.supabase, { query: relaxedQuery, scope, limit: 40, lexicalOnly: true })
       : null]);
 
     /* --- 4. Message utilisateur ----------------------------------- */
@@ -175,18 +175,39 @@ export async function POST(request: Request) {
       ...(context.chunks ?? []),
       ...(relatedDocuments?.chunks ?? []),
     ], query);
-    const documentCitations = new Map<string, AiCitation>();
-    for (const { chunk } of passages) {
-      const label = formatChunkProvenance(chunk);
-      documentCitations.set(`${chunk.source_id}:${label}`, { kind: "document", id: chunk.source_id, label });
+    // Follow up on variants found in the selected coverage, even when they are
+    // explained in a different document. Keep the original coverage first.
+    if (!client && /\b(?:protect|drop)\b/i.test(query) && passages.length) {
+      const variants = ["short roll", "long roll"];
+      const mentionsVariant = (value: string, variant: string) =>
+        value.toLowerCase().replace(/[-–\s]+/g, " ").includes(variant);
+      const mentioned = variants.filter((variant) =>
+        passages.some(({ excerpt }) => mentionsVariant(excerpt.text, variant))
+      );
+      const extraPassages = await Promise.all(mentioned.map(async (variant) => {
+        const documents = await searchKnowledge(actor.supabase, {
+          query: `"${variant}"`, scope, limit: 20, lexicalOnly: true,
+        });
+        const eligible = documents.chunks.filter(({ content }) =>
+          /\b(?:protect|drop)\b/i.test(content)
+          || content.split("\n").some((line) => line.trim().toLowerCase().replace(/[-–\s]+/g, " ") === variant)
+        );
+        return documentaryPassages(eligible, variant).filter(({ excerpt }) =>
+          mentionsVariant(excerpt.text, variant)
+        );
+      }));
+      const fingerprints = passages.map(({ excerpt }) => excerpt.text.replace(/\s+/g, " ").trim());
+      for (const candidate of extraPassages.flat()) {
+        const normalized = candidate.excerpt.text.replace(/\s+/g, " ").trim();
+        if (fingerprints.some((text) => text.includes(normalized) || normalized.includes(text))) continue;
+        fingerprints.push(normalized);
+        passages.push(candidate);
+      }
     }
     const diagramUrl = diagramImageUrl(term?.schema_url);
-    const citations: AiCitation[] = client ? context.citations : [
-      ...documentCitations.values(),
-      ...(term && (!passages.length || diagramUrl)
-        ? [{ kind: "term" as const, id: term.id, label: `Lexique MyBasket — ${term.term}`, diagramUrl }]
-        : []),
-    ];
+    const citations: AiCitation[] = client
+      ? context.citations.filter((citation) => citation.diagramUrl)
+      : term && diagramUrl ? [{ kind: "term", id: term.id, label: term.term, diagramUrl }] : [];
 
     const stream = new ReadableStream<Uint8Array>({
       async start(controller) {
@@ -209,9 +230,7 @@ export async function POST(request: Request) {
         try {
           if (!client) {
             if (passages.length) {
-              answer = passages.map(({ chunk, excerpt }) =>
-                `${formatChunkProvenance(chunk)}\n${excerpt.text}`
-              ).join("\n\n");
+              answer = passages.map(({ excerpt }) => excerpt.text).join("\n\n");
             } else if (term) {
               answer = `${term.term} — ${term.definition}`;
             } else {
@@ -221,7 +240,7 @@ export async function POST(request: Request) {
           } else {
             const openaiStream = await client.responses.create({
               model,
-              instructions: context.systemPrompt + "\nDonne une réponse détaillée. Réunis les informations complémentaires des sources et cite les pages disponibles. Évite les répétitions et signale les éléments que les sources ne permettent pas de préciser.",
+              instructions: context.systemPrompt + "\nDonne une réponse détaillée. Réunis tous les éléments pertinents disponibles, en présentant directement toutes les options, leurs conditions, les consignes et les exemples. Quand le sujet est le protect ou le drop, détaille le short roll et le long roll si la documentation les décrit. N’affiche aucun nom de source, fichier, numéro de page ni citation. Évite les répétitions et signale les éléments que les sources ne permettent pas de préciser.",
               input: [
                 ...previous.map((m) => ({ role: m.role, content: m.content })),
                 { role: "user" as const, content: message },

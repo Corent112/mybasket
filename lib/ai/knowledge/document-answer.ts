@@ -23,10 +23,13 @@ function keywords(text: string): string[] {
 /** PostgreSQL websearch syntax. Tokens are words only, so user punctuation cannot become operators. */
 export function relaxedDocumentQuery(question: string): string | null {
   const terms = keywords(question).slice(0, 12);
-  return terms.length > 1 ? terms.join(" OR ") : null;
+  if (terms.some((term) => term === "protect" || term === "drop")) terms.push("protect", "drop");
+  const uniqueTerms = [...new Set(terms)];
+  return uniqueTerms.length > 1 ? uniqueTerms.join(" OR ") : null;
 }
 
 function comparable(word: string): string {
+  if (word === "drop") return "protect";
   return word.length >= 5 ? word.replace(/[sx]$/, "") : word;
 }
 
@@ -41,16 +44,22 @@ export function relevantExcerpt(content: string, query: string): { text: string;
 
   for (const [index, line] of lines.entries()) {
     const definition = line.split(/\s*(?:→|\s+–\s+)\s*/u, 1)[0];
-    const label = words(definition).map(comparable);
+    const label = [...new Set(words(definition).map(comparable))];
     if (!label.length) continue;
     const labelMatches = terms.filter((term) => label.includes(term)).length;
-    const matchesTopic = labelMatches > 0 && label.length >= requiredHits && label.length <= 8 && queryPhrase.includes(` ${label.join(" ")} `);
+    const matchesTopic = labelMatches > 0 && (label.length >= requiredHits || (label.length === 1 && label[0] === "protect")) && label.length <= 8 && queryPhrase.includes(` ${label.join(" ")} `);
     const following = lines[index + 1];
     const isHeading = matchesTopic && definition === line && !!following;
     if (matchesTopic && definition === line && !following) continue;
 
-    const limit = isHeading ? 1600 : 750;
-    const passage = isHeading ? lines.slice(index).join("\n") : [line, following].filter(Boolean).join("\n");
+    const limit = isHeading ? 2400 : 1000;
+    const nextHeading = isHeading ? lines.findIndex((candidate, position) =>
+      position > index + 1 && /^[\p{Lu}][^.!?;:]{2,64}$/u.test(candidate)
+        && /^\s*[•–-]/u.test(lines[position + 1] ?? "")
+    ) : -1;
+    const passage = isHeading
+      ? lines.slice(index, nextHeading === -1 ? undefined : nextHeading).join("\n")
+      : [line, following].filter(Boolean).join("\n");
     const end = passage.length > limit ? passage.lastIndexOf(isHeading ? "\n" : " ", limit) : passage.length;
     const text = passage.length > limit ? passage.slice(0, end >= limit / 2 ? end : limit).trimEnd() + "…" : passage;
     const passageWords = new Set(words(text).map(comparable));
@@ -72,10 +81,10 @@ export function documentaryPassages<T extends { content: string }>(chunks: T[], 
 
   const passages: typeof ranked = [];
   const included = new Set<string>();
-  const minimumScore = (ranked[0]?.excerpt.score ?? 0) * 0.55;
+  const minimumScore = (ranked[0]?.excerpt.score ?? 0) * 0.35;
 
   for (const result of ranked) {
-    if (passages.length === 5 || result.excerpt.score < minimumScore) break;
+    if (result.excerpt.score < minimumScore) break;
     const fingerprint = words(result.excerpt.text).join(" ");
     if ([...included].some((previous) => previous.includes(fingerprint) || fingerprint.includes(previous))) continue;
     included.add(fingerprint);
