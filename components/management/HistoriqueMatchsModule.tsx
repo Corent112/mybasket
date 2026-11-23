@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import { CODING_MODES } from "@/components/prise-stats-pro/coding-modes";
 import { createClient } from "@/lib/supabase/client";
 
 type TeamOption = {
@@ -19,6 +20,7 @@ type MatchRow = {
   home?: boolean | null;
   project_status?: string | null;
   finalized_at?: string | null;
+  coding_mode: string | null;
 };
 
 type PlayerLine = {
@@ -562,7 +564,7 @@ export default function HistoriqueMatchsModule() {
     // matchs codés par ses assistants.
     const { data: matchData, error: matchError } = await supabase
       .from("match_stats")
-      .select("id, team_id, opponent, match_date, us_score, them_score, result, home, project_status, finalized_at")
+      .select("id, team_id, opponent, match_date, us_score, them_score, result, home, project_status, finalized_at, coding_mode:project_state->>codingMode")
       .order("match_date", { ascending: false });
 
     if (matchError) {
@@ -1234,6 +1236,9 @@ export default function HistoriqueMatchsModule() {
                     {matchTeamName} vs {match.opponent || "Adversaire"}
                   </h4>
                   <p className="team">{match.home === false ? "Extérieur" : "Domicile"}</p>
+                  <span className="coding-mode">
+                    {CODING_MODES.find((mode) => mode.id === match.coding_mode)?.label ?? "Mode non renseigné"}
+                  </span>
                 </div>
 
                 <div className="score">
@@ -1681,6 +1686,17 @@ export default function HistoriqueMatchsModule() {
           color: #7c7470;
           font-size: 0.85rem;
           margin-top: 0.2rem;
+        }
+
+        .coding-mode {
+          display: inline-block;
+          margin-top: 0.45rem;
+          padding: 0.15rem 0.5rem;
+          border-radius: 999px;
+          background: #f3ede4;
+          color: #69433b;
+          font-size: 0.72rem;
+          font-weight: 700;
         }
 
         .score {
