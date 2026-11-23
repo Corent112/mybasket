@@ -6528,7 +6528,7 @@ export default function PriseStatsProPage() {
     const customTitle=profileConfig?.blockTitles?.[(stageKeys[stage]||titleKeys[t]) as keyof NonNullable<LiveCodingProfile['blockTitles']>];
     return <div className="wzhead"><div className="wzstep">{NAV[navIdx].toUpperCase()}</div><div className="wztitle">{customTitle||t}</div>{s && <div className="wzsub">{s}</div>}</div>; }
   function tileGrid(arr: { id: string; label: string; ic?: string }[], sel: string, fn: (id: string) => void) {
-    return <div className="grid c3">{arr.map((o) => { const labelSize = o.label.length > 24 ? 'xs' : o.label.length > 16 ? 'sm' : o.label.length > 11 ? 'md' : ''; return <button key={o.id} className={`bt ${o.id === 'libre' ? 'systemLibre' : ''} ${sel === o.id ? 'active' : ''}`} onClick={() => fn(o.id)}><span className="ic">{o.ic || '•'}</span><span className={`lbl ${labelSize}`}>{o.label}</span></button>; })}</div>;
+    return <div className="grid c3">{arr.map((o) => { const labelSize = o.label.length > 24 ? 'xs' : o.label.length > 16 ? 'sm' : o.label.length > 11 ? 'md' : ''; return <button key={o.id} className={`bt ${sel === o.id ? 'active' : ''}`} onClick={() => fn(o.id)}><span className="ic">{o.ic || '•'}</span><span className={`lbl ${labelSize}`}>{o.label}</span></button>; })}</div>;
   }
   function players3(sel: string | null, fn: (id: string) => void) {
     return <div className="grid c3">{floor.map((p) => <button key={p.id} className={`pl ${sel === p.id ? 'active' : ''}`} onClick={() => fn(p.id)}><Av p={p} /><span className="num">{p.num}</span><span className="nm">{p.name}</span></button>)}</div>;
@@ -9983,7 +9983,6 @@ function Style() {
         grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
       }
 
-      .systemLibre { grid-column: 1 / -1 !important; }
       .historyTags { display:flex; flex-wrap:wrap; gap:4px; margin:4px 0; }
       .historyTags i { display:inline-flex; padding:3px 6px; border:1px solid rgba(212,162,76,.35); border-radius:999px; background:rgba(212,162,76,.08); color:#f2c76f; font-size:9px; font-style:normal; font-weight:800; }
       .zoneReviewAll { width:calc(100% - 24px); margin:10px 12px; padding:10px; border:1px solid var(--gold); border-radius:10px; background:rgba(212,162,76,.1); color:var(--gold); font-weight:900; cursor:pointer; }
@@ -11335,19 +11334,31 @@ function Style() {
           white-space: normal;
           overflow-wrap: anywhere;
         }
-        .lc-body .systemChoiceLayout .bt {
+        .lc-body .bt:has(> .ic + .lbl) {
+          container-type: inline-size;
           display: grid;
-          grid-template-columns: 24px minmax(0, 1fr) 24px;
-          column-gap: 5px;
-          align-items: center;
-          overflow: hidden;
+          grid-template: minmax(0, 1fr) / min(15%, 22px) minmax(0, 1fr) min(15%, 22px);
+          column-gap: 3px;
+          place-items: center;
+          justify-content: stretch;
         }
-        .lc-body .systemChoiceLayout .bt .ic { grid-column: 1; }
-        .lc-body .systemChoiceLayout .bt .lbl {
-          grid-column: 2;
-          color: #fff !important;
+        .lc-body .bt:has(> .ic + .lbl) > .ic {
+          grid-area: 1 / 1;
+          min-width: 0;
+          font-size: clamp(10px, 12cqi, 18px) !important;
+        }
+        .lc-body .bt:has(> .ic + .lbl) > .lbl {
+          grid-area: 1 / 2;
+          min-width: 0;
+          font-size: clamp(10px, 10cqi, 14px) !important;
           text-align: center !important;
           overflow-wrap: anywhere;
+        }
+        .lc-body .bt:has(> .ic + .lbl) > .lbl:is(.md, .sm) {
+          font-size: clamp(9px, 9cqi, 13px) !important;
+        }
+        .lc-body .bt:has(> .ic + .lbl) > .lbl.xs {
+          font-size: clamp(9px, 8cqi, 12px) !important;
         }
         .live3 > .lc { min-width: 0; }
         .lc-code { container-type: inline-size; }
@@ -11361,10 +11372,7 @@ function Style() {
           .lc-body .systemChoiceLayout .grid { gap: 5px; }
           .lc-body .systemChoiceLayout .bt {
             padding: 5px 7px !important;
-            grid-template-columns: 20px minmax(0, 1fr) 20px;
           }
-          .lc-body .systemChoiceLayout .bt .ic { min-width: 0; font-size: 16px !important; }
-          .lc-body .systemChoiceLayout .bt .lbl { font-size: 12px !important; }
         }
         .lc-right .scZone .sc {
           margin-inline: auto;
