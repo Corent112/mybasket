@@ -197,6 +197,38 @@ export default function ExercisePhotoImport({ onImported, playersOnly = false, d
    * Injection unique dans le formulaire. Le résultat en attente est retiré
    * AVANT l'appel : même un double clic ne peut pas injecter deux fois.
    */
+  const rememberScanCorrection = (before: AiExerciseImport, corrected: AiExerciseImport) => {
+    const summarize = (result: AiExerciseImport) => {
+      const diagrams = diagramsOf(result);
+      const actions: Record<string, number> = {};
+      for (const diagram of diagrams) {
+        for (const { action } of diagram.actions) actions[action] = (actions[action] ?? 0) + 1;
+      }
+      return JSON.stringify({
+        phases: diagrams.length,
+        joueurs: diagrams.reduce((sum, diagram) => sum + diagram.players.length, 0),
+        actions: Object.fromEntries(Object.entries(actions).sort(([a], [b]) => a.localeCompare(b))),
+      });
+    };
+    const aiOutput = summarize(before);
+    const userCorrection = summarize(corrected);
+    if (aiOutput === userCorrection) return;
+
+    void fetch("/api/ai/knowledge/corrections", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        context: "Validation du scan de schéma",
+        module: "photo-analysis",
+        scope: "user",
+        aiOutput,
+        userCorrection,
+      }),
+    }).then((response) => {
+      if (!response.ok) console.warn("[MyBasket] Correction du scan non enregistrée", response.status);
+    }).catch(() => console.warn("[MyBasket] Correction du scan non enregistrée"));
+  };
+
   const validate = async (corrected: AiExerciseImport) => {
     if (injecting.current) return;
     const count = diagramsOf(corrected).length;
@@ -217,6 +249,7 @@ export default function ExercisePhotoImport({ onImported, playersOnly = false, d
 
     try {
       await onImported(corrected);
+      if (pending && pending !== corrected) rememberScanCorrection(pending, corrected);
       setPending(null);
       setWarnings(corrected.warnings);
       setStatus(

@@ -1,4 +1,4 @@
-import { diagramImageUrl, documentaryPassages, documentaryQuery, documentaryTopics, relaxedDocumentQuery } from "@/lib/ai/knowledge/document-answer";
+import { diagramImageUrl, documentaryPassages, documentaryQuery, documentaryTopics, learnedDocumentQuery, relaxedDocumentQuery } from "@/lib/ai/knowledge/document-answer";
 import { searchKnowledge } from "@/lib/ai/knowledge/search";
 import {
   AI_CHAT_MODEL,
@@ -14,6 +14,7 @@ import {
   resolveActor,
 } from "@/lib/ai/knowledge";
 import type { AiCitation } from "@/lib/ai/knowledge";
+import { createAdminClient } from "@/lib/supabase/admin-server";
 import { getOpenAI } from "@/lib/ai/openai";
 import {
   apiError,
@@ -144,9 +145,12 @@ export async function POST(request: Request) {
     /* --- 3. Contexte Knowledge Engine ----------------------------- */
     const scope = buildScopeContext(actor);
 
-    const query = client ? message : documentaryQuery(message);
+    const lastQuestion = previous.filter((entry) => entry.role === "user").at(-1)?.content;
+    const followUp = /^(?:et\b|aussi\b|pourquoi\s*[?!.]*$|comment\s*[?!.]*$|(?:peux-tu\s+)?(?:précise|détaille|développe|donne un exemple)\b)/iu.test(message);
+    const searchQuestion = followUp && lastQuestion ? `${message} ${lastQuestion.slice(0, 500)}` : message;
+    const query = client ? searchQuestion : documentaryQuery(searchQuestion);
     const relaxedQuery = client ? null : relaxedDocumentQuery(query);
-    const [context, relatedDocuments] = await Promise.all([buildAIContext(actor.supabase, {
+    let [context, relatedDocuments] = await Promise.all([buildAIContext(actor.supabase, {
       query,
       module: moduleKey,
       scope,
@@ -158,6 +162,53 @@ export async function POST(request: Request) {
     }), relaxedQuery
       ? searchKnowledge(actor.supabase, { query: relaxedQuery, scope, limit: 40, lexicalOnly: true })
       : null]);
+
+    let evidenceQuery = query;
+    const hasEvidence = client
+      ? !!(context.chunks?.length || context.terms?.length)
+      : !!(context.terms?.length || documentaryPassages([
+          ...(context.chunks ?? []), ...(relatedDocuments?.chunks ?? []),
+        ], query).length);
+
+    if (!hasEvidence) {
+      const { data: exchanges, error } = await actor.supabase
+        .from("ai_messages")
+        .select("conversation_id, role, content, error, ai_conversations!inner(user_id, module, is_archived)")
+        .eq("ai_conversations.user_id", actor.userId)
+        .eq("ai_conversations.module", moduleKey)
+        .eq("ai_conversations.is_archived", false)
+        .in("role", ["user", "assistant"])
+        .order("created_at", { ascending: false })
+        .limit(80);
+      if (error) console.warn("[AI][chat] mémoire privée", error.code);
+
+      const learned = learnedDocumentQuery(query, exchanges ?? []);
+      if (learned) {
+        if (client) {
+          const recovered = await buildAIContext(actor.supabase, {
+            query: learned,
+            module: moduleKey,
+            scope,
+            includeDocuments: true,
+            includeTerms: true,
+            includeCorrections: true,
+            includeReferences: boolOr(body.includeReferences, false),
+          });
+          if (recovered.chunks?.length || recovered.terms?.length) context = recovered;
+        } else {
+          const expanded = relaxedDocumentQuery(learned);
+          if (expanded) {
+            const recovered = await searchKnowledge(actor.supabase, {
+              query: expanded, scope, limit: 40, lexicalOnly: true,
+            });
+            if (documentaryPassages(recovered.chunks, learned).length) {
+              relatedDocuments = recovered;
+              evidenceQuery = learned;
+            }
+          }
+        }
+      }
+    }
 
     /* --- 4. Message utilisateur ----------------------------------- */
     await actor.supabase.from("ai_messages").insert({
@@ -171,12 +222,22 @@ export async function POST(request: Request) {
     const encoder = new TextEncoder();
     const finalConversationId = conversationId;
     const term = !client ? context.terms?.[0] : undefined;
-    const passages = client ? [] : documentaryPassages([
+    const candidateChunks = client ? [] : [
       ...(context.chunks ?? []),
       ...(relatedDocuments?.chunks ?? []),
-    ], query);
+    ];
+    const sharedWriter = candidateChunks.length ? createAdminClient() : null;
+    const sharedUsage = new Map<string, number>();
+    if (sharedWriter) {
+      const { data, error } = await sharedWriter.from("ai_shared_passage_usage")
+        .select("chunk_id, response_count")
+        .in("chunk_id", [...new Set(candidateChunks.map((chunk) => chunk.id))]);
+      if (error) console.warn("[AI][chat] compteurs des passages", error.code);
+      for (const row of data ?? []) sharedUsage.set(row.chunk_id, row.response_count);
+    }
+    const passages = documentaryPassages(candidateChunks, evidenceQuery, sharedUsage);
     if (!client && passages.length) {
-      const topics = documentaryTopics(passages.map(({ excerpt }) => excerpt.text), query);
+      const topics = documentaryTopics(passages.map(({ excerpt }) => excerpt.text), evidenceQuery);
       const extraPassages = await Promise.all(topics.map(async (topic) => {
         const documents = await searchKnowledge(actor.supabase, {
           query: `"${topic}"`, scope, limit: 20, lexicalOnly: true,
@@ -283,6 +344,13 @@ export async function POST(request: Request) {
             })
             .select("id")
             .single();
+
+          if (saved?.id && !failure && passages.length && sharedWriter) {
+            const { error } = await sharedWriter.rpc("ai_record_shared_passages", {
+              p_chunk_ids: [...new Set(passages.map(({ chunk }) => chunk.id))],
+            });
+            if (error) console.warn("[AI][chat] mise à jour des passages", error.code);
+          }
 
           await actor.supabase
             .from("ai_conversations")

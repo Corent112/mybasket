@@ -73,11 +73,14 @@ export function relevantExcerpt(content: string, query: string): { text: string;
 }
 
 /** Select complementary extracts without reporting the same evidence twice. */
-export function documentaryPassages<T extends { content: string }>(chunks: T[], query: string) {
+export function documentaryPassages<T extends { content: string; id?: string }>(
+  chunks: T[], query: string, sharedUsage?: ReadonlyMap<string, number>,
+) {
   const ranked = chunks.flatMap((chunk) => {
     const excerpt = relevantExcerpt(chunk.content, query);
     return excerpt ? [{ chunk, excerpt }] : [];
-  }).sort((a, b) => b.excerpt.score - a.excerpt.score);
+  }).sort((a, b) => b.excerpt.score - a.excerpt.score
+    || (sharedUsage?.get(b.chunk.id ?? "") ?? 0) - (sharedUsage?.get(a.chunk.id ?? "") ?? 0));
 
   const passages: typeof ranked = [];
   const included = new Set<string>();
@@ -120,4 +123,42 @@ export function diagramImageUrl(value?: string | null): string | undefined {
     if (value.startsWith("/") && !value.startsWith("//") && url.origin === "https://mybasket.invalid") return url.pathname + url.search;
     return /^https:\/\//i.test(value) ? url.href : undefined;
   } catch { return undefined; }
+}
+
+type PreviousChatMessage = {
+  conversation_id: string;
+  role: string;
+  content: string;
+  error: string | null;
+};
+
+/** Reuse vocabulary from related exchanges without carrying over old answers. */
+export function learnedDocumentQuery(question: string, newestFirst: PreviousChatMessage[]): string | null {
+  const requested = new Set(keywords(question).map(comparable));
+  if (requested.size < 2) return null;
+
+  const answers = new Map<string, string>();
+  let best: { score: number; additions: string[] } | undefined;
+
+  for (const entry of newestFirst) {
+    if (entry.role === "assistant") {
+      answers.set(entry.conversation_id, entry.error ? "" : entry.content);
+      continue;
+    }
+
+    const answer = answers.get(entry.conversation_id);
+    answers.delete(entry.conversation_id);
+    if (!answer || answer.startsWith("Je n’ai pas trouvé")) continue;
+
+    const asked = keywords(entry.content);
+    const matches = asked.filter((word) => requested.has(comparable(word)));
+    const score = new Set(matches.map(comparable)).size;
+    if (score < Math.max(2, requested.size - 1) || score <= (best?.score ?? 0)) continue;
+
+    const used = new Set(keywords(answer).map(comparable));
+    const additions = asked.filter((word) => !requested.has(comparable(word)) && used.has(comparable(word)));
+    if (additions.length) best = { score, additions: additions.slice(0, 3) };
+  }
+
+  return best ? [question, ...best.additions].join(" ") : null;
 }
