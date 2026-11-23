@@ -362,34 +362,39 @@ async function attachExerciseContributors(rows: any[]): Promise<Exercise[]> {
   });
 }
 
-export async function listExercises(): Promise<Exercise[]> {
+export async function listExercises(
+  { limit, signal }: { limit?: number; signal?: AbortSignal } = {}
+): Promise<Exercise[]> {
   const supabase = createClient();
+  const seen = new Set<string>();
+  const rows = [];
+  const pageSize = limit ?? 50;
 
-  const { data, error } = await supabase
-    .from("exercises")
-    .select("*")
-    .eq("visibility", "public")
-    .eq("review_status", "approved")
-    .order("created_at", { ascending: false });
+  for (let offset = 0; limit === undefined || rows.length < limit; offset += pageSize) {
+    if (signal?.aborted) return [];
+    const request = supabase
+      .from("exercises")
+      .select("*")
+      .eq("visibility", "public")
+      .eq("review_status", "approved")
+      .order("created_at", { ascending: false })
+      .order("id", { ascending: false })
+      .range(offset, offset + pageSize - 1);
+    const { data, error } = await (signal ? request.abortSignal(signal) : request);
+    if (signal?.aborted) return [];
+    if (error) throw error;
 
-  if (error) {
-    showSupabaseError("Erreur Supabase listExercises:", error);
-    return [];
+    for (const row of data ?? []) {
+      const key = row.original_exercise_id ? `original:${row.original_exercise_id}` : `id:${row.id}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      rows.push(row);
+      if (rows.length === limit) break;
+    }
+    if (!data || data.length < pageSize) break;
   }
 
-  const seen = new Set<string>();
-  const deduped = (data ?? []).filter((row: any) => {
-    // Une même proposition ne doit produire qu'une seule fiche officielle
-    // visible, même si elle a été validée plusieurs fois historiquement.
-    const key = row?.original_exercise_id
-      ? `original:${row.original_exercise_id}`
-      : `id:${row.id}`;
-    if (seen.has(key)) return false;
-    seen.add(key);
-    return true;
-  });
-
-  return attachExerciseContributors(deduped);
+  return attachExerciseContributors(rows);
 }
 
 export async function listMyExercises(): Promise<Exercise[]> {

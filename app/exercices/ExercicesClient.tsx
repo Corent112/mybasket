@@ -146,6 +146,7 @@ export default function ExercicesClient() {
   const [sort, setSort] = useState<SortKey>("recent");
   const [selected, setSelected] = useState<Record<string, string[]>>({});
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState(false);
   const [user, setUser] = useState<User | null>(null);
   const [addingExerciseId, setAddingExerciseId] = useState<string | null>(null);
   const [addedIds, setAddedIds] = useState<Set<string>>(new Set());
@@ -154,8 +155,13 @@ export default function ExercicesClient() {
 
   useEffect(() => {
     async function load() {
+      setLoadError(false);
       try {
-        const data = await listExercises();
+        const data = await listExercises().catch((error) => {
+          console.error("Erreur chargement exercices :", error);
+          setLoadError(true);
+          return [];
+        });
         setItems(data);
 
         const {
@@ -363,7 +369,7 @@ setAddedIds(new Set((cartRows ?? []).map((row: { item_id: string | null }) => St
             {loading ? (
               <p className="empty-state">Chargement des exercices...</p>
             ) : filtered.length === 0 ? (
-              <p className="empty-state">Aucun exercice trouvé.</p>
+              <p className="empty-state">{loadError ? "Les exercices sont temporairement indisponibles." : "Aucun exercice trouvé."}</p>
             ) : (
               <div className="mb-exercises-grid">
                 {filtered.map((item) => (

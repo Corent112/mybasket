@@ -65,7 +65,15 @@ export default function Home() {
   const [latest, setLatest] = useState<Exercise[]>([]);
 
   useEffect(() => {
-    listExercises().then(items => setLatest(items.slice(0, 6)));
+    const controller = new AbortController();
+    void listExercises({ limit: 6, signal: controller.signal })
+      .then((items) => {
+        if (!controller.signal.aborted) setLatest(items);
+      })
+      .catch((error) => {
+        if (!controller.signal.aborted) console.error("Erreur chargement des derniers exercices :", error);
+      });
+    return () => controller.abort();
   }, []);
 
   useEffect(() => {
