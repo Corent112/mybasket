@@ -6528,7 +6528,7 @@ export default function PriseStatsProPage() {
     const customTitle=profileConfig?.blockTitles?.[(stageKeys[stage]||titleKeys[t]) as keyof NonNullable<LiveCodingProfile['blockTitles']>];
     return <div className="wzhead"><div className="wzstep">{NAV[navIdx].toUpperCase()}</div><div className="wztitle">{customTitle||t}</div>{s && <div className="wzsub">{s}</div>}</div>; }
   function tileGrid(arr: { id: string; label: string; ic?: string }[], sel: string, fn: (id: string) => void) {
-    return <div className="grid c3">{arr.map((o) => { const labelSize = o.label.length > 24 ? 'xs' : o.label.length > 16 ? 'sm' : o.label.length > 11 ? 'md' : ''; return <button key={o.id} className={`bt ${sel === o.id ? 'active' : ''}`} onClick={() => fn(o.id)}><span className="ic">{o.ic || '•'}</span><span className={`lbl ${labelSize}`}>{o.label}</span></button>; })}</div>;
+    return <div className="grid c3">{arr.map((o) => { const labelSize = o.label.length > 24 ? 'xs' : o.label.length > 16 ? 'sm' : o.label.length > 11 ? 'md' : ''; return <button key={o.id} className={`bt ${sel === o.id ? 'active' : ''}`} onClick={() => fn(o.id)}><span className="ic">{o.ic || '•'}</span><span className="lbl" data-label-size={labelSize}>{o.label}</span></button>; })}</div>;
   }
   function players3(sel: string | null, fn: (id: string) => void) {
     return <div className="grid c3">{floor.map((p) => <button key={p.id} className={`pl ${sel === p.id ? 'active' : ''}`} onClick={() => fn(p.id)}><Av p={p} /><span className="num">{p.num}</span><span className="nm">{p.name}</span></button>)}</div>;
@@ -6823,6 +6823,11 @@ export default function PriseStatsProPage() {
                       <button type="button" className={`historyTag historyTagEdit ${a.context || ''}`} onClick={() => beginHistoryCorrection(a, 'context')} title="Changer Attaque / Défense">
                         {a.context === 'defense' ? 'Défense' : 'Attaque'}
                       </button>
+                      {a.evaluation && (
+                        <span className={`historyTag evaluation-${a.evaluation}`}>
+                          {a.context === 'defense' ? 'Défense' : 'Attaque'} {a.evaluation === 'positive' ? '+' : '−'}
+                        </span>
+                      )}
                       {systemName && <button type="button" className="historyTag historyTagEdit system" onClick={() => beginHistoryCorrection(a, 'systeme')} title="Changer le système">{systemName}</button>}
                       {a.tempsFort && <button type="button" className="historyTag historyTagEdit tempo" onClick={() => beginHistoryCorrection(a, 'temps')} title="Changer le temps fort">{tags.label(a.tempsFort)}</button>}
                       {a.actionType && <button type="button" className="historyTag historyTagEdit action" onClick={() => beginHistoryCorrection(a, 'action')} title="Changer l'action">{String(a.actionType).replaceAll('-', ' ')}</button>}
@@ -8224,6 +8229,14 @@ function BoxView({ actions, roster, teamId, minutesByPlayer = {}, onChangeMinute
       : <div className="boxcard"><div className="bt-lbl2">{t}</div><div className="bt-val" style={{ color: c || 'var(--txt)' }}>{v}</div></div>
   );
 
+  const evaluationGroups = (['attaque', 'defense'] as const).flatMap((context) =>
+    (['negative', 'positive'] as const).map((evaluation) => ({
+      label: `${context === 'attaque' ? 'Attaque' : 'Défense'} ${evaluation === 'positive' ? '+' : '−'}`,
+      evaluation,
+      items: actions.filter((action) => action.context === context && action.evaluation === evaluation),
+    }))
+  );
+
   const TABS: [typeof boxTab, string][] = [
     ['box', 'Boxscore joueurs'], ['box-advanced', 'Boxscore joueur avancé'], ['team', 'Collectif'], ['matrix', 'Matrice'],
     ['systems', 'Systèmes'],
@@ -8237,6 +8250,17 @@ function BoxView({ actions, roster, teamId, minutesByPlayer = {}, onChangeMinute
           <button key={k} className={`box-tab ${boxTab === k ? 'on' : ''}`} onClick={() => setBoxTab(k)}>{l}</button>
         ))}
       </div>
+
+      {(boxTab === 'box' || boxTab === 'box-advanced' || boxTab === 'team') && (
+        <div className="box-evaluation-groups" aria-label="Revoir les actions qualifiées">
+          {evaluationGroups.map(({ label, evaluation, items }) => (
+            <button key={label} type="button" className={`historyTag evaluation-${evaluation}`}
+              disabled={items.length === 0} onClick={() => openList(label, items)}>
+              {label} · {items.length}
+            </button>
+          ))}
+        </div>
+      )}
 
       {(boxTab === 'box' || boxTab === 'team') && reviewTags.size > 0 && (
         <div className="cardrow" aria-label="Tags de Mon mode">
@@ -10032,9 +10056,6 @@ function Style() {
         hyphens: none;
         max-width: 100%;
       }
-      .bt .lbl.md { font-size: clamp(11px, .92vw, 15px); }
-      .bt .lbl.sm { font-size: clamp(10px, .82vw, 13px); }
-      .bt .lbl.xs { font-size: clamp(9px, .72vw, 12px); }
 
       .bt .mut {
         color: var(--mute);
@@ -11352,14 +11373,21 @@ function Style() {
           min-width: 0;
           font-size: clamp(10px, 10cqi, 14px) !important;
           text-align: center !important;
+          color: inherit !important;
           overflow-wrap: anywhere;
         }
-        .lc-body .bt:has(> .ic + .lbl) > .lbl:is(.md, .sm) {
+        .lc-body .bt:has(> .ic + .lbl) > .lbl:is([data-label-size="md"], [data-label-size="sm"]) {
           font-size: clamp(9px, 9cqi, 13px) !important;
         }
-        .lc-body .bt:has(> .ic + .lbl) > .lbl.xs {
+        .lc-body .bt:has(> .ic + .lbl) > .lbl[data-label-size="xs"] {
           font-size: clamp(9px, 8cqi, 12px) !important;
         }
+        .box-evaluation-groups { display: flex; flex-wrap: wrap; gap: 8px; margin: 0 0 12px; }
+        .box-evaluation-groups button { padding: 6px 10px; cursor: pointer; }
+        .box-evaluation-groups button:disabled { opacity: .55; cursor: default; }
+        .historyTag.evaluation-positive { background: #123623; color: #abf5c5; border-color: #398b58; }
+        .historyTag.evaluation-negative { background: #462027; color: #ffc2c8; border-color: #b45c65; }
+
         .live3 > .lc { min-width: 0; }
         .lc-code { container-type: inline-size; }
         @container (min-width: 430px) {
