@@ -66,7 +66,7 @@ function refineDiagram(diagram: AiExerciseDiagram): { diagram: AiExerciseDiagram
 
     // Une trajectoire MyBasket part presque toujours d'un joueur. On ne relie
     // que si l'extrémité est vraiment proche : sinon on conserve le tracé libre.
-    if (!action.fromPlayer) {
+    if (!action.fromPlayer && action.action !== "dribble") {
       const player = nearestPlayer(diagram.players, ends.from, 0.055);
       if (player) {
         action.fromPlayer = player.key;
@@ -88,7 +88,7 @@ function refineDiagram(diagram: AiExerciseDiagram): { diagram: AiExerciseDiagram
 
     // An automatically detected line needs a plausible departure. Court
     // boundaries can be mistaken for paths even when a player stands nearby.
-    if (!action.fromPlayer || action.action === "freedraw" ||
+    if ((!action.fromPlayer && action.action !== "dribble") || action.action === "freedraw" ||
       (ends.from && runsAlongCourtEdge(ends.from, ends.to, action.points))) {
       action.confidence = Math.min(action.confidence ?? 1, .49);
     }
@@ -102,27 +102,35 @@ function refineDiagram(diagram: AiExerciseDiagram): { diagram: AiExerciseDiagram
 
     // A pass landing next to the start of the wave is independent evidence
     // for both its owner and the order of the two actions.
-    const feeds = actions.filter(action => action.action === "pass" && !action.continuationChoice
-      && action.fromPlayer && action.toPlayer && action.fromPlayer !== action.toPlayer
-      && (action.confidence ?? 1) >= .7 && dist(action.to, start) < .055
-      && (!dribble.fromPlayer || dribble.fromPlayer === action.toPlayer));
+    const nearbyPasses = actions.filter(action => action.action === "pass" && action.fromPlayer
+      && dist(action.to, start) < .075);
+    if (!nearbyPasses.length) {
+      dribble.fromPlayer ??= nearestPlayer(diagram.players, start, .055)?.key;
+      continue;
+    }
+    const receiver = nearestPlayer(diagram.players, start, .085);
+    if (!receiver || (dribble.fromPlayer && dribble.fromPlayer !== receiver.key)) continue;
+    const feeds = nearbyPasses.filter(action => !action.continuationChoice
+      && action.fromPlayer !== receiver.key
+      && (!action.toPlayer || action.toPlayer === receiver.key)
+      && nearestPlayer(diagram.players, action.to, .055)?.key === receiver.key);
     if (feeds.length !== 1) continue;
     const feed = feeds[0];
-    const receiver = byKey.get(feed.toPlayer!);
-    if (!receiver || dist(receiver, start) > .085) continue;
-    const nearest = nearestPlayer(diagram.players, start, .085);
-    if (nearest?.key !== receiver.key) continue;
 
+    if (!feed.toPlayer) feed.toPlayer = receiver.key;
     if (!dribble.fromPlayer) {
       dribble.fromPlayer = receiver.key;
-      dribble.source = `${dribble.source ?? "détection"} · départ relié au receveur ${receiver.label}`;
+      dribble.source = `${dribble.source ?? "détection"} · départ relié au receveur`;
     }
     if (actions.indexOf(dribble) < actions.indexOf(feed)) {
       actions.splice(actions.indexOf(dribble), 1);
       actions.splice(actions.indexOf(feed) + 1, 0, dribble);
     }
   }
-  actions.forEach((action, index) => { action.order = index + 1; });
+  actions.forEach((action, index) => {
+    if (!action.fromPlayer) action.confidence = Math.min(action.confidence ?? 1, .49);
+    action.order = index + 1;
+  });
 
   // Ballon : si le scanner a détecté un porteur, un seul ballon suffit. On ne
   // force jamais un porteur quand aucun indice n'existe.

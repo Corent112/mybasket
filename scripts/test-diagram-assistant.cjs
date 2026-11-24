@@ -5,6 +5,17 @@ const {analyzeMyBasketDiagram}=require('../lib/ai/diagram-assistant/engine.ts');
 const {unresolvedScanTerminals}=require('../lib/import/scan-audit.ts');
 const {traceGuidedInk,refineDiagramInk}=require('../lib/import/guided-ink.ts');
 const {importToPlaquetteSchema}=require('../lib/import/plaquette-converter.ts');
+const {refineImportedExercise}=require('../lib/import/import-refiner.ts');
+const receiver={key:'receiver',label:'',x:.35,y:.38};
+const passer={key:'passer',label:'1',x:.7,y:.38};
+const wave={action:'dribble',from:{x:.417,y:.38},to:{x:.52,y:.27},confidence:.47};
+const feed={action:'pass',from:passer,to:{x:.35,y:.38},fromPlayer:passer.key,confidence:.6};
+const refine=players=>refineImportedExercise({warnings:[],diagram:{courtType:'half',players,actions:[wave,feed]}}).diagram.actions;
+assert.deepEqual(refine([passer,receiver]).map(a=>[a.action,a.fromPlayer,a.toPlayer]),[
+  ['pass',passer.key,receiver.key],['dribble',receiver.key,undefined],
+],'The pass and wave identify the same marker even when the jersey number is unreadable');
+assert.equal(refine([passer,receiver,{key:'other',label:'4',x:.407,y:.38}])[0].fromPlayer,undefined,
+  'Competing geometrical evidence must keep the departure unresolved');
 const sharp=require('sharp');
 const inventory={court:{type:'half'},players:[{key:'a',label:'9',team:'att',x:.25,y:.3,confidence:.95},{key:'b',label:'7',team:'att',x:.6,y:.7,confidence:.95}],terminals:[{id:'bar',kind:'bar',x:.5,y:.6,confidence:.95},{id:'arrow',kind:'arrow',x:.7,y:.4,confidence:.95}]};
 const screen={terminalId:'bar',action:'cut',fromPlayer:'a',from:{x:.25,y:.3},to:{x:.5,y:.6},points:[],confidence:.95};
