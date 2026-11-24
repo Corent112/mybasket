@@ -70,7 +70,21 @@ export function assembleDiagram(scene:Scene,raw:unknown,passes:number):AiExercis
  if(list(row.actions).length>60)throw new DiagramReadError('too_dense','paths');
  const nodes=list(row.actions).slice(0,60).map(value=>({...record(value)})),byTerminal=new Map<string,Json>();
  for(const [index,node] of nodes.entries()){
-  const id=text(node.terminalId,40)||`untracked-${index+1}`;
+  let id=text(node.terminalId,40);
+  const prior=byTerminal.get(id);
+  if(prior){
+   const start=point(node.from),previousStart=point(prior.from);
+   const end=point(node.to),previousEnd=point(prior.to);
+   const distinct=Boolean(start&&previousStart&&distance(start,previousStart)>.025)
+     ||Boolean(end&&previousEnd&&distance(end,previousEnd)>.025);
+   if(!distinct)continue;
+   warnings.push(`Repère ${id} partagé : le second tracé reste à vérifier.`);
+   id='';
+  }
+  if(!id){
+   id=`untracked-${index+1}`;
+   while(terminalIds.has(id))id+='-';
+  }
   if(!terminalIds.has(id)){
    const at=point(node.to);
    if(!at)throw new DiagramReadError('invalid_geometry','paths');

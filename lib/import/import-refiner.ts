@@ -93,9 +93,36 @@ function refineDiagram(diagram: AiExerciseDiagram): { diagram: AiExerciseDiagram
       action.confidence = Math.min(action.confidence ?? 1, .49);
     }
 
-    action.order = index + 1;
     return action;
   });
+
+  for (const dribble of actions.filter(action => action.action === "dribble")) {
+    const start = actionEndpoints(dribble).from;
+    if (!start) continue;
+
+    // A pass landing next to the start of the wave is independent evidence
+    // for both its owner and the order of the two actions.
+    const feeds = actions.filter(action => action.action === "pass" && !action.continuationChoice
+      && action.fromPlayer && action.toPlayer && action.fromPlayer !== action.toPlayer
+      && (action.confidence ?? 1) >= .7 && dist(action.to, start) < .055
+      && (!dribble.fromPlayer || dribble.fromPlayer === action.toPlayer));
+    if (feeds.length !== 1) continue;
+    const feed = feeds[0];
+    const receiver = byKey.get(feed.toPlayer!);
+    if (!receiver || dist(receiver, start) > .085) continue;
+    const nearest = nearestPlayer(diagram.players, start, .085);
+    if (nearest?.key !== receiver.key) continue;
+
+    if (!dribble.fromPlayer) {
+      dribble.fromPlayer = receiver.key;
+      dribble.source = `${dribble.source ?? "détection"} · départ relié au receveur ${receiver.label}`;
+    }
+    if (actions.indexOf(dribble) < actions.indexOf(feed)) {
+      actions.splice(actions.indexOf(dribble), 1);
+      actions.splice(actions.indexOf(feed) + 1, 0, dribble);
+    }
+  }
+  actions.forEach((action, index) => { action.order = index + 1; });
 
   // Ballon : si le scanner a détecté un porteur, un seul ballon suffit. On ne
   // force jamais un porteur quand aucun indice n'existe.

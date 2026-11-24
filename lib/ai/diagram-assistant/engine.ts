@@ -28,9 +28,9 @@ JSON: {"court":{"type":"half|full","corners":[{"x":0,"y":0}],"confidence":0.0},"
  const pathsPrompt=`${RULES}
 LECTURE 2 — SUIVI DES TRAITS ET CONTRÔLE DES OUBLIS.
 Utilise cet inventaire comme repère, mais relis l'image pour corriger ses oublis : ${JSON.stringify(scene.sourceInventory)}
-Pour CHAQUE terminal, remonte le trait depuis sa pointe/barre jusqu'au joueur ou jusqu'à la terminaison précédente. Ne t'arrête pas à un croisement. Relie fromPlayer à une key de l'inventaire, sinon null.
+Pour CHAQUE terminal, remonte le trait depuis sa pointe/barre jusqu'au joueur ou jusqu'à la terminaison précédente. À un croisement de deux flèches, suis la continuité de la direction et du style du trait de part et d’autre de l’intersection. Repars de chaque pointe séparément. N’attribue pas à un joueur la branche qui passe près de lui si elle se poursuit vers un autre départ. Ne transforme pas l’intersection en barre d’écran. Relie fromPlayer à une key de l'inventaire, sinon null.
 Un écran puis un déplacement sont deux actions avec deux terminalId. Pour la seconde, previousTerminalId désigne la barre précédente, avec le même fromPlayer : son départ est l'arrivée de l'écran.
-Un joueur peut effectuer plusieurs actions. N'invente pas de mouvement pour un joueur immobile. Ne supprime AUCUN déplacement parce qu'une passe n'est pas choisie.
+Fais un contrôle par joueur et par type : passe (tirets), dribble (ondulations ou zigzags), déplacement (flèche continue), écran (barre), tir (indice de tir vers le panier). Une même zone peut contenir plusieurs types. Répertorie séparément deux traits même s’ils aboutissent au même endroit. Un joueur peut effectuer plusieurs actions. N'invente pas de mouvement pour un joueur immobile. Ne supprime AUCUN déplacement parce qu'une passe n'est pas choisie.
 Détermine toPlayer pour les passes d'après le destinataire du ballon, y compris sa position après déplacement. Ne force pas un récepteur illisible.
 Donne from, to et points=[from,points sur le trait,to] (trois à six points de repère sur les courbes pour guider la vectorisation, sans suivre chaque pixel). Le zigzag est transmis par action="dribble" et sa ligne médiane, le logiciel dessine les oscillations.
 RECOMPTE les terminaisons visuelles et les actions. Si une flèche/barre manque à l'inventaire, ajoute-la dans additionalTerminals avec sa position et un nouvel id. Si un repère était une ligne du terrain, laisse-le non relié et explique pourquoi dans warnings, ne le valide pas artificiellement.
@@ -49,9 +49,24 @@ Voici les actions déjà proposées (coordonnées de l'image) : ${JSON.stringify
 Reprends UNIQUEMENT les repères manquants en suivant l'encre de la photo. Retourne actions et additionalTerminals au même format, sans réinventer les actions déjà reconnues. Si tu ne peux pas lire un trait, garde le doute et explique-le.`,'repair'),'repair');
    const original=record(reconstructed),extra=record(repair);
    const previousActions=Array.isArray(original.actions)?original.actions:[],newActions=Array.isArray(extra.actions)?extra.actions:[];
-   const map=new Map(previousActions.map(a=>[record(a).terminalId,a]));
-   for(const a of newActions){const id=record(a).terminalId;if(missing.some(t=>t.id===id)||!map.has(id))map.set(id,a)}
-   diagram=assembleDiagram(scene,{actions:[...map.values()],additionalTerminals:[...(Array.isArray(original.additionalTerminals)?original.additionalTerminals:[]),...(Array.isArray(extra.additionalTerminals)?extra.additionalTerminals:[])],warnings:[...(Array.isArray(original.warnings)?original.warnings:[]),...(Array.isArray(extra.warnings)?extra.warnings:[])]},3);
+   const repairedIds=new Set(missing.map(t=>t.id));
+   const replacements=new Map(newActions.flatMap(a=>{
+    const id=record(a).terminalId;
+    return typeof id==='string'&&repairedIds.has(id)?[[id,a] as const]:[];
+   }));
+   const merged=previousActions.map(a=>{
+    const id=record(a).terminalId;
+    if(typeof id!=='string'||!replacements.has(id))return a;
+    const replacement=replacements.get(id);
+    replacements.delete(id);
+    return replacement;
+   });
+   const existingIds=new Set(previousActions.map(a=>record(a).terminalId));
+   const additions=newActions.filter(a=>{
+    const id=record(a).terminalId;
+    return !id||(!existingIds.has(id)&&!repairedIds.has(String(id)));
+   });
+   diagram=assembleDiagram(scene,{actions:[...merged,...replacements.values(),...additions],additionalTerminals:[...(Array.isArray(original.additionalTerminals)?original.additionalTerminals:[]),...(Array.isArray(extra.additionalTerminals)?extra.additionalTerminals:[])],warnings:[...(Array.isArray(original.warnings)?original.warnings:[]),...(Array.isArray(extra.warnings)?extra.warnings:[])]},3);
   }catch(error){const failure=diagramDiagnostic(error,'repair');diagram.scanAudit!.failure=failure;diagram.scanAudit!.warnings.push(failure.message+' Les repères non reliés restent visibles.');}
  }
  return diagram;

@@ -11,6 +11,13 @@ const screen={terminalId:'bar',action:'cut',fromPlayer:'a',from:{x:.25,y:.3},to:
 const cut={terminalId:'arrow',previousTerminalId:'bar',action:'cut',fromPlayer:'a',from:{x:.5,y:.6},to:{x:.7,y:.4},points:[],confidence:.95};
 assert.deepEqual(unresolvedScanTerminals(undefined),[],'Empty imports can still display the manual fallback');
 const scene=readScene(inventory,true,'half');
+const sharedEnd=assembleDiagram(scene,{actions:[
+  {...cut,previousTerminalId:null,from:{x:.25,y:.3}},
+  {...cut,previousTerminalId:null,action:'pass',fromPlayer:'b',toPlayer:'a',from:{x:.6,y:.7}},
+]},2);
+assert.deepEqual(sharedEnd.actions.map(a=>a.action),['cut','pass']);
+assert.notEqual(sharedEnd.actions[0].terminalId,sharedEnd.actions[1].terminalId);
+
 let diagram=assembleDiagram(scene,{actions:[cut,screen]},2);assert.deepEqual(diagram.actions.map(a=>a.action),['screen','cut'],'Terminal bar defines a screen and dependencies are topologically ordered');assert.deepEqual(diagram.actions[1].from,diagram.actions[0].to);assert.equal(coverage(diagram).missing.length,0);
 assert.equal(unresolvedScanTerminals({...diagram,actions:diagram.actions.slice(0,1)}).length,1,'Deleting a movement immediately restores the missing-trace warning');assert.equal(unresolvedScanTerminals({...diagram,actions:[],scanAudit:{...diagram.scanAudit,dismissed:['bar']}}).length,1);
 const extra=assembleDiagram(scene,{actions:[screen,{...cut,terminalId:'new-tip'}]},2);assert.equal(extra.actions.length,2,'An extra proposed action is retained even if it was absent from the first inventory');assert.ok(extra.actions[1].confidence<.5,'Uninventoried action must be manually verified');
