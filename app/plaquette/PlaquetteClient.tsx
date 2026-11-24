@@ -1331,6 +1331,7 @@ const currentRef = useRef(current);
 
   const drawCourtCenterMark = (
     ctx: CanvasRenderingContext2D, width: number, height: number, ct: 'half' | 'full', color: string,
+    showCircle = true,
   ) => {
     const cx = width / 2, cy = height * (ct === 'half' ? 1.005 : .5);
     const radius = width * (ct === 'half' ? .105 : .0835);
@@ -1350,7 +1351,7 @@ const currentRef = useRef(current);
       ctx.translate(cx, cy);
       if (ct === 'full') ctx.rotate(-Math.PI / 2);
       ctx.drawImage(logo, -w / 2, -h / 2, w, h);
-    } else {
+    } else if (showCircle) {
       ctx.beginPath();
       ctx.arc(cx, cy, radius, 0, Math.PI * 2);
       ctx.stroke();
@@ -1416,20 +1417,42 @@ const currentRef = useRef(current);
       }
     }
 
+    const halfFloorSample = Math.floor(height * .76) * width * 4;
+    const cleanFloorRow = pixels.slice(halfFloorSample, halfFloorSample + width * 4);
+    const lineRgb = hexToRgb(courtStyleRef.current.lineColor);
     for (let y = 0; y < height; y++) {
       const v = y / height;
+      const lineSample = (y * width + Math.floor(width * .25)) * 4;
+      const baseline = ct === 'half' && v > .98 && (monochrome
+        ? Math.max(mask[lineSample], mask[lineSample + 1], mask[lineSample + 2]) < 140
+        : Math.min(mask[lineSample], mask[lineSample + 1], mask[lineSample + 2]) > 235);
       for (let x = 0; x < width; x++) {
         const u = x / width;
+        const index = (y * width + x) * 4;
+        if (ct === 'half' && u >= .32 && u <= .68 && v >= .78) {
+          if (baseline) {
+            pixels[index] = lineRgb.r;
+            pixels[index + 1] = lineRgb.g;
+            pixels[index + 2] = lineRgb.b;
+          } else if (texture?.data[index + 3]) {
+            pixels.set(texture.data.subarray(index, index + 3), index);
+          } else {
+            const sample = x * 4;
+            const shade = floorPatternShade(pattern, v * .5, (1 - u) * .64);
+            for (let channel = 0; channel < 3; channel++) {
+              pixels[index + channel] = cleanFloorRow[sample + channel] * (1 + shade / 115) + shade * .32;
+            }
+          }
+          continue;
+        }
+
         const inside = ct === 'full'
           ? u > .072 && u < .928 && v > .147 && v < .853
-          : u > .14 && u < .86 && v > .138 && v < .988;
+          : u > .14 && u < .86 && v > .138;
         if (!inside) continue;
 
         // The central patch uses the same texture coordinates as the rest of the floor.
-        const centerPatch = ct === 'full'
-          ? u >= .395 && u <= .605 && v >= .34 && v <= .66
-          : u >= .34 && u <= .66 && v >= .79;
-        const index = (y * width + x) * 4;
+        const centerPatch = ct === 'full' && u >= .395 && u <= .605 && v >= .34 && v <= .66;
         if (centerPatch && texture?.data[index + 3]) {
           pixels.set(texture.data.subarray(index, index + 3), index);
           continue;
@@ -1439,8 +1462,7 @@ const currentRef = useRef(current);
         const protectedArea = ct === 'full'
           ? (v > .378 && v < .623 && (u < .246 || u > .754)) ||
             ((u - .5) / .081) ** 2 + ((v - .5) / .127) ** 2 < 1
-          : (u > .38 && u < .62 && v < .48) ||
-            ((u - .5) / .122) ** 2 + ((v - 1.005) / .17) ** 2 < 1;
+          : u > .38 && u < .62 && v < .48;
         if (protectedArea) continue;
 
         const [r, g, b] = [mask[index], mask[index + 1], mask[index + 2]];
@@ -1462,7 +1484,9 @@ const currentRef = useRef(current);
       }
     }
     ctx.putImageData(image, 0, 0);
-    if (texture) drawCourtCenterMark(ctx, width, height, ct, courtStyleRef.current.lineColor);
+    if (texture || ct === 'half') {
+      drawCourtCenterMark(ctx, width, height, ct, courtStyleRef.current.lineColor, ct === 'full');
+    }
     return out;
   };
 
