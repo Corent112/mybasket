@@ -173,7 +173,7 @@ function diagramToPhase(
       from,
       to,
       rotation: 0,
-      ...(path && (action.geometry === "traced" || action.action === "dribble" || action.action === "freedraw" || hasImportedTurnback(action.points)) ? { points: path } : {}),
+      ...(path && action.action !== "dribble" && (action.geometry === "traced" || action.action === "freedraw" || hasImportedTurnback(action.points)) ? { points: path } : {}),
       ...(control ? { ctrls: [control.point] } : {}),
       ...(action.color ? { color: action.color } : {}),
       ...(sourcePlayerId ? { sourcePlayerId } : {}),

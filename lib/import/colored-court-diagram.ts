@@ -160,9 +160,21 @@ export async function readColoredCourtDiagram(source: HTMLCanvasElement) {
     const crop=document.createElement("canvas");
     const r=Math.round(radius*.79), glyphWidth=2*r+1;
     const glyphMask=new Uint8Array(glyphWidth*glyphWidth);
+    const background: number[] = [];
+    for(let dy=-r;dy<=r;dy++)for(let dx=-r;dx<=r;dx++){
+      if(Math.hypot(dx,dy)>radius*.76||Math.hypot(dx,dy)<radius*.59)continue;
+      const i=4*((Math.round(p.y)+dy)*w+Math.round(p.x)+dx);
+      background.push(rgba[i+1]);
+    }
+    background.sort((a,b)=>a-b);
+    const greenBackground=background[Math.floor(background.length/2)]??255;
+    const lightDigit=greenBackground<135;
     for(let dy=-r;dy<=r;dy++)for(let dx=-r;dx<=r;dx++){
       const i=4*((Math.round(p.y)+dy)*w+Math.round(p.x)+dx);
-      if(dx*dx+dy*dy<=(radius*.79)**2&&rgba[i]<163&&rgba[i+1]<178){
+      const contrast=lightDigit
+        ? rgba[i+1]>greenBackground+32 && rgba[i]>rgba[i+2]+24
+        : rgba[i]<163&&rgba[i+1]<178;
+      if(dx*dx+dy*dy<=(radius*.79)**2&&contrast){
         glyphMask[(dy+r)*glyphWidth+dx+r]=1;
       }
     }
@@ -186,8 +198,9 @@ export async function readColoredCourtDiagram(source: HTMLCanvasElement) {
         if(dx*dx+dy*dy>(radius*.80)**2)continue;
         const i=4*((Math.round(p.y)+dy)*w+Math.round(p.x)+dx);
         const red=rgba[i],green=rgba[i+1],blue=rgba[i+2];
-        if(green>210||blue+55<red)continue;
-        const gray=Math.round(Math.min(255,red*1.25));
+        if(!lightDigit&&(green>210||blue+55<red))continue;
+        const gray=lightDigit ? Math.round(255-Math.min(255,Math.max(0,green-greenBackground)*2.6))
+          : Math.round(Math.min(255,red*1.25));
         g.fillStyle=`rgb(${gray},${gray},${gray})`;
         g.fillRect(22+(x-largest.x0)*z,22+(y-largest.y0)*z,z+.1,z+.1);
       }
@@ -326,7 +339,18 @@ export async function readColoredCourtDiagram(source: HTMLCanvasElement) {
           }
           return true;
         };
-        if(hasBar(-1)&&hasBar(1))return i;
+        if(!hasBar(-1)||!hasBar(1))continue;
+        // A line crossing the shaft continues beyond a short terminal bar.
+        // Keep looking when either arm is itself part of a longer stroke.
+        const armContinues=(side:number)=>{
+          const outer=reach+Math.max(4,Math.round(reach*.75));
+          for(let j=reach+2;j<=outer;j++){
+            const x=Math.round(p.x+side*j*nx),y=Math.round(p.y+side*j*ny);
+            if(![-1,0,1].some(offset=>pixels.has(y*w+x+offset)||pixels.has((y+offset)*w+x)))return false;
+          }
+          return true;
+        };
+        if(!armContinues(-1)&&!armContinues(1))return i;
       }
     }
     return -1;
@@ -532,6 +556,11 @@ export async function readColoredCourtDiagram(source: HTMLCanvasElement) {
           // path can turn onto one side before it reaches the bar centre.
           for(let ahead=0;ahead<=Math.round(unit*.013);ahead++){
             const center={x:p.x+dx*ahead,y:p.y+dy*ahead};
+            const continuesPastBar=points.some(q=>{
+              const x=q.x-center.x,y=q.y-center.y;
+              return x*dx+y*dy>reach && Math.abs(y*dx-x*dy)<2;
+            });
+            if(continuesPastBar)continue;
             const across=points.filter(q=>Math.abs((q.x-center.x)*dx+(q.y-center.y)*dy)<1.25)
               .map(q=>(q.y-center.y)*dx-(q.x-center.x)*dy);
             if(across.length>=8&&Math.min(...across)<-unit*.009&&Math.max(...across)>unit*.009
