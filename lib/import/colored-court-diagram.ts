@@ -415,7 +415,7 @@ export async function readColoredCourtDiagram(source: HTMLCanvasElement) {
       const bentFrom=roster.filter(item=>distance(shaft[0],item.center)<item.radius+unit*.025)
         .sort((a,b)=>distance(shaft[0],a.center)-distance(shaft[0],b.center))[0];
       let returningCut=false;
-      if(bentFrom){
+      if(bentFrom&&!isZigzag(shaft,unit)){
         const reverse=followStroke(trace,shaft[0],undefined,true);
         const end=reverse[0];
         const length=reverse.slice(1).reduce((sum,p,i)=>sum+distance(p,reverse[i]),0);
@@ -935,28 +935,21 @@ export async function readColoredCourtDiagram(source: HTMLCanvasElement) {
     if(distance(start.point,end.point)<unit*.065)continue;
     const shaft=followStroke(trace,end.point,start.point);
     if(shaft.length<5)continue;
-    const barNearTip=screenBreak([...shaft,end.point],trace,true);
+    // Classify the traced ink before sampling: the reduced path can lose
+    // the small alternating turns, especially on short dribbles.
+    const dribble=isZigzag(shaft,unit);
+    const barNearTip=dribble?-1:screenBreak([...shaft,end.point],trace,true);
     const terminalBar=barNearTip>=0;
     const {p:headPoint,peak}=head(trace,start.point,distance(start.point,end.point)*.65);
     if(!terminalBar&&(peak<7||distance(headPoint,end.point)>unit*.07))continue;
-    if(!source||(!terminalBar&&!isZigzag(shaft,unit)))continue;
+    if(!source||(!terminalBar&&!dribble))continue;
     const from=source?.player??canonical(start.point);
     const tip=terminalBar?shaft[barNearTip]:end.point;
     const to=canonical(tip);
     const stroke=sampleStroke(terminalBar?shaft.slice(0,barNearTip):shaft);
-    const kind=terminalBar?"screen":isZigzag(stroke,unit)?"dribble":"cut";
-    const split=kind==="cut"?screenBreak(shaft,trace):-1;
-    const departure=split<0?from:canonical(shaft[split]);
-    if(split>=0){
-      actions.push({action:"screen",from,to:departure,fromPlayer:source?.player.key,
-        points:[from,...sampleStroke(shaft.slice(0,split)).map(canonical),departure],
-        confidence:source ? .79 : .47,source:"Écran : fin du tracé à la barre"});
-    }
-    const remainder=split<0?stroke:sampleStroke(shaft.slice(split+1));
-    actions.push({action:kind,from:departure,to,points:[departure,...remainder.map(canonical),to],
-      fromPlayer:source?.player.key,confidence:source ? .84 : .47,
-      source:kind==="screen"?"Écran : barre perpendiculaire au tracé":
-        kind==="dribble"?"Dribble : oscillations et pointe de flèche":"Trajet continu et pointe de flèche"});
+    actions.push({action:terminalBar?"screen":"dribble",from,to,points:[from,...stroke.map(canonical),to],
+      fromPlayer:source.player.key,confidence:.84,
+      source:terminalBar?"Écran : barre perpendiculaire au tracé":"Dribble : oscillations et pointe de flèche"});
     used.add(trace);
   }
   // A detached cut can start at a screen bar instead of a player ring.
@@ -1168,6 +1161,15 @@ export async function readColoredCourtDiagram(source: HTMLCanvasElement) {
     actions.splice(actions.indexOf(alternative),1);
     actions.splice(actions.indexOf(primary),1);
     actions.splice(actions.indexOf(arrival)+1,0,primary,alternative);
+  }
+  // A visible pass to the start of a dribble supplies possession there.
+  for(const dribble of actions.filter(action=>action.action==="dribble"&&action.fromPlayer&&action.from)){
+    const index=actions.indexOf(dribble);
+    const feeds=actions.filter(action=>action.action==="pass"&&!action.continuationChoice
+      &&action.toPlayer===dribble.fromPlayer&&distance(action.to,dribble.from!)<.035);
+    if(feeds.length!==1||actions.indexOf(feeds[0])<index)continue;
+    actions.splice(index,1);
+    actions.splice(actions.indexOf(feeds[0])+1,0,dribble);
   }
   return {canvas,play,players:roster.map(item=>item.player),objects,actions};
 }
