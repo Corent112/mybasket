@@ -9,6 +9,7 @@ import {downloadSessionPdf} from "@/lib/institutionnel/session-pdf-download";
 import {basketDayIds,loadBasketDay,BASKET_DAY_KEY,type BasketDayContext} from "@/lib/institutionnel/basket-day-context";
 import {loadInstitutionPracticeTeams} from "@/lib/institutionnel/institution-practice-teams";
 import InstitutionalPracticeSelectionPicker from "@/components/institutionnel/InstitutionalPracticeSelectionPicker";
+import { sessionCartTotal } from "@/lib/session-cart-summary";
 import { createClient } from "@/lib/supabase/client";
 
 type CartItem = {
@@ -636,10 +637,12 @@ setLoading(false);
       )
     );
 
-    await supabase
+    const { error } = await supabase
       .from("cart_items")
       .update({ duration_minutes: nextDuration })
       .eq("id", id);
+    if (error) { console.error("Durée non enregistrée", error); await loadCart(); return; }
+    notifyCartUpdated();
   }
 
   async function updateAssignedTo(id: string, assignedTo: string) {
@@ -691,6 +694,7 @@ setLoading(false);
       .from("cart_items")
       .update({ sort_order: current.sort_order })
       .eq("id", target.id);
+    notifyCartUpdated();
   }
 
   function importPlayersFromSelectedTeam() {
@@ -1388,10 +1392,7 @@ setLoading(false);
       try{const saved=await saveSessionToCalendar();if(saved){await resetSessionBuilderAfterGeneration();setSessionModalOpen(false);if(savedDaySessionIdRef.current)await downloadSavedSession(savedDaySessionIdRef.current,sessionTheme)}}catch(error){setSessionFlowError(error instanceof Error?error.message:"Enregistrement impossible")}finally{setSavingSession(false)}
       return;
     }
-    const totalMinutes = sortedItems.reduce(
-      (sum, item) => sum + Number(item.duration_minutes ?? 15),
-      0
-    );
+    const totalMinutes = sessionCartTotal(sortedItems);
 
     const myBasketLogo = "/logo-mybasket02.png";
 
@@ -2118,7 +2119,7 @@ setLoading(false);
         <div className="panel">
           <div className="panelTitle">
             <h2>CONSTRUCTION DE LA SÉANCE</h2>
-            <span>{sessionItems.length}</span>
+            <div className="sessionTitleMetrics"><b>{sessionCartTotal(sessionItems)} min</b><span>{sessionItems.length}</span></div>
           </div>
 
           {sessionItems.length === 0 ? (
@@ -2764,6 +2765,8 @@ setLoading(false);
           font-family: Oswald, Roboto, sans-serif;
         }
 
+        .sessionTitleMetrics { display:flex; align-items:center; gap:10px; flex-shrink:0; margin-left:10px; }
+        .sessionTitleMetrics b { color:#7a0d24; font-size:14px; white-space:nowrap; font-variant-numeric:tabular-nums; }
         .panelTitle span {
           background: #7a0d24;
           color: #fff;

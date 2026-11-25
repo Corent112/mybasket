@@ -8,6 +8,7 @@ import { useEffect, useMemo, useState } from "react";
 import type { User } from "@supabase/supabase-js";
 import { listExercises } from "@/lib/exercises";
 import { createClient } from "@/lib/supabase/client";
+import { SessionCartPreview, useSessionCartPreview } from "@/components/library/SessionCartPreview";
 import { addExerciseToCart } from "@/lib/session-quick-add";
 import type { Exercise } from "@/types/exercise";
 
@@ -149,7 +150,8 @@ export default function ExercicesClient() {
   const [loadError, setLoadError] = useState(false);
   const [user, setUser] = useState<User | null>(null);
   const [addingExerciseId, setAddingExerciseId] = useState<string | null>(null);
-  const [addedIds, setAddedIds] = useState<Set<string>>(new Set());
+  const { rows: sessionCartRows, refresh: refreshSessionCart } = useSessionCartPreview(user?.id ?? null);
+  const addedIds = useMemo(() => new Set(sessionCartRows.filter(row => row.item_type === "exercise").map(row => row.item_id)), [sessionCartRows]);
   const [favoriteIds, setFavoriteIds] = useState<Set<string>>(new Set());
   const [toast, setToast] = useState<ToastState>(null);
 
@@ -171,14 +173,8 @@ export default function ExercicesClient() {
         setUser(currentUser);
 
         if (currentUser) {
-          const { data: cartRows } = await supabase
-            .from("cart_items")
-            .select("item_id")
-            .eq("user_id", currentUser.id)
-            .eq("item_type", "exercise");
           const { data: favoriteRows } = await supabase.from("favorites").select("item_id").eq("user_id", currentUser.id).eq("item_type", "exercise");
           setFavoriteIds(new Set((favoriteRows ?? []).map((row: {item_id:string|null}) => String(row.item_id || "")).filter(Boolean)));
-setAddedIds(new Set((cartRows ?? []).map((row: { item_id: string | null }) => String(row.item_id || "")).filter(Boolean)));
         }
       } catch (error) {
         console.error("Erreur chargement exercices :", error);
@@ -270,7 +266,7 @@ setAddedIds(new Set((cartRows ?? []).map((row: { item_id: string | null }) => St
     setAddingExerciseId(exercise.id);
     try {
       const result = await addExerciseToCart(supabase, user, exercise);
-      setAddedIds((current) => new Set(current).add(exercise.id));
+      await refreshSessionCart();
       setToast({
         message: result.added ? "Exercice ajouté au panier" : "Cet exercice est déjà dans le panier",
         exerciseTitle: exercise.title,
@@ -390,6 +386,7 @@ setAddedIds(new Set((cartRows ?? []).map((row: { item_id: string | null }) => St
         </div>
       </div>
 
+      <SessionCartPreview rows={sessionCartRows} />
       {toast && (
         <div className="mb-toast">
           <div>✓</div>

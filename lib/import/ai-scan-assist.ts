@@ -72,7 +72,12 @@ export function reconcileScan(local: AiExerciseImport, ai: AiExerciseImport): Ai
   // Vision supplies the centreline; generate the visible dribble wave once.
   return {...changeImportedActionKind({...line,action:'cut'},'dribble'),confidence:line.confidence,source:line.source};
  });
- const revised={...diagram,players,courtReference:base?.courtReference,rectified:base?.rectified,actions};
+ const localAudit=base?.scanAudit,aiAudit=diagram.scanAudit;
+ const scanAudit=aiAudit&&localAudit?{...aiAudit,terminals:[
+  ...aiAudit.terminals,...localAudit.terminals.filter(terminal=>!aiAudit.terminals.some(other=>
+   other.kind===terminal.kind&&distance(other,terminal)<.024)).map(terminal=>({...terminal,id:`ink-${terminal.id}`}))
+ ]}:aiAudit??localAudit;
+ const revised={...diagram,players,courtReference:base?.courtReference,rectified:base?.rectified,actions,scanAudit};
  return {...local,source:'ai',assistantResult:ai.assistantResult,referenceFallback:undefined,diagram:revised,diagrams:[revised],
    confidence:{...local.confidence,diagram:ai.confidence.diagram},
    warnings:[...ai.warnings,'Lecture approfondie utilisée : vérifie les numéros, les extrémités et les joueurs liés aux traits.']};

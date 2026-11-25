@@ -1276,7 +1276,7 @@ export default function ImportReview({
             {missingTerminals.map(terminal=><div className="import-missing-trace" key={terminal.id}>
               <strong>{terminal.kind==='bar'?'Barre d’écran':'Pointe de flèche'} · {terminal.id}</strong>
               <span>Un trait reste à relier ici.</span>
-              <button type="button" onClick={()=>{checkStage('actions');setShowUncertain(true);setOverlay(.6);setTraceKind(terminal.kind==='bar'?'screen':'cut');setTraceMode(true)}}>Retracer ce trait</button>
+              <button type="button" onClick={()=>{checkStage('actions');setShowUncertain(true);setOverlay(.6);setTraceKind(terminal.kind==='bar'?'screen':terminal.strokeStyle==='dashed'?'pass':terminal.strokeStyle==='wave'?'dribble':'cut');setTraceMode(true)}}>Retracer ce trait</button>
               <button type="button" onClick={()=>updateDiagram(item=>({...item,scanAudit:item.scanAudit?{...item.scanAudit,dismissed:[...new Set([...(item.scanAudit.dismissed??[]),terminal.id])]}:undefined}))}>Ce repère n’est pas une action</button>
             </div>)}
           </section>}

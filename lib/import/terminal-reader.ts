@@ -1,3 +1,4 @@
+import type { DiagramScanAudit, ScanTerminal } from "./scan-audit";
 import { courtToCanonical } from "./court-geometry";
 import type { AiDiagramAction, AiDiagramPlayer, AiPoint, AiRect } from "./types";
 
@@ -211,7 +212,7 @@ function isWave(points:AiPoint[],unit:number){
 }
 
 /** Follow a shaft backwards, locally, favouring its tangent at crossings. */
-function continuousRoute(ink:InkSampler,terminal:InkTerminal,markers:InkMarker[],unit:number):TerminalRoute|null{
+function continuousRoute(ink:InkSampler,terminal:InkTerminal,markers:InkMarker[],unit:number,allowUnowned=false):TerminalRoute|null{
   const step=Math.max(3,Math.round(unit*.007));
   let direction=terminal.inward;
   let current=add(terminal,direction,terminal.size*1.25);
@@ -280,17 +281,22 @@ function continuousRoute(ink:InkSampler,terminal:InkTerminal,markers:InkMarker[]
     current=next.point;direction=next.nextDirection;
     back.push(current);
   }
-  if(!marker||distance(marker.center,terminal)<marker.radius+unit*.035)return null;
+  if(!marker){
+    if(!allowUnowned||terminal.score<.94||back.length<8||distance(current,terminal)<unit*.065)return null;
+    const points=back.reverse();
+    return {terminal,action:terminal.kind==="bar"?"screen":isWave(points,unit)?"dribble":"cut",fromPlayer:"",points,confidence:.45};
+  }
+  if(distance(marker.center,terminal)<marker.radius+unit*.035)return null;
   const points=[marker.center,...back.reverse()];
   return {terminal,action:terminal.kind==="bar"?"screen":isWave(back,unit)?"dribble":"cut",fromPlayer:marker.key,points,...(bridged||gaps?{confidence:.78}:{})};
 }
 
-export function readTerminalRoutes(mask:Uint8Array,width:number,height:number,unit:number,markers:InkMarker[]){
+export function readTerminalRoutes(mask:Uint8Array,width:number,height:number,unit:number,markers:InkMarker[],inventory?:InkTerminal[]){
   if(unit<80||mask.length!==width*height||!markers.length)return [];
   const inkCount=mask.reduce((sum,pixel)=>sum+Number(!!pixel),0);
   if(inkCount>unit*unit*.15)return [];
   const ink=makeSampler(mask,width,height);
-  const terminals=detectInkTerminals(mask,width,height,unit);
+  const terminals=inventory??detectInkTerminals(mask,width,height,unit);
   const routeFrom=(terminal:InkTerminal,starts:InkMarker[])=>{
     const continuous=continuousRoute(ink,terminal,starts,unit);
     return continuous?.action==="dribble"?continuous:dashedRoute(ink,terminal,starts,unit)??continuous;
@@ -404,7 +410,7 @@ export function mergeTerminalRoutes(
     const crossing=routes.filter(route=>route.action!=="pass"&&route.action!=="screen"
       &&distance(route.points[0],end)>unit*.055&&distance(route.terminal,end)>unit*.055
       &&pathDistance(end,route.points)<unit*.014);
-    if(new Set(crossing.map(route=>route.fromPlayer)).size>=2)return false;
+    if(new Set(crossing.map(route=>route.fromPlayer)).size>=2||crossing.some(route=>route.fromPlayer===action.fromPlayer&&action.from&&pathDistance(toImage(action.from),route.points)<unit*.025))return false;
     if(crossing.length){
       action.confidence=Math.min(action.confidence??1,.45);
       action.source=`${action.source??"Détection"} · barre terminale à distinguer du croisement`;
@@ -426,21 +432,88 @@ export function mergeTerminalRoutes(
   return result;
 }
 
+/** Review the actual end of every putative screen against the ink. */
+export function rejectCrossingScreens(mask:Uint8Array,width:number,height:number,unit:number,actions:AiDiagramAction[],toImage:(p:AiPoint)=>AiPoint){
+  const ink=makeSampler(mask,width,height);
+  return actions.filter(action=>{
+    if(action.action!=="screen"||!action.from)return true;
+    const end=toImage(action.to);
+    const path=(action.points?.length?action.points:[action.from,action.to]).map(toImage);
+    const before=path.findLast(point=>distance(point,end)>unit*.025);
+    if(!before)return true;
+    const forward=vector(before,end);
+    // A genuine bar is short; a continuing shaft has ink beyond it.
+    const continues=[0,-12,12,-24,24].some(degrees=>{
+      const angle=degrees*Math.PI/180;
+      const direction={x:forward.x*Math.cos(angle)-forward.y*Math.sin(angle),y:forward.x*Math.sin(angle)+forward.y*Math.cos(angle)};
+      return raySupport(ink,end,direction,unit*.018,unit*.065,1)>.85;
+    });
+    if(!continues)return true;
+    const longer=actions.find(other=>other!==action&&other.action!=="screen"&&other.action!=="pass"&&other.fromPlayer===action.fromPlayer&&other.from&&distance(toImage(other.to),end)>unit*.045&&
+      pathDistance(end,(other.points?.length?other.points:[other.from,other.to]).map(toImage))<unit*.022);
+    if(longer)return false;
+    // Preserve the visible partial trace for review when the full endpoint
+    // has not yet been recovered, without labelling the crossing an screen.
+    action.action="cut";
+    action.confidence=Math.min(action.confidence??1,.45);
+    action.source="Trait continu après le croisement · extrémité à vérifier";
+    return true;
+  });
+}
+
+/** Audit independent terminals even when the external vision service is down. */
+export function auditLocalInk(mask:Uint8Array,width:number,height:number,unit:number,markers:InkMarker[],actions:AiDiagramAction[],
+  toImage:(p:AiPoint)=>AiPoint,canonical:(p:AiPoint)=>AiPoint,paper=false):{actions:AiDiagramAction[];scanAudit?:DiagramScanAudit}{
+  if(unit<80||mask.length!==width*height||mask.reduce((sum,p)=>sum+Number(!!p),0)>unit*unit*.15)return {actions};
+  const inventory=detectInkTerminals(mask,width,height,unit);
+  const routes=readTerminalRoutes(mask,width,height,unit,markers,inventory).flatMap(route=>{
+    if(!paper||route.action==="pass"||route.action==="dribble"||actions.some(action=>distance(toImage(action.to),route.terminal)<unit*.035))return [route];
+    return route.terminal.score>=.94&&(route.confidence??.86)>=.85?[{...route,confidence:.45}]:[];
+  });
+  const merged=mergeTerminalRoutes(actions,routes,unit,toImage,canonical);
+  // Recover the visible shaft even when its owner was obscured or the
+  // player OCR failed. The review must explicitly resolve that ownership.
+  if(!paper){
+    const ink=makeSampler(mask,width,height);
+    for(const terminal of inventory){
+      if(routes.some(route=>route.terminal===terminal)||merged.some(action=>distance(toImage(action.to),terminal)<unit*.027))continue;
+      const partial=continuousRoute(ink,terminal,markers,unit,true);
+      if(!partial||partial.fromPlayer)continue;
+      const points=partial.points.map(canonical);
+      merged.push({action:partial.action,from:points[0],to:points.at(-1)!,points,geometry:"traced",confidence:.45,source:"Trajectoire visible · joueur au départ à confirmer"});
+    }
+  }
+  const recovered=recoverArrivalPasses(mask,width,height,unit,markers,merged,toImage,canonical);
+  const final=rejectCrossingScreens(mask,width,height,unit,recovered,toImage);
+  const terminals:ScanTerminal[]=[];
+  for(const terminal of inventory){
+    const route=routes.find(item=>item.terminal===terminal);
+    if(!route&&terminal.score<.94)continue;
+    // Masking may leave highlights in printed court markings. Unattached
+    // terminals on paper are only counted when close to an existing trace.
+    if(paper&&!route&&!actions.some(action=>distance(toImage(action.to),terminal)<unit*.035))continue;
+    const position=canonical(terminal);
+    const style=route?.action==="pass"?"dashed":route?.action==="dribble"?"wave":route?"solid":"unknown";
+    terminals.push({...position,id:`local-${terminals.length+1}`,kind:terminal.kind,confidence:terminal.score,strokeStyle:style,styleConfidence:route?.confidence??(route ? .86 : undefined)});
+  }
+  return {actions:final,scanAudit:{version:"mybasket-diagram-v1",terminals,passes:1,warnings:[]}};
+}
+
 /** Use the same terminal reader on paper after the existing court-line mask. */
 export async function readAlignedTerminalRoutes(
   source: HTMLCanvasElement, play: AiRect, players: AiDiagramPlayer[], actions: AiDiagramAction[],
-): Promise<AiDiagramAction[]> {
-  if(!players.length)return actions;
+): Promise<{actions:AiDiagramAction[];scanAudit?:DiagramScanAudit}> {
+  if(!players.length)return {actions};
   const canvas=document.createElement("canvas");
   const scale=Math.min(1,900/Math.max(source.width,source.height));
   canvas.width=Math.round(source.width*scale);canvas.height=Math.round(source.height*scale);
   const ctx=canvas.getContext("2d",{willReadFrequently:true});
-  if(!ctx)return actions;
+  if(!ctx)return {actions};
   const {width,height}=canvas;
   ctx.drawImage(source,0,0,width,height);
   const {data}=ctx.getImageData(0,0,width,height);
   const unit=(play.x1-play.x0)*scale,depth=(play.y1-play.y0)*scale;
-  if(unit<=80||depth<=80)return actions;
+  if(unit<=80||depth<=80)return {actions};
   const top=courtToCanonical({x:0,y:0},"half"),bottom=courtToCanonical({x:1,y:1},"half");
   const toImage=(p:AiPoint)=>({x:play.x0*scale+unit*(p.x-top.x)/(bottom.x-top.x),y:play.y0*scale+depth*(p.y-top.y)/(bottom.y-top.y)});
   const canonical=(p:AiPoint)=>courtToCanonical({x:(p.x-play.x0*scale)/unit,y:(p.y-play.y0*scale)/depth},"half");
@@ -452,16 +525,7 @@ export async function readAlignedTerminalRoutes(
     if(Math.max(data[i*4],data[i*4+1],data[i*4+2])<145
       && !markers.some(marker=>distance(marker.center,p)<marker.radius))ink[i]=1;
   }
-  const routes=readTerminalRoutes(ink,width,height,unit,markers)
-    .flatMap(route=>{
-      if(route.action==="pass"||route.action==="dribble"||actions.some(action=>distance(toImage(action.to),route.terminal)<unit*.035))return [route];
-      // An isolated arrow/bar with a traced shaft is still useful when the
-      // landmark reader missed it. Present this independent proposal for review.
-      return route.terminal.score>=.94&&(route.confidence??.86)>=.85?[{...route,confidence:.45}]:[];
-    });
-  // On paper, dark court lines can survive the mask. Arrow/cut and bar
-  // proposals need corroboration from the independent landmark reader.
-  return recoverArrivalPasses(ink,width,height,unit,markers,mergeTerminalRoutes(actions,routes,unit,toImage,canonical),toImage,canonical);
+  return auditLocalInk(ink,width,height,unit,markers,actions,toImage,canonical,true);
 }
 
 /** A pass can start and finish at movement arrivals, including a shared

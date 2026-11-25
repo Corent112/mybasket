@@ -1,4 +1,4 @@
-import { mergeTerminalRoutes, readTerminalRoutes, recoverArrivalPasses } from "./terminal-reader";
+import { auditLocalInk } from "./terminal-reader";
 import { courtToCanonical } from "./court-geometry";
 import { ocrLandmarkGlyph } from "./ocr";
 import type { AiDiagramAction, AiDiagramObject, AiDiagramPlayer, AiPoint, AiRect } from "./types";
@@ -351,6 +351,12 @@ export async function readColoredCourtDiagram(source: HTMLCanvasElement) {
           }
           return true;
         };
+        // Never mark an interior crossing as a screen if the incoming
+        // shaft continues straight beyond the bar.
+        const forward=(j:number)=>pixels.has(Math.round(p.y+dy/length*j)*w+Math.round(p.x+dx/length*j));
+        const span=Math.max(4,Math.round(reach*.9));
+        const forwardHits=Array.from({length:span},(_,k)=>forward(reach+k+1)).filter(Boolean).length;
+        if(forwardHits>=span*.7)continue;
         if(!armContinues(-1)&&!armContinues(1))return i;
       }
     }
@@ -1205,9 +1211,8 @@ export async function readColoredCourtDiagram(source: HTMLCanvasElement) {
     actions.splice(index,1);
     actions.splice(actions.indexOf(feeds[0])+1,0,dribble);
   }
-  const terminalRoutes=readTerminalRoutes(ink,w,h,unit,roster.map(item=>({
+  const verified=auditLocalInk(ink,w,h,unit,roster.map(item=>({
     key:item.player.key,center:item.center,radius:item.radius,
-  })));
-  const verified=recoverArrivalPasses(ink,w,h,unit,roster.map(item=>({key:item.player.key,center:item.center,radius:item.radius})),mergeTerminalRoutes(actions,terminalRoutes,unit,toImage,canonical),toImage,canonical);
-  return {canvas,play,players:roster.map(item=>item.player),objects,actions:verified};
+  })),actions,toImage,canonical);
+  return {canvas,play,players:roster.map(item=>item.player),objects,actions:verified.actions,scanAudit:verified.scanAudit};
 }

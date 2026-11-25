@@ -1,10 +1,12 @@
 import InstitutionalSessionBasketBanner from "@/components/institutionnel/InstitutionalSessionBasketBanner";
+import LibrarySessionCartPreview from "@/components/library/SessionCartPreview";
 import Link from "next/link";
 
 export default function BibliothequePage() {
   return (
     <main>
       <InstitutionalSessionBasketBanner />
+      <LibrarySessionCartPreview />
       <section className="library-hero">
         <p className="library-hero-kicker">📚 NEVER STOP LEARNING 📚</p>
       </section>

@@ -1144,7 +1144,7 @@ export async function scanExerciseLocally(
           const courtReference = makeCourtReference(digital.canvas, digital.play);
           state.rectifiedImage = courtReference?.url;
           state.referenceFallback = { detected: true, courtType: "half", players: digital.players,
-            objects: digital.objects, actions: digital.actions, notes: "", courtReference };
+            objects: digital.objects, actions: digital.actions, scanAudit: digital.scanAudit, notes: "", courtReference };
           continue;
         }
         const marked = registerMarkedCourt(canvas);
@@ -1205,9 +1205,9 @@ export async function scanExerciseLocally(
               return { ...action, fromPlayer, order: index + 1,
                 toPlayer: action.action === "pass" ? nearby(action.to, fromPlayer) : undefined };
             }) : marked ? [] : fallbackActions;
-            const verified=await debug.time("terminaisons-encre",()=>readAlignedTerminalRoutes(ink,play,players,actions)).catch(()=>actions);
+            const verified=await debug.time("terminaisons-encre",()=>readAlignedTerminalRoutes(ink,play,players,actions)).catch(()=>({actions,scanAudit:undefined}));
             state.referenceFallback = {
-              detected: true, courtType: "half", players, objects: [], actions: verified, notes: "", rectified: true,
+              detected: true, courtType: "half", players, objects: [], actions: verified.actions, scanAudit: verified.scanAudit, notes: "", rectified: true,
               courtReference, landmarkAligned: true, landmarkMarkerCount: marked?.markers.length,
             };
             continue;
