@@ -156,9 +156,9 @@ function dashedRoute(ink:InkSampler,terminal:InkTerminal,markers:InkMarker[],uni
   const candidates:TerminalRoute[]=[];
   for(const marker of markers){
     const length=distance(marker.center,terminal);
-    if(length<unit*.09||length<marker.radius+terminal.size*3)continue;
+    if(length<unit*.055||length<marker.radius+terminal.size*2.1)continue;
     const inward=vector(terminal,marker.center);
-    if(dot(inward,terminal.inward)<.86)continue;
+    if(dot(inward,terminal.inward)<.78)continue;
     const start=terminal.size*1.25,end=length-marker.radius*.95;
     if(end<=start)continue;
     const runs:{ink:boolean;length:number}[]=[];
@@ -172,7 +172,7 @@ function dashedRoute(ink:InkSampler,terminal:InkTerminal,markers:InkMarker[],uni
     const clearRuns=runs.slice(1,-1).filter(run=>!run.ink&&run.length>=Math.max(4,unit*.007));
     const occupied=runs.filter(run=>run.ink).reduce((sum,run)=>sum+run.length,0)/(end-start+1);
     const receiver=passReceiver(markers,terminal,marker.key,unit);
-    const short=!!receiver&&terminal.score>=.94&&dashRuns.length===2&&clearRuns.length>=1;
+    const short=!!receiver&&terminal.score>=.90&&dashRuns.length===2&&clearRuns.length>=1;
     if((!short&&(dashRuns.length<3||clearRuns.length<2))||occupied<.23||occupied>.8)continue;
     const gaps=clearRuns.map(run=>run.length).sort((a,b)=>a-b);
     const medianGap=gaps[Math.floor(gaps.length/2)];
@@ -205,7 +205,7 @@ function isWave(points:AiPoint[],unit:number){
     if(Math.abs(offset)<Math.max(2,unit*.0045))continue;
     const side=Math.sign(offset);
     if(last&&last!==side&&i-lastChange>=2){turns++;lastChange=i;}
-    if(!last||i-lastChange>=0)last=side;
+    last=side;
   }
   return turns>=4;
 }
@@ -220,10 +220,11 @@ function continuousRoute(ink:InkSampler,terminal:InkTerminal,markers:InkMarker[]
   const angles=[0,15,-15,30,-30,45,-45,60,-60,80,-80].map(angle=>angle*Math.PI/180);
   let marker:InkMarker|undefined;
   let bridged=false;
+  let gaps=0;
   const crossedMarkers=new Set<InkMarker>();
   for(let count=0;count<Math.ceil(unit*2.4/step);count++){
     const nearby=uniqueMarker(markers.filter(candidate=>!crossedMarkers.has(candidate)),current,Math.max(step,unit*.028));
-    const approaching=nearby&&back.length>=5&&dot(direction,vector(current,nearby.center))>.55?nearby:undefined;
+    const approaching=nearby&&back.length>=3&&dot(direction,vector(current,nearby.center))>.55?nearby:undefined;
     if(approaching&&distance(approaching.center,current)-approaching.radius<=step*.85){
       // A marker can cover a crossing route. Never attach just because it
       // is nearby: look for an aligned shaft on the opposite edge.
@@ -256,6 +257,23 @@ function continuousRoute(ink:InkSampler,terminal:InkTerminal,markers:InkMarker[]
       return [{point,nextDirection,score:support*2+centered*.8+Math.cos(angle)*.9}];
     }).sort((a,b)=>b.score-a.score);
     if(!choices.length){
+      // Weak ink or a thin court-line mask can leave a small hole. Recover
+      // only along the current tangent with sustained ink on the far side.
+      let resumed:AiPoint|undefined;
+      if(!approaching&&gaps<2&&back.length>=4){
+        const tangent=vector(back[Math.max(0,back.length-5)],current);
+        for(const angle of [0,-15,15,-30,30].map(value=>value*Math.PI/180)){
+          const heading={x:tangent.x*Math.cos(angle)-tangent.y*Math.sin(angle),y:tangent.x*Math.sin(angle)+tangent.y*Math.cos(angle)};
+          for(let gap=step+1;gap<=Math.min(step*3,unit*.022);gap++){
+            const point=add(current,heading,gap);
+            if(ink(point,1)&&raySupport(ink,point,heading,0,step*2,1)>=.85){
+              resumed=point;direction=heading;break;
+            }
+          }
+          if(resumed)break;
+        }
+      }
+      if(resumed){current=resumed;back.push(current);gaps++;continue;}
       marker=approaching;break;
     }
     const next=choices[0];
@@ -264,7 +282,7 @@ function continuousRoute(ink:InkSampler,terminal:InkTerminal,markers:InkMarker[]
   }
   if(!marker||distance(marker.center,terminal)<marker.radius+unit*.035)return null;
   const points=[marker.center,...back.reverse()];
-  return {terminal,action:terminal.kind==="bar"?"screen":isWave(back,unit)?"dribble":"cut",fromPlayer:marker.key,points,...(bridged?{confidence:.78}:{})};
+  return {terminal,action:terminal.kind==="bar"?"screen":isWave(back,unit)?"dribble":"cut",fromPlayer:marker.key,points,...(bridged||gaps?{confidence:.78}:{})};
 }
 
 export function readTerminalRoutes(mask:Uint8Array,width:number,height:number,unit:number,markers:InkMarker[]){
@@ -361,7 +379,24 @@ export function mergeTerminalRoutes(
     }
   }
   const result=merged.filter(action=>{
-    if(confirmed.has(action)||action.action!=="screen")return true;
+    if(confirmed.has(action))return true;
+    if(action.action!=="freedraw"&&action.action!=="giveball"&&action.fromPlayer){
+      const start=action.from&&toImage(action.from),end=toImage(action.to);
+      const path=(action.points?.length?action.points:action.from?[action.from,action.to]:[]).map(toImage);
+      const duplicate=routes.some(route=>{
+        if(route.fromPlayer!==action.fromPlayer||!start||distance(route.points[0],start)>unit*.065)return false;
+        if(distance(route.terminal,end)<unit*.027)return true;
+        if(action.action==="screen"||action.action==="pass"||route.action==="pass"||route.action==="screen")return false;
+        if(distance(route.terminal,end)<unit*.035||distance(route.points[0],end)<unit*.07)return false;
+        // Only discard an incomplete trace if its entire visible path lies on
+        // a longer, independently verified path and it has no own terminal.
+        return !routes.some(other=>distance(other.terminal,end)<unit*.025)&&
+          path.length>=3&&path.every(point=>pathDistance(point,route.points)<unit*.016)&&
+          pathDistance(end,route.points)<unit*.012;
+      });
+      if(duplicate)return false;
+    }
+    if(action.action!=="screen")return true;
     const end=toImage(action.to);
     if(routes.some(route=>route.terminal.kind==="bar"&&distance(route.terminal,end)<unit*.027))return true;
     // A crossing of two independently verified paths cannot be counted as
@@ -418,8 +453,12 @@ export async function readAlignedTerminalRoutes(
       && !markers.some(marker=>distance(marker.center,p)<marker.radius))ink[i]=1;
   }
   const routes=readTerminalRoutes(ink,width,height,unit,markers)
-    .filter(route=>route.action==="pass"||route.action==="dribble"
-      ||actions.some(action=>distance(toImage(action.to),route.terminal)<unit*.035));
+    .flatMap(route=>{
+      if(route.action==="pass"||route.action==="dribble"||actions.some(action=>distance(toImage(action.to),route.terminal)<unit*.035))return [route];
+      // An isolated arrow/bar with a traced shaft is still useful when the
+      // landmark reader missed it. Present this independent proposal for review.
+      return route.terminal.score>=.94&&(route.confidence??.86)>=.85?[{...route,confidence:.45}]:[];
+    });
   // On paper, dark court lines can survive the mask. Arrow/cut and bar
   // proposals need corroboration from the independent landmark reader.
   return mergeTerminalRoutes(actions,routes,unit,toImage,canonical);

@@ -49,3 +49,41 @@ export function hasImportedTurnback(points: AiPoint[] | undefined): boolean {
   }
   return false;
 }
+
+/** Convert pixel-following samples to a clean editable centreline. */
+export function cleanImportedPath(from: AiPoint, to: AiPoint, points: AiPoint[] | undefined, kind: string): AiPoint[] {
+  if (kind === "pass" || !points || points.length < 3) return [from, to];
+  if (kind === "freedraw") return [from, ...points.slice(1, -1), to];
+  const raw = [from, ...points.slice(1, -1), to];
+  const length = Math.hypot(to.x-from.x,to.y-from.y);
+  const cumulative = [0];
+  for (let i=1;i<raw.length;i++) cumulative.push(cumulative[i-1]+Math.hypot(raw[i].x-raw[i-1].x,raw[i].y-raw[i-1].y));
+  const total=cumulative.at(-1)!;
+  if(total<.005)return [from,to];
+  const count=Math.max(12,Math.min(64,Math.ceil(total/.008)));
+  let j=1;
+  const uniform=Array.from({length:count+1},(_,i)=>{
+    const d=total*i/count;
+    while(j<raw.length-1&&cumulative[j]<d)j++;
+    const t=(d-cumulative[j-1])/(cumulative[j]-cumulative[j-1]||1);
+    return {x:raw[j-1].x+(raw[j].x-raw[j-1].x)*t,y:raw[j-1].y+(raw[j].y-raw[j-1].y)*t};
+  });
+  const radius=kind==="dribble"?Math.max(2,Math.round(count*.07)):2;
+  const smooth=uniform.map((p,i)=>{
+    if(i===0)return from;
+    if(i===count)return to;
+    const neighbors=uniform.slice(Math.max(0,i-radius),Math.min(count,i+radius)+1);
+    return {x:neighbors.reduce((sum,q)=>sum+q.x,0)/neighbors.length,y:neighbors.reduce((sum,q)=>sum+q.y,0)/neighbors.length};
+  });
+  const turnback=hasImportedTurnback(smooth);
+  const middle=importedCurveHandle(smooth)?.point;
+  const arc=sampleImportedArc(from,to,middle);
+  const dist=(p:AiPoint,a:AiPoint,b:AiPoint)=>{
+    const dx=b.x-a.x,dy=b.y-a.y;
+    const t=Math.max(0,Math.min(1,((p.x-a.x)*dx+(p.y-a.y)*dy)/(dx*dx+dy*dy||1)));
+    return Math.hypot(p.x-a.x-t*dx,p.y-a.y-t*dy);
+  };
+  if(!turnback&&smooth.every(p=>arc.slice(1).some((end,i)=>dist(p,arc[i],end)<Math.max(.009,length*.035))))return arc;
+  // Preserve genuine bends/returns, discard small raster stair steps.
+  return smooth;
+}

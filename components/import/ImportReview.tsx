@@ -23,7 +23,7 @@
 import { Undo2, Redo2, ArrowLeftRight, Spline, Link2, UserRound, Check, Trash2 } from "lucide-react";
 import { useReviewHistory } from "./useReviewHistory";
 import { changeImportedActionKind } from "@/lib/import/action-kind";
-import { hasImportedTurnback, importedCurveHandle, sampleImportedArc } from "@/lib/import/curve-handle";
+import { cleanImportedPath, hasImportedTurnback, importedCurveHandle, sampleImportedArc } from "@/lib/import/curve-handle";
 import { resolveImportPassChoices } from "@/lib/import/import-refiner";
 import { reconcileDiagramRosters } from "@/lib/import/diagram-roster";
 import { ActionKindDialog } from "./ActionKindDialog";
@@ -129,9 +129,10 @@ function curveHandles(action: AiDiagramAction | undefined) {
 
 function reviewPath(action: AiDiagramAction): AiPoint[] {
   const from = action.from ?? action.to;
-  if (action.action === "dribble" && action.from && (!action.points || action.points.length < 3)) return changeImportedActionKind({ ...action, action:"cut" }, "dribble").points ?? [from, action.to];
+  if (action.action === "pass") return [from, action.to];
+  if (action.action === "dribble" && action.from) return changeImportedActionKind({ ...action, action:"cut", points:cleanImportedPath(from,action.to,action.points,"dribble") }, "dribble").points ?? [from, action.to];
   if (action.geometry === "traced" || action.action === "dribble" || action.action === "freedraw" || hasImportedTurnback(action.points)) {
-    return [from, ...(action.points?.slice(1, -1) ?? []), action.to];
+    return cleanImportedPath(from, action.to, action.points, action.action);
   }
   return sampleImportedArc(from, action.to, importedCurveHandle(action.points)?.point);
 }

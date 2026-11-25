@@ -20,7 +20,7 @@
  */
 
 import { numberedPlayerKey, reconcileDiagramRosters } from "./diagram-roster";
-import { hasImportedTurnback, importedCurveHandle, sampleImportedArc } from "./curve-handle";
+import { cleanImportedPath, hasImportedTurnback, importedCurveHandle, sampleImportedArc } from "./curve-handle";
 import type {
   AiDiagramPlayer,
   AiExerciseDiagram,
@@ -164,7 +164,11 @@ function diagramToPhase(
         y: point.y + (from.y - action.from.y) * (1 - t) + (to.y - action.to.y) * t,
       }, courtType);
     });
-    const control = action.action === "freedraw" ? undefined : importedCurveHandle(path, action.action === "dribble");
+    const cleanPath = cleanImportedPath(from, to, path, action.action);
+    const control = action.action === "freedraw" ? undefined : importedCurveHandle(cleanPath);
+    const nativeArc = sampleImportedArc(from, to, control?.point);
+    const simpleCurve = cleanPath.length === nativeArc.length && cleanPath.every((point,i)=>
+      Math.hypot(point.x-nativeArc[i].x,point.y-nativeArc[i].y)<.001);
 
 
     return {
@@ -173,7 +177,7 @@ function diagramToPhase(
       from,
       to,
       rotation: 0,
-      ...(path && action.action !== "dribble" && (action.geometry === "traced" || action.action === "freedraw" || hasImportedTurnback(action.points)) ? { points: path } : {}),
+      ...(action.action !== "dribble" && action.action !== "pass" && (action.action === "freedraw" || (cleanPath.length > 2 && !simpleCurve && (hasImportedTurnback(cleanPath) || action.geometry === "traced"))) ? { points: cleanPath } : {}),
       ...(control ? { ctrls: [control.point] } : {}),
       ...(action.color ? { color: action.color } : {}),
       ...(sourcePlayerId ? { sourcePlayerId } : {}),

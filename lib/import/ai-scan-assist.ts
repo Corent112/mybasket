@@ -65,7 +65,7 @@ export function reconcileScan(local: AiExerciseImport, ai: AiExerciseImport): Ai
  });
  // Keep independently reliable local movements that vision did not recover.
  const retained=localActions.filter(a=>(a.confidence??0)>=.8&&!used.has(a)
-   && !corrected.some(b=>b.action===a.action&&distance(b.to,a.to)<.04&&b.fromPlayer===a.fromPlayer));
+   && !corrected.some(b=>distance(b.to,a.to)<.027&&b.fromPlayer===a.fromPlayer&&(!b.from||!a.from||distance(b.from,a.from)<.045)));
  const actions=[...corrected,...retained].map((a,index)=>{
   const line={...a,order:index+1};
   if(line.action!=='dribble'||!line.from||audited)return line;
@@ -97,7 +97,11 @@ export function supplementScan(local:AiExerciseImport,ai:AiExerciseImport):AiExe
  const actions=base.actions.map(a=>({...a}));let added=0;
  for(const candidate of ai.diagram.actions){
   const fromPlayer=mapping.get(candidate.fromPlayer||''),toPlayer=mapping.get(candidate.toPlayer||'');
-  if(actions.some(a=>a.action===candidate.action&&a.fromPlayer===fromPlayer&&distance(a.to,candidate.to)<.035&&(!a.from||!candidate.from||distance(a.from,candidate.from)<.04)))continue;
+  const duplicate=actions.find(a=>a.fromPlayer===fromPlayer&&distance(a.to,candidate.to)<.027&&(!a.from||!candidate.from||distance(a.from,candidate.from)<.04));
+  if(duplicate){
+   if(duplicate.action!==candidate.action){duplicate.confidence=Math.min(duplicate.confidence??1,.45);duplicate.source=`${duplicate.source??"Détection"} · type à confirmer`;}
+   continue;
+  }
   actions.push({...candidate,fromPlayer,toPlayer,confidence:Math.min(candidate.confidence??.5,fromPlayer ? .7 : .35),source:'Proposition IA à confirmer',order:actions.length+1});added++;
  }
  const diagram={...base,detected:players.length>0,players,actions};

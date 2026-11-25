@@ -81,3 +81,25 @@ assert.equal(diagram.actions[0].action,"pass","Visual terminal style is an indep
 assert.ok(diagram.actions[0].confidence<.5,"Disagreements remain visible for review");
 
 console.log("Independent terminal recognition: cuts, dribbles, passes, screens, crossed shafts, false-screen rejection and AI style cross-check passed.");
+
+const {cleanImportedPath}=require("../lib/import/curve-handle.ts");
+const start=at(.2,.2),finish=at(.8,.2);
+const jitter=Array.from({length:61},(_,i)=>at(.2+i*.01,.2+(i%2?.004:-.004)));
+assert.deepEqual(cleanImportedPath(start,finish,jitter,"cut"),[start,finish]);
+assert.deepEqual(cleanImportedPath(start,finish,jitter,"pass"),[start,finish]);
+const arcPoints=Array.from({length:41},(_,i)=>at(.2+i*.015,.2+.12*Math.sin(i*Math.PI/40)+(i%2?.003:-.003)));
+const cleaned=cleanImportedPath(start,finish,arcPoints,"cut");
+assert.deepEqual(cleaned[0],start);
+assert.deepEqual(cleaned.at(-1),finish);
+assert.ok(Math.max(...cleaned.map(p=>p.y))>.3,"Real curved movement survives smoothing");
+const duplicateFixture=fixture("cut");
+const verifiedCut=readTerminalRoutes(duplicateFixture.mask,w,h,unit,duplicateFixture.markers);
+const full={action:"cut",from:at(60,250),to:at(470,250),fromPlayer:"1",points:[at(60,250),at(270,250),at(470,250)]};
+const partial={...full,to:at(320,250),points:[at(60,250),at(190,250),at(320,250)]};
+assert.equal(mergeTerminalRoutes([full,partial],verifiedCut,unit,p=>p,p=>p).length,1,"Incomplete duplicate is removed only with verified longer path");
+const interrupted=raster();
+interrupted.line(at(83,250),at(245,250));
+interrupted.line(at(252,250),at(470,250));
+interrupted.line(at(470,250),at(458,242));
+interrupted.line(at(470,250),at(458,258));
+assert.equal(readTerminalRoutes(interrupted.mask,w,h,unit,[{key:"1",center:at(60,250),radius:22}]).length,1,"Small ink gap must not truncate an action");
