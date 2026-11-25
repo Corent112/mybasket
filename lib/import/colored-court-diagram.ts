@@ -1,4 +1,4 @@
-import { mergeTerminalRoutes, readTerminalRoutes } from "./terminal-reader";
+import { mergeTerminalRoutes, readTerminalRoutes, recoverArrivalPasses } from "./terminal-reader";
 import { courtToCanonical } from "./court-geometry";
 import { ocrLandmarkGlyph } from "./ocr";
 import type { AiDiagramAction, AiDiagramObject, AiDiagramPlayer, AiPoint, AiRect } from "./types";
@@ -1208,6 +1208,6 @@ export async function readColoredCourtDiagram(source: HTMLCanvasElement) {
   const terminalRoutes=readTerminalRoutes(ink,w,h,unit,roster.map(item=>({
     key:item.player.key,center:item.center,radius:item.radius,
   })));
-  const verified=mergeTerminalRoutes(actions,terminalRoutes,unit,toImage,canonical);
+  const verified=recoverArrivalPasses(ink,w,h,unit,roster.map(item=>({key:item.player.key,center:item.center,radius:item.radius})),mergeTerminalRoutes(actions,terminalRoutes,unit,toImage,canonical),toImage,canonical);
   return {canvas,play,players:roster.map(item=>item.player),objects,actions:verified};
 }

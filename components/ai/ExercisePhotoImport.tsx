@@ -200,19 +200,25 @@ export default function ExercisePhotoImport({ onImported, playersOnly = false, d
   const rememberScanCorrection = (before: AiExerciseImport, corrected: AiExerciseImport) => {
     const summarize = (result: AiExerciseImport) => {
       const diagrams = diagramsOf(result);
-      const actions: Record<string, number> = {};
-      for (const diagram of diagrams) {
-        for (const { action } of diagram.actions) actions[action] = (actions[action] ?? 0) + 1;
-      }
-      return JSON.stringify({
-        phases: diagrams.length,
-        joueurs: diagrams.reduce((sum, diagram) => sum + diagram.players.length, 0),
-        actions: Object.fromEntries(Object.entries(actions).sort(([a], [b]) => a.localeCompare(b))),
-      });
+      // Keep the actual ownership and endpoints. Counts alone miss a
+      // corrected receiver, a reversed arrow or an action extended by hand.
+      const point = (value: {x:number;y:number} | undefined) => value
+        ? [Math.round(value.x*1000),Math.round(value.y*1000)] : null;
+      return JSON.stringify(diagrams.slice(0,12).map(diagram=>{
+        const labels=new Map(diagram.players.map(player=>[player.key,player.label]));
+        return {
+          joueurs:diagram.players.map(player=>[player.label,point(player)]),
+          actions:diagram.actions.slice(0,40).map(action=>[
+            action.action,labels.get(action.fromPlayer??"")??null,
+            labels.get(action.toPlayer??"")??null,point(action.from),point(action.to),
+          ]),
+        };
+      }));
     };
     const aiOutput = summarize(before);
     const userCorrection = summarize(corrected);
     if (aiOutput === userCorrection) return;
+    if (aiOutput.length>8000||userCorrection.length>8000) return;
 
     void fetch("/api/ai/knowledge/corrections", {
       method: "POST",

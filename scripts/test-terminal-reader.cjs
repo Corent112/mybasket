@@ -103,3 +103,33 @@ interrupted.line(at(252,250),at(470,250));
 interrupted.line(at(470,250),at(458,242));
 interrupted.line(at(470,250),at(458,258));
 assert.equal(readTerminalRoutes(interrupted.mask,w,h,unit,[{key:"1",center:at(60,250),radius:22}]).length,1,"Small ink gap must not truncate an action");
+
+const {recoverArrivalPasses}=require("../lib/import/terminal-reader.ts");
+const relay=raster();
+const relayMarkers=[{key:"2",center:at(470,390),radius:20},{key:"4",center:at(180,100),radius:20}];
+const relayActions=[
+  {action:"dribble",from:at(470,390),to:at(500,320),fromPlayer:"2",confidence:.85},
+  {action:"cut",from:at(180,100),to:at(130,320),fromPlayer:"4",confidence:.85},
+];
+for(let x=145;x<490;x+=22)relay.line(at(x,320),at(x+11,320));
+relay.line(at(130,320),at(145,320));
+relay.line(at(130,320),at(141,313));relay.line(at(130,320),at(141,327));
+relay.line(at(180,120),at(130,320));
+const recovered=recoverArrivalPasses(relay.mask,w,h,unit,relayMarkers,relayActions,p=>p,p=>p);
+assert.equal(recovered.length,3,"Pass from dribble arrival to overlapping cut tip must survive");
+assert.equal(recovered[2].action,"pass");assert.equal(recovered[2].fromPlayer,"2");assert.equal(recovered[2].toPlayer,"4");
+assert.equal(recoverArrivalPasses(relay.mask,w,h,unit,relayMarkers,recovered,p=>p,p=>p).length,3,"Recovery is idempotent");
+
+// Raster crop of the reported phase 2, with the two movement arrivals
+// supplied independently. This isolates pass recovery from player OCR.
+const reportedMask=require("node:zlib").gunzipSync(Buffer.from(fs.readFileSync(require("node:path").join(__dirname,"fixtures/diagram-assistant/arrival-pass-mask.b64"),"utf8"),"base64"));
+const reportedMarkers=[{key:"2",center:at(273,337),radius:17},{key:"4",center:at(130,148),radius:17}];
+const reportedActions=[
+  {action:"dribble",from:at(273,337),to:at(357,313),fromPlayer:"2",confidence:.85},
+  {action:"cut",from:at(130,148),to:at(153,328),fromPlayer:"4",confidence:.85},
+];
+const reported=recoverArrivalPasses(reportedMask,459,420,459,reportedMarkers,reportedActions,p=>p,p=>p);
+assert.equal(reported.length,3);
+assert.equal(reported[2].action,"pass");
+assert.equal(reported[2].fromPlayer,"2");
+assert.equal(reported[2].toPlayer,"4");

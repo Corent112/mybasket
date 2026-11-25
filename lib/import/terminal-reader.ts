@@ -461,5 +461,76 @@ export async function readAlignedTerminalRoutes(
     });
   // On paper, dark court lines can survive the mask. Arrow/cut and bar
   // proposals need corroboration from the independent landmark reader.
-  return mergeTerminalRoutes(actions,routes,unit,toImage,canonical);
+  return recoverArrivalPasses(ink,width,height,unit,markers,mergeTerminalRoutes(actions,routes,unit,toImage,canonical),toImage,canonical);
+}
+
+/** A pass can start and finish at movement arrivals, including a shared
+ * arrowhead where the connected-component reader sees only one movement. */
+export function recoverArrivalPasses(mask:Uint8Array,width:number,height:number,unit:number,
+  markers:InkMarker[],actions:AiDiagramAction[],toImage:(p:AiPoint)=>AiPoint,canonical:(p:AiPoint)=>AiPoint):AiDiagramAction[]{
+  const ink=makeSampler(mask,width,height);
+  const arrivals=actions.flatMap(action=>action.fromPlayer&&["cut","dribble"].includes(action.action)&&(action.confidence??0)>=.55
+    ?[{key:action.fromPlayer,center:toImage(action.to),radius:unit*.012,action}]:[]);
+  const positions=[...markers.map(marker=>({...marker,action:undefined as AiDiagramAction|undefined})),...arrivals];
+  const proposals:{source:typeof positions[number];target:typeof positions[number];score:number}[]=[];
+  for(const source of positions)for(const target of positions){
+    if(source.key===target.key||(!source.action&&!target.action))continue;
+    const length=distance(source.center,target.center);
+    if(length<unit*.075)continue;
+    const axis=vector(source.center,target.center);
+    const perpendicular={x:-axis.y,y:axis.x};
+    // A movement arrowhead may end a few pixels beside the first dash.
+    // Sample a narrow fan at action arrivals; keep the best continuous
+    // dash series instead of requiring perfect pixel alignment.
+    const shifts=[0,-.012,.012,-.024,.024,-.03,.03].map(factor=>factor*unit);
+    const offsets=source.action?shifts:[0];
+    for(const offset of offsets){
+      const origin=add(source.center,perpendicular,offset);
+      const heading=vector(origin,target.center);
+      const span=distance(origin,target.center);
+      const start=source.radius+unit*.009,end=span-target.radius-unit*.009;
+      if(end-start<unit*.055)continue;
+      const runs:{hit:boolean;size:number}[]=[];
+      for(let t=start;t<=end;t++){
+        const hit=ink(add(origin,heading,t),1);
+        const last=runs.at(-1);
+        if(last?.hit===hit)last.size++;else runs.push({hit,size:1});
+      }
+      const dashes=runs.filter(r=>r.hit&&r.size>=Math.max(3,unit*.005));
+      const gaps=runs.slice(1,-1).filter(r=>!r.hit&&r.size>=Math.max(3,unit*.005));
+      if(dashes.length<3||gaps.length<2)continue;
+      const coverage=dashes.reduce((sum,r)=>sum+r.size,0)/(end-start+1);
+      if(coverage<.20||coverage>.80)continue;
+      const median=gaps.map(r=>r.size).sort((a,b)=>a-b)[Math.floor(gaps.length/2)];
+      if(gaps.some(r=>r.size>Math.max(unit*.045,median*2.4)||r.size<median*.36))continue;
+      if(runs[0]?.hit===false&&runs[0].size>unit*.035||runs.at(-1)?.hit===false&&runs.at(-1)!.size>unit*.035)continue;
+      // Inspect both wings at the destination even when the tip coincides
+      // with another action. A series of unrelated spots is not sufficient.
+      const inward={x:-heading.x,y:-heading.y};
+      const normal={x:-inward.y,y:inward.x};
+      const left=vector({x:0,y:0},{x:inward.x+normal.x*.72,y:inward.y+normal.y*.72});
+      const right=vector({x:0,y:0},{x:inward.x-normal.x*.72,y:inward.y-normal.y*.72});
+      let arrow=false;
+      for(let offset=0;offset<=target.radius+unit*.018&&!arrow;offset+=2){
+        const tip=add(target.center,inward,offset);
+        for(const size of [unit*.012,unit*.018,unit*.024]){
+          if(raySupport(ink,tip,left,size*.35,size*1.1,1)>=.65&&raySupport(ink,tip,right,size*.35,size*1.1,1)>=.65){arrow=true;break;}
+        }
+      }
+      if(!arrow)continue;
+      proposals.push({source,target,score:dashes.length+gaps.length-Math.abs(offset)/unit});
+    }
+  }
+  const result=[...actions];
+  for(const proposal of proposals.sort((a,b)=>b.score-a.score)){
+    const {source,target}=proposal;
+    const from=canonical(source.center),to=canonical(target.center);
+    if(result.some(a=>a.action==="pass"&&distance(toImage(a.to),target.center)<unit*.045&&a.from&&distance(toImage(a.from),source.center)<unit*.045))continue;
+    const reverse=proposals.find(p=>p.source.key===target.key&&p.target.key===source.key&&distance(p.source.center,target.center)<unit*.035&&distance(p.target.center,source.center)<unit*.035);
+    if(reverse&&reverse.score>=proposal.score)continue;
+    const action:AiDiagramAction={action:"pass",from,to,points:[from,to],fromPlayer:source.key,toPlayer:target.key,confidence:.72,source:"Pointillés et flèche vérifiés entre deux positions de jeu"};
+    const after=Math.max(source.action?result.indexOf(source.action):-1,target.action?result.indexOf(target.action):-1);
+    result.splice(after+1,0,action);
+  }
+  return result;
 }
