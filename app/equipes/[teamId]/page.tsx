@@ -1740,7 +1740,7 @@ export default function EquipeDetailPage({
 
         {activeTab === "stats" && (
           <div className="team-tab-panel stats-panel">
-            {isOwner && <HistoricalBoxscoreImport teamId={linkedStatsTeamId} roster={team.players.map(player=>({id:player.supabasePlayerId||player.id,name:`${player.firstName} ${player.lastName}`,number:player.num}))} onSaved={()=>{setBoxscoreRevision(value=>value+1);setShowCodedStats(true);void reload();}} />}
+            {isOwner && <HistoricalBoxscoreImport teamId={linkedStatsTeamId} teamName={team.name} roster={team.players.map(player=>({id:player.supabasePlayerId||player.id,name:`${player.firstName} ${player.lastName}`,number:player.num}))} onSaved={()=>{setBoxscoreRevision(value=>value+1);setShowCodedStats(true);void reload();}} />}
             {team.competitionSource === "lnb" && <div style={{display:"flex",gap:8,marginBottom:12}}><button className="tl-btn" onClick={() => setShowCodedStats(false)} aria-pressed={!showCodedStats}>Statistiques officielles LNB</button><button className="tl-btn" onClick={() => setShowCodedStats(true)} aria-pressed={showCodedStats}>Matchs codés MyBasket</button></div>}
             {team.competitionSource === "lnb" && !showCodedStats && <><LnbPlayerStats initialView="defense" teamId={teamId} revision={competitionRevision} onProfilesCreated={reload} externalData={officialStats.data} externalLoading={officialStats.loading} externalError={officialStats.error} /><TeamLeadersBlock teamId={teamId} players={team.players} matchCategory={statsMatchCategory} officialRows={officialStats.data?.players || []} officialLoading={officialStats.loading} /></>}
             {(team.competitionSource !== "lnb" || showCodedStats) && <>

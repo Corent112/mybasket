@@ -31,20 +31,46 @@ export function parseBoxTable(table: unknown[][]): ImportedBoxRow[] {
       const parts=val.match(/^(\d+)\s*[-/]\s*(\d+)$/);
       if(pairs[header]&&parts){const [made,attempted]=pairs[header];stats[made]=parts[1];stats[attempted]=parts[2];}
     });
-    if(stats.reb==null&&stats.off_reb!=null&&stats.def_reb!=null)stats.reb=String(Number(stats.off_reb)+Number(stats.def_reb));
+
     const minutes=get(["min","minutes","tempsdejeu","time","mp"]);
     const absent=/^(dnp|np|dnd|absent|nonjoue|nonjouee)$/.test(normalizeBoxText(minutes||get(["status","statut","presence"])));
-    return [{name,number:get(["n","no","numero","num","number"]),playerId:"",minutes:absent?"":minutes,present:!absent,stats}];
+    return [{name,number:get(["n","no","numero","num","number"]),playerId:"",minutes:absent?"":minutes,present:!absent,stats:completeBoxStats(stats)}];
   });
 }
 
 export function matchBoxPlayer(row: ImportedBoxRow, roster: ImportRosterPlayer[]): string {
-  const words=(v:string)=>v.normalize("NFD").replace(/\p{M}/gu,"").toLowerCase().match(/[a-z0-9]+/g)?.sort().join(" ");
-  const names=roster.filter(p=>words(p.name)===words(row.name));
-  if(names.length===1)return names[0].id;
-  // Shirt numbers can change between matches, so the number alone is never sufficient.
-  const matching=names.filter(p=>row.number!==""&&String(p.number)===row.number);
-  return matching.length===1?matching[0].id:"";
+  const words=(value:string)=>value.normalize("NFD").replace(/\p{M}/gu,"").toLowerCase().match(/[a-z]+/g) ?? [];
+  const name=words(row.name);
+  if(!name.length)return "";
+  const exact=roster.filter(p=>words(p.name).sort().join(" ")===name.slice().sort().join(" "));
+  if(exact.length===1)return exact[0].id;
+  const numberMatches=(p:ImportRosterPlayer)=>row.number.trim()!==""&&p.number!=null&&Number(row.number)===p.number;
+  if(exact.length>1){
+    const numbered=exact.filter(numberMatches);
+    return numbered.length===1?numbered[0].id:"";
+  }
+  // A surname and an initial are common in external boxscores. Require the
+  // jersey number as independent evidence and never match on number alone.
+  const abbreviated=roster.filter(p=>{
+    const full=words(p.name);
+    return numberMatches(p)&&name.length===2&&full.length===2&&
+      name.some((word,i)=>word.length>1&&full.includes(word)&&name[1-i].length===1&&full.some(other=>other!==word&&other.startsWith(name[1-i])));
+  });
+  return abbreviated.length===1?abbreviated[0].id:"";
+}
+
+export function associateBoxRows(rows: ImportedBoxRow[], roster: ImportRosterPlayer[]): ImportedBoxRow[] {
+  const mapped=rows.map(row=>({...row,playerId:matchBoxPlayer(row,roster)}));
+  const counts=new Map<string,number>();
+  for(const row of mapped)if(row.playerId)counts.set(row.playerId,(counts.get(row.playerId)??0)+1);
+  return mapped.map(row=>counts.get(row.playerId)!>1?{...row,playerId:""}:row);
+}
+
+export function completeBoxStats(stats: ImportedBoxRow["stats"]): ImportedBoxRow["stats"] {
+  const result={...stats};
+  if(result.reb==null&&result.off_reb!=null&&result.def_reb!=null)result.reb=String(Number(result.off_reb)+Number(result.def_reb));
+  if(result.pts==null&&result.p2m!=null&&result.p3m!=null&&result.ftm!=null)result.pts=String(2*Number(result.p2m)+3*Number(result.p3m)+Number(result.ftm));
+  return result;
 }
 
 export function parseBoxMinutes(value: string): number | null {
@@ -99,7 +125,7 @@ export function parsePdfBoxPage(items: PdfBoxText[]): ImportedBoxRow[][] {
       row[index]=[row[index],cell.str.trim()].filter(Boolean).join(" ");
     }
     const ptsIndex=columns.findIndex(column=>["pts","points"].includes(normalizeBoxText(column.str)));
-    if(/^\d+$/.test(row[ptsIndex]))rows.push(row);
+    if(/^\d+$/.test(row[ptsIndex])||row.some(value=>/^(DNP|NP|DND|absent)$/i.test(String(value))))rows.push(row);
   }
   flush();
   return tables;
