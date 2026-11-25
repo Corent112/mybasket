@@ -189,7 +189,7 @@ function dashedRoute(ink:InkSampler,terminal:InkTerminal,markers:InkMarker[],uni
   return candidates.length===1?candidates[0]:null;
 }
 
-function isWave(points:AiPoint[],unit:number){
+export function isWave(points:AiPoint[],unit:number){
   // One-pixel stair steps and tracker jitter should never create a
   // dribble. Smooth at pixel scale, then measure alternating bends over
   // a window comparable to one real wave.

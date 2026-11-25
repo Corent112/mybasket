@@ -2,6 +2,7 @@ import type { AiExerciseImport, AiExerciseDiagram } from './types';
 import { refineDiagramInk } from './guided-ink';
 import { courtToCanonical } from './court-geometry';
 import { changeImportedActionKind } from './action-kind';
+import { unresolvedScanTerminals } from './scan-audit';
 const distance=(a:{x:number;y:number},b:{x:number;y:number})=>Math.hypot(a.x-b.x,(a.y-b.y)*1.4);
 /** A weak contour scan must not overrule a coherent reading of the whole diagram. */
 export function reconcileScan(local: AiExerciseImport, ai: AiExerciseImport): AiExerciseImport {
@@ -9,6 +10,13 @@ export function reconcileScan(local: AiExerciseImport, ai: AiExerciseImport): Ai
  const base=current[0]||local.referenceFallback;
  // The request currently analyses one court. Never replace a multi-court page.
  if(current.length>1)return supplementScan(local,ai);
+ // Preserve the geometry of a complete locally reconstructed digital
+ // diagram. Vision can still label unread tokens or suggest an overlooked
+ // terminal, but it cannot replace the verified routes at a crossing.
+ if(base?.scanAudit?.terminals.some(terminal=>terminal.id.startsWith("digital-"))&&
+    base.actions.length>0&&!unresolvedScanTerminals(base).length){
+  return supplementScan(local,ai);
+ }
  const diagram=ai.diagram;
  const labels=diagram?.players.filter(p=>p.label && p.label!=='?' && p.labelConfident!==false)??[];
  const unique=new Set(labels.map(p=>`${p.team}:${p.label}`));
@@ -45,7 +53,9 @@ export function reconcileScan(local: AiExerciseImport, ai: AiExerciseImport): Ai
   const fromPlayer=mapping.get(action.fromPlayer||'');
   return fromPlayer?[{...action,fromPlayer,toPlayer:mapping.get(action.toPlayer||'')}]:[];
  });
- const verified=localActions.filter(action=>action.source?.startsWith("Pointe ou barre vérifiée")&&(action.confidence??0)>=.85);
+ const verified=localActions.filter(action=>
+  ((action.source?.startsWith("Pointe ou barre vérifiée")||action.source?.startsWith("Trajectoire et terminaison vérifiées"))&&(action.confidence??0)>=.85)||
+  (action.source?.startsWith("Pointillés et flèche vérifiés")&&(action.confidence??0)>=.7));
  const used=new Set<typeof verified[number]>();
  const sameTail=(a:AiExerciseDiagram["actions"][number],b:AiExerciseDiagram["actions"][number])=>{
   const before=(line:typeof a)=>line.points?.findLast(p=>distance(p,line.to)>.025)??line.from;
@@ -56,16 +66,18 @@ export function reconcileScan(local: AiExerciseImport, ai: AiExerciseImport): Ai
  const corrected=diagram.actions.map(action=>{
   const matching=verified.filter(local=>!used.has(local)&&distance(local.to,action.to)<.027
     &&(local.fromPlayer===action.fromPlayer||sameTail(local,action)));
-  if(matching.length!==1)return action;
-  const local=matching[0];used.add(local);
+  const exact=matching.filter(local=>local.action===action.action&&local.fromPlayer===action.fromPlayer);
+  const local=exact.length===1?exact[0]:matching.length===1?matching[0]:undefined;
+  if(!local)return action;
+  used.add(local);
   const conflict=action.fromPlayer&&action.fromPlayer!==local.fromPlayer&&(action.confidence??0)>=.65;
   return {...action,...local,terminalId:action.terminalId,order:action.order,
    ...(conflict?{confidence:.45,source:`${local.source} · départ IA et lecteur local différents, à vérifier`}:{}),
    ...(local.action==="pass"&&!local.toPlayer&&action.action==="pass"?{toPlayer:action.toPlayer}:{})};
  });
  // Keep independently reliable local movements that vision did not recover.
- const retained=localActions.filter(a=>(a.confidence??0)>=.8&&!used.has(a)
-   && !corrected.some(b=>distance(b.to,a.to)<.027&&b.fromPlayer===a.fromPlayer&&(!b.from||!a.from||distance(b.from,a.from)<.045)));
+ const retained=localActions.filter(a=>((a.confidence??0)>=.8||verified.includes(a))&&!used.has(a)
+   && !corrected.some(b=>b.action===a.action&&distance(b.to,a.to)<.027&&b.fromPlayer===a.fromPlayer&&(!b.from||!a.from||distance(b.from,a.from)<.045)));
  const actions=[...corrected,...retained].map((a,index)=>{
   const line={...a,order:index+1};
   if(line.action!=='dribble'||!line.from||audited)return line;
@@ -103,8 +115,11 @@ export function supplementScan(local:AiExerciseImport,ai:AiExerciseImport):AiExe
  for(const candidate of ai.diagram.actions){
   const fromPlayer=mapping.get(candidate.fromPlayer||''),toPlayer=mapping.get(candidate.toPlayer||'');
   const duplicate=actions.find(a=>a.fromPlayer===fromPlayer&&distance(a.to,candidate.to)<.027&&(!a.from||!candidate.from||distance(a.from,candidate.from)<.04));
+  const verifiedDigital=base.scanAudit?.terminals.some(terminal=>terminal.id.startsWith("digital-"));
+  if(verifiedDigital&&!duplicate&&actions.some(a=>distance(a.to,candidate.to)<.025&&a.action===candidate.action))continue;
+  if(verifiedDigital&&candidate.action==="screen"&&actions.some(a=>a.action==="cut"&&a.fromPlayer===fromPlayer&&distance(a.to,candidate.to)>.035&&a.points?.some(point=>distance(point,candidate.to)<.015)))continue;
   if(duplicate){
-   if(duplicate.action!==candidate.action){duplicate.confidence=Math.min(duplicate.confidence??1,.45);duplicate.source=`${duplicate.source??"Détection"} · type à confirmer`;}
+   if(duplicate.action!==candidate.action&&!verifiedDigital){duplicate.confidence=Math.min(duplicate.confidence??1,.45);duplicate.source=`${duplicate.source??"Détection"} · type à confirmer`;}
    continue;
   }
   actions.push({...candidate,fromPlayer,toPlayer,confidence:Math.min(candidate.confidence??.5,fromPlayer ? .7 : .35),source:'Proposition IA à confirmer',order:actions.length+1});added++;

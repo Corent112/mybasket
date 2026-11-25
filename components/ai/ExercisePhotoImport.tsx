@@ -154,7 +154,7 @@ export default function ExercisePhotoImport({ onImported, playersOnly = false, d
               const code=failure?.status;
               const diagnostic=failure?.diagnostic;
               if(code&&[401,403,429,503].includes(code)||diagnostic?.retryable===false||diagnostic?.code==='provider_rate')assistantUnavailable=true;
-              setAssistantNotice(`${message}${diagnostic?.reference?` Référence : ${diagnostic.reference}.`:''} Brouillon local uniquement : la lecture IA a échoué.`);
+              setAssistantNotice(`${message}${diagnostic?.reference?` Référence : ${diagnostic.reference}.`:''} La reconnaissance locale MyBasket reste disponible.`);
               result = { ...result, assistantResult:{status:'failed',reference:diagnostic?.reference,code:diagnostic?.code,stage:diagnostic?.stage,message,retryable:diagnostic?.retryable},warnings: [...result.warnings, message] };
             }
           }

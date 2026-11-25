@@ -1,4 +1,5 @@
-import { auditLocalInk } from "./terminal-reader";
+import { readDigitalStrokeGraph, reconcileDigitalRoutes, orderDigitalActions } from "./digital-stroke-graph";
+import { auditLocalInk, recoverArrivalPasses } from "./terminal-reader";
 import { courtToCanonical } from "./court-geometry";
 import { ocrLandmarkGlyph } from "./ocr";
 import type { AiDiagramAction, AiDiagramObject, AiDiagramPlayer, AiPoint, AiRect } from "./types";
@@ -217,6 +218,24 @@ export async function readColoredCourtDiagram(source: HTMLCanvasElement) {
       const columns=new Uint16Array(bw);
       for(const i of largest.pixels)columns[i%glyphWidth-largest.x0]++;
       if(bw/bh<.55&&columns.some(count=>count>bh*.74)) read={text:"1",confidence:.80};
+    }
+    // A printed digit can contain a tiny break (notably 5). The largest
+    // connected component may omit its top stroke. Read the whole interior
+    // again, keeping the original antialiasing and excluding the ring.
+    if((!read||read.confidence<.72)&&g){
+      const span=Math.round(radius*.70),zoom=4;
+      crop.width=crop.height=(span*2+1)*zoom+24;
+      g.fillStyle="#fff";g.fillRect(0,0,crop.width,crop.height);
+      for(let dy=-span;dy<=span;dy++)for(let dx=-span;dx<=span;dx++){
+        if(Math.hypot(dx,dy)>radius*.72)continue;
+        const i=4*((Math.round(p.y)+dy)*w+Math.round(p.x)+dx);
+        const gray=Math.min(255,Math.max(0,lightDigit?
+          255-Math.max(0,rgba[i+1]-greenBackground)*2.6:rgba[i]*1.12));
+        g.fillStyle=`rgb(${Math.round(gray)},${Math.round(gray)},${Math.round(gray)})`;
+        g.fillRect(12+(dx+span)*zoom,12+(dy+span)*zoom,zoom,zoom);
+      }
+      const fallback=await ocrLandmarkGlyph(crop,true,true);
+      if(fallback&&fallback.confidence>=.72)read=fallback;
     }
     const n=roster.length+1;
     const numbered=!!read&&read.confidence>=.72;
@@ -1211,8 +1230,20 @@ export async function readColoredCourtDiagram(source: HTMLCanvasElement) {
     actions.splice(index,1);
     actions.splice(actions.indexOf(feeds[0])+1,0,dribble);
   }
-  const verified=auditLocalInk(ink,w,h,unit,roster.map(item=>({
-    key:item.player.key,center:item.center,radius:item.radius,
-  })),actions,toImage,canonical);
-  return {canvas,play,players:roster.map(item=>item.player),objects,actions:verified.actions,scanAudit:verified.scanAudit};
+  const markers=roster.map(item=>({key:item.player.key,center:item.center,radius:item.radius}));
+  const graph=readDigitalStrokeGraph(ink,w,h,unit,markers);
+  const verified=auditLocalInk(ink,w,h,unit,markers,actions,toImage,canonical);
+  const complete=orderDigitalActions(recoverArrivalPasses(ink,w,h,unit,markers,reconcileDigitalRoutes(verified.actions,graph,unit,toImage,canonical),toImage,canonical),unit,toImage);
+  // Count reconstructed terminals separately, even when two arrows meet.
+  const terminals=complete.filter(action=>["cut","screen","dribble","pass"].includes(action.action)).map((action,index)=>{
+    const id=`digital-${index+1}`;
+    action.terminalId=id;
+    return {...action.to,id,kind:(action.action==="screen"?"bar":"arrow") as "bar"|"arrow",
+      confidence:action.confidence??.5,strokeStyle:(action.action==="pass"?"dashed":action.action==="dribble"?"wave":"solid") as "dashed"|"wave"|"solid",
+      styleConfidence:action.confidence??.5};
+  });
+  const remaining=(verified.scanAudit?.terminals??[]).filter(terminal=>!terminals.some(other=>
+    other.kind===terminal.kind&&distance(toImage(other),toImage(terminal))<unit*.035));
+  const scanAudit=verified.scanAudit?{...verified.scanAudit,terminals:[...terminals,...remaining]}:undefined;
+  return {canvas,play,players:roster.map(item=>item.player),objects,actions:complete,scanAudit};
 }
