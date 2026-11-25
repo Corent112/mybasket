@@ -5,6 +5,7 @@ import type { AuthChangeEvent, Session } from "@supabase/supabase-js";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ChevronDown, ChevronUp, Clock, ClipboardList } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
+import { moveCartSessionRow } from "@/lib/session-cart-reorder";
 import { SESSION_CART_TYPES, sessionCartMinutes, sessionCartTotal } from "@/lib/session-cart-summary";
 
 export type SessionCartPreviewRow = {
@@ -20,6 +21,9 @@ export function useSessionCartPreview(userId: string | null) {
   const supabase = useMemo(() => createClient(), []);
   const [rows, setRows] = useState<SessionCartPreviewRow[]>([]);
   const revision = useRef(0);
+  const moving = useRef(false);
+  const [ordering, setOrdering] = useState(false);
+  const [orderError, setOrderError] = useState("");
 
   const refresh = useCallback(async () => {
     const request = ++revision.current;
@@ -29,7 +33,7 @@ export function useSessionCartPreview(userId: string | null) {
       .eq("user_id", userId)
       .in("item_type", [...SESSION_CART_TYPES])
       .order("sort_order", { ascending: true })
-      .order("created_at", { ascending: true });
+      .order("created_at", { ascending: true }).order("id");
     if (request !== revision.current) return;
     if (!error) setRows((data ?? []) as SessionCartPreviewRow[]);
   }, [supabase, userId]);
@@ -47,10 +51,28 @@ export function useSessionCartPreview(userId: string | null) {
     };
   }, [refresh]);
 
-  return { rows, refresh };
+  async function move(id: string, direction: "up" | "down") {
+    if (!userId || moving.current) return;
+    moving.current = true;
+    setOrdering(true);
+    setOrderError("");
+    try {
+      await moveCartSessionRow(supabase, userId, id, direction);
+      await refresh();
+      window.dispatchEvent(new Event("cart-updated"));
+    } catch {
+      await refresh();
+      setOrderError("Ordre non enregistré. Réessaie.");
+    } finally {
+      moving.current = false;
+      setOrdering(false);
+    }
+  }
+
+  return { rows, refresh, move, ordering, orderError };
 }
 
-export function SessionCartPreview({ rows }: { rows: SessionCartPreviewRow[] }) {
+export function SessionCartPreview({ rows, move, ordering, orderError }: { rows: SessionCartPreviewRow[]; move: (id: string, direction: "up" | "down") => void; ordering: boolean; orderError: string }) {
   const [expanded, setExpanded] = useState(true);
   if (!rows.length) return null;
   const count = rows.length;
@@ -74,8 +96,13 @@ export function SessionCartPreview({ rows }: { rows: SessionCartPreviewRow[] }) 
             {row.image_url ? <img src={row.image_url} alt="" loading="lazy" /> : <span className="session-cart-thumbnail"><ClipboardList size={18} /></span>}
             <span className="session-cart-name">{row.title || "Sans titre"}</span>
             <b>{sessionCartMinutes(row)} min</b>
+            <div className="session-cart-arrows">
+              <button type="button" disabled={ordering || index === 0} aria-label={`Monter ${row.title || "l’exercice"}`} onClick={() => move(row.id, "up")}><ChevronUp size={15}/></button>
+              <button type="button" disabled={ordering || index === rows.length - 1} aria-label={`Descendre ${row.title || "l’exercice"}`} onClick={() => move(row.id, "down")}><ChevronDown size={15}/></button>
+            </div>
           </li>)}
         </ol>
+        {orderError && <p role="alert" className="session-cart-error">{orderError}</p>}
         <Link href="/panier" className="session-cart-link">Organiser ma séance →</Link>
       </div>}
       <style jsx>{`
@@ -87,10 +114,14 @@ export function SessionCartPreview({ rows }: { rows: SessionCartPreviewRow[] }) 
         .session-cart-time { display: flex; align-items: center; gap: 5px; white-space: nowrap; color: #f5d286; font-size: 13px; font-weight: 800; }
         .session-cart-content { padding: 10px; }
         .session-cart-content ol { margin: 0 0 10px; padding: 0; list-style: none; max-height: min(320px, 45vh); overflow-y: auto; }
-        .session-cart-content li { display: grid; grid-template-columns: 18px 44px minmax(0, 1fr) auto; gap: 8px; align-items: center; padding: 8px 2px; border-bottom: 1px solid #f0e8e8; font-size: 12px; }
+        .session-cart-content li { display: grid; grid-template-columns: 15px 36px minmax(0, 1fr) auto 29px; gap: 8px; align-items: center; padding: 8px 2px; border-bottom: 1px solid #f0e8e8; font-size: 12px; }
+        .session-cart-arrows { display:grid; gap:3px; }
+        .session-cart-arrows button { display:grid; place-items:center; width:28px; height:23px; padding:0; border:1px solid #e5d4d8; border-radius:5px; background:#fff; color:#6b1a2c; cursor:pointer; }
+        .session-cart-arrows button:disabled { opacity:.35; cursor:default; }
+        .session-cart-error { color:#a31532; font-size:12px; }
         .session-cart-content li:last-child { border-bottom: 0; }
         .session-cart-index { font-size: 11px; font-weight: 800; color: #9b6d76; text-align: center; }
-        .session-cart-content img, .session-cart-thumbnail { width: 44px; height: 40px; border-radius: 6px; object-fit: contain; background: #f7f0e8; display: grid; place-items: center; color: #6b1a2c; }
+        .session-cart-content img, .session-cart-thumbnail { width: 36px; height: 40px; border-radius: 6px; object-fit: contain; background: #f7f0e8; display: grid; place-items: center; color: #6b1a2c; }
         .session-cart-name { min-width: 0; overflow-wrap: anywhere; font-weight: 700; color: #282023; }
         .session-cart-content b { color: #6b1a2c; white-space: nowrap; font-size: 12px; }
         .session-cart-content :global(.session-cart-link) { display: block; padding: 11px 10px; border-radius: 8px; background: #f6ead6; color: #5a1928; text-align: center; font-size: 13px; font-weight: 800; text-decoration: none; }
@@ -116,6 +147,6 @@ export default function LibrarySessionCartPreview() {
     });
     return () => { active = false; subscription.unsubscribe(); };
   }, [supabase]);
-  const { rows } = useSessionCartPreview(userId);
-  return <SessionCartPreview rows={rows} />;
+  const preview = useSessionCartPreview(userId);
+  return <SessionCartPreview {...preview} />;
 }

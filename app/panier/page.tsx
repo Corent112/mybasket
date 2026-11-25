@@ -9,6 +9,7 @@ import {downloadSessionPdf} from "@/lib/institutionnel/session-pdf-download";
 import {basketDayIds,loadBasketDay,BASKET_DAY_KEY,type BasketDayContext} from "@/lib/institutionnel/basket-day-context";
 import {loadInstitutionPracticeTeams} from "@/lib/institutionnel/institution-practice-teams";
 import InstitutionalPracticeSelectionPicker from "@/components/institutionnel/InstitutionalPracticeSelectionPicker";
+import { moveCartSessionRow } from "@/lib/session-cart-reorder";
 import { sessionCartTotal } from "@/lib/session-cart-summary";
 import { createClient } from "@/lib/supabase/client";
 
@@ -286,6 +287,8 @@ function notifyCartUpdated() {
   window.dispatchEvent(new Event("cart-updated"));
 }
 export default function PanierPage() {
+  const orderingRef = useRef(false);
+  const [orderingSession, setOrderingSession] = useState(false);
   const compositionDraggedPlayerRef = useRef<string | null>(null);
   const compositionHoveredTargetRef = useRef<{ blockId: string; teamId: string } | null>(null);
 
@@ -426,7 +429,7 @@ const subtotal = useMemo(() => {
       .select("*")
       .eq("user_id", user.id)
       .order("sort_order", { ascending: true })
-      .order("created_at", { ascending: true });
+      .order("created_at", { ascending: true }).order("id");
 
     if (error) {
       console.error(error);
@@ -659,42 +662,26 @@ setLoading(false);
   }
 
   async function moveSessionItem(id: string, direction: "up" | "down") {
-    const sessionOnly = [...sessionItems].sort(
-      (a, b) => a.sort_order - b.sort_order
-    );
-
-    const index = sessionOnly.findIndex((item) => item.id === id);
-    const targetIndex = direction === "up" ? index - 1 : index + 1;
-
-    if (targetIndex < 0 || targetIndex >= sessionOnly.length) return;
-
-    const current = sessionOnly[index];
-    const target = sessionOnly[targetIndex];
-
-    setItems((prev) =>
-      prev.map((item) => {
-        if (item.id === current.id) {
-          return { ...item, sort_order: target.sort_order };
-        }
-
-        if (item.id === target.id) {
-          return { ...item, sort_order: current.sort_order };
-        }
-
-        return item;
-      })
-    );
-
-    await supabase
-      .from("cart_items")
-      .update({ sort_order: target.sort_order })
-      .eq("id", current.id);
-
-    await supabase
-      .from("cart_items")
-      .update({ sort_order: current.sort_order })
-      .eq("id", target.id);
-    notifyCartUpdated();
+    if (orderingRef.current) return;
+    orderingRef.current = true;
+    setOrderingSession(true);
+    try {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) return;
+      const ordered = await moveCartSessionRow(supabase, user.id, id, direction);
+      if (ordered) {
+        const ranks = new Map(ordered.map(row => [row.id, row.sort_order]));
+        setItems(previous => previous.map(item => ranks.has(item.id) ? { ...item, sort_order: ranks.get(item.id)! } : item));
+        notifyCartUpdated();
+      }
+    } catch (error) {
+      console.error("Ordre de séance non enregistré", error);
+      await loadCart();
+      alert("Impossible de modifier l’ordre. Réessaie.");
+    } finally {
+      orderingRef.current = false;
+      setOrderingSession(false);
+    }
   }
 
   function importPlayersFromSelectedTeam() {
@@ -2133,6 +2120,8 @@ setLoading(false);
                     <div className="order">
                       <button
                         type="button"
+                        disabled={orderingSession || index === 0}
+                        aria-label={`Monter ${item.title}`}
                         onClick={() => moveSessionItem(item.id, "up")}
                       >
                         ↑
@@ -2140,6 +2129,8 @@ setLoading(false);
 
                       <button
                         type="button"
+                        disabled={orderingSession || index === sessionItems.length - 1}
+                        aria-label={`Descendre ${item.title}`}
                         onClick={() => moveSessionItem(item.id, "down")}
                       >
                         ↓

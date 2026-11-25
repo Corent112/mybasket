@@ -150,7 +150,8 @@ export default function ExercicesClient() {
   const [loadError, setLoadError] = useState(false);
   const [user, setUser] = useState<User | null>(null);
   const [addingExerciseId, setAddingExerciseId] = useState<string | null>(null);
-  const { rows: sessionCartRows, refresh: refreshSessionCart } = useSessionCartPreview(user?.id ?? null);
+  const sessionPreview = useSessionCartPreview(user?.id ?? null);
+  const { rows: sessionCartRows, refresh: refreshSessionCart } = sessionPreview;
   const addedIds = useMemo(() => new Set(sessionCartRows.filter(row => row.item_type === "exercise").map(row => row.item_id)), [sessionCartRows]);
   const [favoriteIds, setFavoriteIds] = useState<Set<string>>(new Set());
   const [toast, setToast] = useState<ToastState>(null);
@@ -386,7 +387,7 @@ export default function ExercicesClient() {
         </div>
       </div>
 
-      <SessionCartPreview rows={sessionCartRows} />
+      <SessionCartPreview {...sessionPreview} />
       {toast && (
         <div className="mb-toast">
           <div>✓</div>
