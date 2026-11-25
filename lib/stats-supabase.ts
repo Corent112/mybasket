@@ -1405,7 +1405,7 @@ export async function listProjects(args: {
     const supabase = createClient();
     let query = supabase
       .from("match_stats")
-      .select("id,team_id,opponent,match_date,home,us_score,them_score,project_status,finalized_at,result,project_state")
+      .select("id,team_id,opponent,match_date,home,us_score,them_score,project_status,finalized_at,result,project_state,source")
       .eq("team_id", args.teamId)
       .order("match_date", { ascending: false });
 
@@ -1417,7 +1417,7 @@ export async function listProjects(args: {
       return [];
     }
 
-    const rows = data ?? [];
+    const rows = (data ?? []).filter((row: Record<string, unknown>)=>row.source!=="external");
     // Vrai nombre d'actions par match, en une seule requête sur match_actions.
     const matchIds = rows.map((r: Record<string, any>) => String(r.id));
     const actionCountByMatch = new Map<string, number>();
@@ -1622,7 +1622,7 @@ export async function loadProject(matchId: string): Promise<
     const [statsRes, actionsRes] = await Promise.all([
       supabase
         .from("match_stats")
-        .select("team_id,opponent,match_date,home,us_score,them_score,project_state,playbook_id,system_mapping,project_status")
+        .select("team_id,opponent,match_date,home,us_score,them_score,project_state,playbook_id,system_mapping,project_status,match_category")
         .eq("id", matchId)
         .single(),
       supabase
@@ -1658,6 +1658,7 @@ export async function loadProject(matchId: string): Promise<
         1: { us: Number(data.us_score ?? 0), them: Number(data.them_score ?? 0) },
       },
       ...projectState,
+      matchType: projectState.matchType ?? (data.match_category === "championship" ? "league" : data.match_category),
       actions: mergedActions,
     };
 

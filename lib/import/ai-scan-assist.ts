@@ -32,15 +32,41 @@ export function reconcileScan(local: AiExerciseImport, ai: AiExerciseImport): Ai
    players.push({...p,key});
   }
  }
+ // Match players by known number, or by a single nearby marker when OCR
+ // could not read a number. Never map multiple unknown labels by text alone.
+ const mapping=new Map((base?.players??[]).map(p=>{
+  const labelKnown=!!p.label&&p.label!=='?'&&p.labelConfident!==false;
+  const exact=labelKnown?players.filter(v=>v.label===p.label&&v.team===p.team):[];
+  const nearby=players.filter(v=>v.team===p.team).map(v=>({v,gap:distance(v,p)})).sort((a,b)=>a.gap-b.gap);
+  const match=exact.length===1?exact[0]:nearby[0]?.gap<.035&&(!nearby[1]||nearby[1].gap-nearby[0].gap>.018)?nearby[0].v:undefined;
+  return [p.key,match?.key];
+ }));
+ const localActions=(base?.actions??[]).flatMap(action=>{
+  const fromPlayer=mapping.get(action.fromPlayer||'');
+  return fromPlayer?[{...action,fromPlayer,toPlayer:mapping.get(action.toPlayer||'')}]:[];
+ });
+ const verified=localActions.filter(action=>action.source?.startsWith("Pointe ou barre vérifiée")&&(action.confidence??0)>=.85);
+ const used=new Set<typeof verified[number]>();
+ const sameTail=(a:AiExerciseDiagram["actions"][number],b:AiExerciseDiagram["actions"][number])=>{
+  const before=(line:typeof a)=>line.points?.findLast(p=>distance(p,line.to)>.025)??line.from;
+  const p=before(a),q=before(b);if(!p||!q)return false;
+  const dx=a.to.x-p.x,dy=(a.to.y-p.y)*1.4,ex=b.to.x-q.x,ey=(b.to.y-q.y)*1.4;
+  return (dx*ex+dy*ey)/(Math.hypot(dx,dy)*Math.hypot(ex,ey)||1)>.78;
+ };
+ const corrected=diagram.actions.map(action=>{
+  const matching=verified.filter(local=>!used.has(local)&&distance(local.to,action.to)<.027
+    &&(local.fromPlayer===action.fromPlayer||sameTail(local,action)));
+  if(matching.length!==1)return action;
+  const local=matching[0];used.add(local);
+  const conflict=action.fromPlayer&&action.fromPlayer!==local.fromPlayer&&(action.confidence??0)>=.65;
+  return {...action,...local,terminalId:action.terminalId,order:action.order,
+   ...(conflict?{confidence:.45,source:`${local.source} · départ IA et lecteur local différents, à vérifier`}:{}),
+   ...(local.action==="pass"&&!local.toPlayer&&action.action==="pass"?{toPlayer:action.toPlayer}:{})};
+ });
  // Keep independently reliable local movements that vision did not recover.
- const retained=(base?.actions??[]).filter(a=>(a.confidence??0)>=.8 && a.fromPlayer
-   && !diagram.actions.some(b=>b.action===a.action&&distance(b.to,a.to)<.04
-    && diagram.players.find(p=>p.key===b.fromPlayer)?.label===base?.players.find(p=>p.key===a.fromPlayer)?.label));
- const mapping=new Map((base?.players??[]).map(p=>[p.key,players.find(v=>v.label===p.label&&v.team===p.team)?.key]));
- const actions=[...diagram.actions,...retained.flatMap(a=>{
-  const fromPlayer=mapping.get(a.fromPlayer||'');if(!fromPlayer)return [];
-  return [{...a,fromPlayer,toPlayer:mapping.get(a.toPlayer||'')}];
- })].map((a,index)=>{
+ const retained=localActions.filter(a=>(a.confidence??0)>=.8&&!used.has(a)
+   && !corrected.some(b=>b.action===a.action&&distance(b.to,a.to)<.04&&b.fromPlayer===a.fromPlayer));
+ const actions=[...corrected,...retained].map((a,index)=>{
   const line={...a,order:index+1};
   if(line.action!=='dribble'||!line.from||audited)return line;
   // Vision supplies the centreline; generate the visible dribble wave once.

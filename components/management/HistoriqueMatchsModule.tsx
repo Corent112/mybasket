@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import { matchCompetitionLabel } from "@/lib/live-system-layout";
 import { CODING_MODES } from "@/components/prise-stats-pro/coding-modes";
 import { createClient } from "@/lib/supabase/client";
 
@@ -21,6 +22,9 @@ type MatchRow = {
   project_status?: string | null;
   finalized_at?: string | null;
   coding_mode: string | null;
+  source?: string | null;
+  match_category?: string | null;
+  match_type?: string | null;
 };
 
 type PlayerLine = {
@@ -564,7 +568,7 @@ export default function HistoriqueMatchsModule() {
     // matchs codés par ses assistants.
     const { data: matchData, error: matchError } = await supabase
       .from("match_stats")
-      .select("id, team_id, opponent, match_date, us_score, them_score, result, home, project_status, finalized_at, coding_mode:project_state->>codingMode")
+      .select("id, team_id, opponent, match_date, us_score, them_score, result, home, project_status, finalized_at, source, match_category, match_type:project_state->>matchType, coding_mode:project_state->>codingMode")
       .order("match_date", { ascending: false });
 
     if (matchError) {
@@ -1237,8 +1241,9 @@ export default function HistoriqueMatchsModule() {
                   </h4>
                   <p className="team">{match.home === false ? "Extérieur" : "Domicile"}</p>
                   <span className="coding-mode">
-                    {CODING_MODES.find((mode) => mode.id === match.coding_mode)?.label ?? "Mode non renseigné"}
+                    {match.source==="external"?"Feuille importée":CODING_MODES.find((mode) => mode.id === match.coding_mode)?.label ?? "Mode non renseigné"}
                   </span>
+                  {matchCompetitionLabel(match.match_type,match.match_category)&&<span className="coding-mode competition-mode">{matchCompetitionLabel(match.match_type,match.match_category)}</span>}
                 </div>
 
                 <div className="score">
@@ -1249,7 +1254,7 @@ export default function HistoriqueMatchsModule() {
                 </div>
 
                 <div className="card-actions">
-                  <button
+                  {match.source!=="external"&&<button
                     type="button"
                     className="resume"
                     onClick={() => {
@@ -1261,7 +1266,7 @@ export default function HistoriqueMatchsModule() {
                     }}
                   >
                     ▶ Reprendre
-                  </button>
+                  </button>}
 
                   <button type="button" onClick={() => openSheet(match)}>
                     Boxscore complet
@@ -1697,6 +1702,12 @@ export default function HistoriqueMatchsModule() {
           color: #69433b;
           font-size: 0.72rem;
           font-weight: 700;
+        }
+
+        .competition-mode {
+          margin-left: 0.35rem;
+          color: #6b1a2c;
+          background: #f8e7eb;
         }
 
         .score {

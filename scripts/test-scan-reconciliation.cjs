@@ -14,11 +14,20 @@ const duplicate={...ai,diagram:{...ai.diagram,players:[player('1','1',.5,.4),pla
 assert.equal(reconcileScan(local,{...ai,diagram:{...ai.diagram,actions:[{...ai.diagram.actions[0],fromPlayer:'invented'}]}}).diagram,empty,'Broken player links never replace local');
 assert.equal(reconcileScan({...local,diagrams:[ai.diagram,ai.diagram]},ai).diagram,empty,'Multi-court local diagrams preserved');
 const stable={...local,referenceFallback:undefined,diagram:ai.diagram,diagrams:[ai.diagram]};assert.deepEqual(reconcileScan(stable,ai).diagram.actions,ai.diagram.actions,'Reliable geometry not overwritten');
-let auth=true,contextCalls=0,requestArgs;
+// A visual pass confirmed by the terminal reader replaces the same AI
+// displacement rather than appearing as a duplicate action.
+const verifiedPass={action:'pass',fromPlayer:'local-1',toPlayer:'local-3',from:{x:.5,y:.4},to:{x:.8,y:.3},confidence:.86,source:'Pointe ou barre vérifiée · encre suivie jusqu’au départ'};
+const verifiedBase={...local,referenceFallback:{...local.referenceFallback,players:[player('local-1','1',.5,.4),player('local-3','3',.2,.1)],actions:[verifiedPass]}};
+const aiWrong={...ai,diagram:{...ai.diagram,actions:[{...ai.diagram.actions[2],action:'cut'}]}};
+const merged=reconcileScan(verifiedBase,aiWrong).diagram.actions;
+assert.equal(merged.length,1);assert.equal(merged[0].action,'pass');assert.equal(merged[0].toPlayer,'3');
+let auth=true,contextCalls=0,requestArgs,rateOnce=false,providerCalls=0;
+
 const actual=Module._load;Module._load=function(request,parent,main){
  if(request==='next/server'){const server=actual.call(this,request,parent,main);return{...server,after:callback=>void Promise.resolve().then(callback)}}
  if(request==='@/lib/ai/knowledge')return{resolveActor:async()=>auth?{ok:true,actor:{userId:'scan-test',clubIds:[],supabase:{}}}:{ok:false,status:401,error:'Connexion requise'},buildScopeContext:()=>({}),buildAIContext:async()=>{contextCalls++;throw Error('Diagram scan must not search documents')},getWriterClient:()=>({}),logAIUsage:async()=>{}};
  if(request==='@/lib/ai/openai')return{getOpenAI:()=>({responses:{create:async args=>{
+  providerCalls++;if(rateOnce){rateOnce=false;throw Object.assign(new Error('rate'),{status:429,headers:new Headers({'retry-after':'0'})});}
   requestArgs=args;
   const inventory={court:{type:'half'},players:ai.diagram.players,terminals:ai.diagram.actions.map((a,i)=>({id:'t'+i,kind:a.action==='screen'?'bar':'arrow',...a.to,confidence:.95}))};
   const paths={actions:ai.diagram.actions.map((a,i)=>({...a,terminalId:'t'+i,previousTerminalId:i===1?'t0':null}))};
@@ -29,9 +38,9 @@ const actual=Module._load;Module._load=function(request,parent,main){
 const route=require('../app/api/ai/import/exercise/route.ts');
 const req=()=>new Request('https://mybasket.test/api/ai/import/exercise',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({image:'data:image/jpeg;base64,AA==',diagramOnly:true,coordinateSpace:'image',courtType:'half'})});
 (async()=>{
- auth=false;assert.equal((await route.POST(req())).status,401);auth=true;
+ auth=false;assert.equal((await route.POST(req())).status,401);auth=true;rateOnce=true;
  const response=await route.POST(req());assert.equal(response.status,200);result=(await response.json()).exercise;
- assert.equal(contextCalls,0);assert.equal(requestArgs.store,false);assert.equal(result.diagram.players[0].y,.2,'Image normalized Y is converted exactly once');assert.equal(result.diagram.actions[0].from.y,.05,'Initial start inferred from player');assert.equal(result.diagram.actions[1].from.y,.15,'Next action starts at screen arrival');assert.match(requestArgs.input[0].content[0].text,/contour fermé/);
+ assert.equal(contextCalls,0);assert.equal(providerCalls,3,'One short upstream rate limit is retried once');assert.equal(requestArgs.store,false);assert.equal(result.diagram.players[0].y,.2,'Image normalized Y is converted exactly once');assert.equal(result.diagram.actions[0].from.y,.05,'Initial start inferred from player');assert.equal(result.diagram.actions[1].from.y,.15,'Next action starts at screen arrival');assert.match(requestArgs.input[0].content[0].text,/contour fermé/);
  // Browser preparation uses the same play rectangle as review, and releases temporary resources.
  const draws=[];let payload,revoked=0;global.Image=class{naturalWidth=1000;naturalHeight=1000;decode(){return Promise.resolve()}};
  global.document={createElement:()=>({getContext:()=>({fillRect(){},drawImage(...args){draws.push(args)}}),toDataURL:()=> 'data:image/jpeg;base64,AA=='})};

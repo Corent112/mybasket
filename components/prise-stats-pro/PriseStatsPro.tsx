@@ -14,6 +14,7 @@
  *  - box-score consultable + analyses (temps forts/joueur, lineups, stops, possessions)
  */
 
+import { isPickCoverage, matchCompetitionType, orderOffensiveSystems } from "@/lib/live-system-layout";
 import { createPortal } from "react-dom";
 import { type MouseEvent, useEffect, useRef, useState } from 'react';
 import { CODING_MODES, type CodingMode, isPostLikeCodingMode } from '@/components/prise-stats-pro/coding-modes';
@@ -256,8 +257,9 @@ async function readTeams(): Promise<{ id: string; name: string; clubName?: strin
 /* ============================ Constantes wizard ============================ */
 const SYSTEMES_JEU = [
   { id: 'contre-attaque', label: 'Contre attaque', ic: '⚡' },
-  { id: 'transition', label: 'Transition', ic: '🏃' },
   { id: 'libre', label: 'Libre', ic: '◌' },
+  { id: 'transition', label: 'Transition 1', ic: '🏃' },
+  { id: 'transition-2', label: 'Transition 2', ic: '🏃' },
   { id: 'systeme-1', label: 'Système 1', ic: '①' },
   { id: 'systeme-2', label: 'Système 2', ic: '②' },
   { id: 'systeme-3', label: 'Système 3', ic: '③' },
@@ -1521,11 +1523,13 @@ export default function PriseStatsProPage() {
   const find = (id: string | null) => roster.find((p) => p.id === id);
   const profileAllowsButton = (category: string, key: string) => {
     const allowed = (profileButtonKeys as Partial<Record<string, string[]>> | null)?.[category];
+    if (category === 'system' && key === 'transition-2' && allowed?.includes('transition')
+      && !codingDb?.some(row=>row.category==='system'&&row.key===key)) return true;
     return !allowed || allowed.includes(key);
   };
   const codingButtonsFor = (category: string) => {
     const resolved = resolveCodingButtons(category, codingDb)
-      .filter((b) => profileAllowsButton(category, b.key));
+      .filter((b) => profileAllowsButton(category, b.key) && (category !== "coverage" || isPickCoverage(b)));
 
     // Compatibilité : les configurations déjà enregistrées avant l'ajout de
     // "Contre" en ATTAQUE n'ont forcément aucune ligne correspondante.
@@ -1754,7 +1758,15 @@ export default function PriseStatsProPage() {
   // devient la source d'affichage. Sinon on conserve les slots/playbooks historiques.
   const configuredSystemRows = (codingDb ?? [])
     .filter((row) => row.category === 'system')
+    .map(row=>row.key==='transition'&&row.label.trim().toLowerCase()==='transition'?{...row,label:'Transition 1'}:row)
     .sort((a, b) => (a.sort_order ?? 0) - (b.sort_order ?? 0));
+  // Older saved windows have one transition. Add the second slot only if
+  // the old transition was active and the new slot was never configured.
+  if(configuredSystemRows.some(row=>row.key==='transition'&&row.is_active!==false)
+    && !configuredSystemRows.some(row=>row.key==='transition-2')){
+    const transition=CODING_FALLBACK.system.find(row=>row.key==='transition-2');
+    if(transition)configuredSystemRows.push(transition);
+  }
   const activeConfiguredSystems = configuredSystemRows.filter((row) => row.is_active !== false);
   // Les noms du playbook ne concernent que l'attaque. En défense, on ne
   // réutilise jamais les systèmes offensifs du playbook.
@@ -1766,13 +1778,13 @@ export default function PriseStatsProPage() {
     : configuredSystemRows.length
       ? activeConfiguredSystems.map((row) => ({ id: row.key, label: row.label, ic: row.emoji || '🏀' }))
       : SYSTEMES_JEU.map((s) => ({ id: s.id, label: s.label, ic: s.ic })))
-    .filter((s) => profileAllowsButton('system', s.id));
+    .filter((s) => profileAllowsButton('system', s.id) && (draft.context!=='defense'||s.id!=='transition-2'));
 
 
   const allCodingRowsFor = (category: string): CodingButtonCfg[] => {
     const configured = (codingDb ?? []).filter((row) => row.category === category);
     return (configured.length ? configured : (CODING_FALLBACK[category] ?? []))
-      .slice()
+      .filter(row=>category!=='coverage'||isPickCoverage(row))
       .sort((a, b) => (a.sort_order ?? 0) - (b.sort_order ?? 0));
   };
   const codingSettingsGroups: CodingButtonGroup[] = [
@@ -2043,7 +2055,7 @@ export default function PriseStatsProPage() {
       setAnalysisScope(s.analysisScope === 'scout' || team.isScoutTeam || String(team.teamType || '').toLowerCase() === 'scout' ? 'scout' : 'coached');
       setOpponent(String(s.opponent || ''));
       setDate(String(s.date || date));
-      setMatchType(s.matchType === 'league' || s.matchType === 'cup' ? s.matchType : 'friendly');
+      setMatchType(matchCompetitionType(s.matchType) ?? 'friendly');
       setHome(s.home ?? true);
       setCodingMode(s.codingMode === 'match-review' ? 'match-review' : s.codingMode === 'live-individual' ? 'live-individual' : s.codingMode === 'live' ? 'live' : 'post');
       if (s.workflowPrefs && typeof s.workflowPrefs === 'object') {
@@ -3318,7 +3330,9 @@ export default function PriseStatsProPage() {
         const byCat = (pred: (c: string) => boolean) => list.filter((s) => pred((s.category || '').toUpperCase()));
         const slob = byCat((c) => c.includes('SLOB'));
         const blob = byCat((c) => c.includes('BLOB'));
-        const half = byCat((c) => !c.includes('SLOB') && !c.includes('BLOB'));
+        const transition = list.filter(isTransitionSystem);
+        const half = byCat((c) => !c.includes('SLOB') && !c.includes('BLOB')).filter(s=>!isTransitionSystem(s));
+        ['transition','transition-2'].forEach((slot,i)=>{if(transition[i])auto[slot]=transition[i].id;});
         ['systeme-1','systeme-2','systeme-3','systeme-4','systeme-5','systeme-6','systeme-7','systeme-8']
           .forEach((slot, i) => { if (half[i]) auto[slot] = half[i].id; });
         ['slob-1','slob-2'].forEach((slot, i) => { if (slob[i]) auto[slot] = slob[i].id; });
@@ -3331,11 +3345,17 @@ export default function PriseStatsProPage() {
     return () => { alive = false; };
   }, [playbookId]);
 
+  function isTransitionSystem(system: PlaybookSystem) {
+    return !/SLOB|BLOB/i.test(system.category||'') && (/^transition(?:\b|[-_])/i.test(system.title.trim())
+      || /transition/i.test(system.category||'') || (system.tags||[]).some(tag=>tag.trim().toLowerCase()==='transition'));
+  }
+
   /* AJOUT §7 · systèmes du playbook proposés pour un slot donné, filtrés par type. */
   const systemsForSlot = (slotId: string): PlaybookSystem[] => {
     const cat = (s: PlaybookSystem) => (s.category || '').toUpperCase();
     if (slotId.startsWith('slob-')) return playbookSystems.filter((s) => cat(s).includes('SLOB'));
     if (slotId.startsWith('blob-')) return playbookSystems.filter((s) => cat(s).includes('BLOB'));
+    if (slotId==='transition'||slotId==='transition-2') return playbookSystems.filter(s=>!cat(s).includes('SLOB')&&!cat(s).includes('BLOB'));
     return playbookSystems.filter((s) => !cat(s).includes('SLOB') && !cat(s).includes('BLOB'));
   };
 
@@ -4052,8 +4072,7 @@ export default function PriseStatsProPage() {
   };
   const pickHandlerPick = (id: string) => setDraft((current) => ({ ...current, pickHandlerId: id }));
   const pickRollerPick = (id: string) => setDraft((current) => ({ ...current, pickRollerId: id }));
-  const pickCoveragePick = (id: string) => setDraft((current) => ({ ...current, coverage: id, pickCoverageSkipped: false }));
-  const pickCoverageSkip = () => setDraft((current) => ({ ...current, coverage: '', pickCoverageSkipped: true }));
+  const pickCoveragePick = (id: string) => setDraft((current) => ({ ...current, coverage: current.coverage === id ? '' : id, pickCoverageSkipped: false }));
   const pickActorPick = (id: string) => {
     const d = { ...draft, playerId: id };
     setDraft(d);
@@ -5001,7 +5020,7 @@ export default function PriseStatsProPage() {
       }
       setOpponent(String(data.opponent || ''));
       if (data.date) setDate(String(data.date));
-      setMatchType(data.matchType === 'league' || data.matchType === 'cup' ? data.matchType : 'friendly');
+      setMatchType(matchCompetitionType(data.matchType) ?? 'friendly');
       setHome(data.home ?? true);
       if (data.matchJerseyNumbers && typeof data.matchJerseyNumbers === 'object') {
         setMatchJerseyNumbers(data.matchJerseyNumbers);
@@ -7372,12 +7391,11 @@ export default function PriseStatsProPage() {
           <button className={`bt ${draft.inbound === 'premiere-moitie' ? 'active' : ''}`} onClick={() => inboundPick('premiere-moitie')}><span className="ic">◐</span><span className="lbl">PREMIÈRE MOITIÉ DE TERRAIN<br /><small className="mut">Aucun système associé</small></span></button>
         </div></>;
       case 'systeme': {
-        const firstLine = systemeButtons.filter((item) => item.id === 'contre-attaque' || item.id === 'transition');
-        const libre = systemeButtons.find((item) => item.id === 'libre');
-        const rest = systemeButtons.filter((item) => !['contre-attaque', 'transition', 'libre'].includes(item.id));
+        const offensive = draft.context !== 'defense';
+        const ordered = offensive ? orderOffensiveSystems(systemeButtons) : systemeButtons;
         return <><div className="stageHeadWithConfig">{head('Système de jeu', playbookId ? 'Systèmes du playbook associé' : 'Organisation de la possession')}<button className="stageConfigBtn" onClick={() => openCodingSettings('buttons')} title="Créer, renommer ou masquer des systèmes">⚙</button></div>
-          <div className="systemChoiceLayout">
-            {tileGrid([...firstLine, ...(libre ? [libre] : []), ...rest], draft.systemeJeu, systemePick)}
+          <div className={`systemChoiceLayout ${offensive ? "offensiveSystemGrid" : ""}`}>
+            {tileGrid(ordered, draft.systemeJeu, systemePick)}
           </div>
         </>;
       }
@@ -7398,7 +7416,7 @@ export default function PriseStatsProPage() {
           <div className="pickLinkedBlock">
             <div className="pickLinkedRow"><div className="pickLinkedLabel"><b>Ball Handler</b><span>Utilise l’écran</span></div>{miniPlayers(draft.pickHandlerId, pickHandlerPick, draft.pickRollerId)}</div>
             <div className="pickLinkedRow"><div className="pickLinkedLabel"><b>Roller</b><span>Pose l’écran</span></div>{miniPlayers(draft.pickRollerId, pickRollerPick, draft.pickHandlerId)}</div>
-            <div className="pickLinkedRow pickCoverageRow"><div className="pickLinkedLabel"><b>Défense</b><span>Facultatif</span></div><div className="pickCoverageChoices">{codingButtonsFor('coverage').map((c) => <button key={c.key} type="button" className={`pickCompactChoice ${draft.coverage === c.key ? 'active' : ''}`} onClick={() => pickCoveragePick(c.key)}>{c.label}</button>)}<button type="button" className={`pickCompactChoice skip ${draft.pickCoverageSkipped ? 'active' : ''}`} onClick={pickCoverageSkip}>SKIP</button></div></div>
+            <div className="pickLinkedRow pickCoverageRow"><div className="pickLinkedLabel"><b>Défense</b><span>Facultatif</span></div><div className="pickCoverageChoices">{codingButtonsFor('coverage').map((c) => <button key={c.key} type="button" className={`pickCompactChoice ${draft.coverage === c.key ? 'active' : ''}`} onClick={() => pickCoveragePick(c.key)}>{c.label}</button>)}</div></div>
             <div className={`pickLinkedRow pickActorRow ${readyForActor ? '' : 'disabled'}`}><div className="pickLinkedLabel"><b>Qui réalise l’action ?</b><span>{readyForActor ? 'Choisis le joueur' : 'Renseigne Handler et Roller'}</span></div>{miniPlayers(draft.playerId, readyForActor ? pickActorPick : ()=>{})}</div>
           </div>
         </>;
@@ -11391,9 +11409,12 @@ function Style() {
         .live3 > .lc { min-width: 0; }
         .lc-code { container-type: inline-size; }
         @container (min-width: 430px) {
-          .lc-body .systemChoiceLayout .grid {
+          .lc-body .systemChoiceLayout:not(.offensiveSystemGrid) .grid {
             grid-template-columns: repeat(3, minmax(0, 1fr));
           }
+        }
+        .lc-body .offensiveSystemGrid > .grid {
+          grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
         }
         @media (max-height: 900px) {
           .lc-body .systemChoiceLayout { gap: 6px; }

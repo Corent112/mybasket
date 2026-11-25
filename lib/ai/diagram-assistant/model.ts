@@ -52,8 +52,11 @@ export function readScene(raw:unknown,calibrated:boolean,expectedCourt?:'half'|'
   let id=text(t.id,40)||`t${index+1}`;while(ids.has(id))id=`t${index+1}-${id}`;ids.add(id);
   const kind=t.kind==='bar'?'bar':'arrow';
   if(terminals.some(other=>other.kind===kind&&distance(other,map(at))<.007))continue;
-  terminals.push({...map(at),id,kind,confidence:score(t.confidence)});
-  inventoryTerminals.push({...at,id,kind,confidence:score(t.confidence)});
+  const style=String(t.strokeStyle);
+  const strokeStyle=['dashed','wave','solid','unknown'].includes(style)?style as ScanTerminal['strokeStyle']:undefined;
+  const styleFields=strokeStyle?{strokeStyle,styleConfidence:score(t.styleConfidence)}:{};
+  terminals.push({...map(at),id,kind,confidence:score(t.confidence),...styleFields});
+  inventoryTerminals.push({...at,id,kind,confidence:score(t.confidence),...styleFields});
  }
  return{courtType,players,terminals,warnings,map,sourceCorners:calibrated?undefined:corners,sourceInventory:{court:{...court,type:courtType},players:inventoryPlayers,terminals:inventoryTerminals,warnings}};
 }
@@ -115,7 +118,16 @@ export function assembleDiagram(scene:Scene,raw:unknown,passes:number):AiExercis
   const allowed=['cut','dribble','pass','shoot','screen','giveball'];
   let kind=allowed.includes(String(node.action))?String(node.action) as AiDiagramAction['action']:'cut';
   if(terminal.kind==='bar')kind='screen';
-  else if(kind==='screen'){kind='cut';confidence=Math.min(confidence,.4)}
+  else {
+   const style=terminal.strokeStyle;
+   const classified=(terminal.styleConfidence??0)>=.8
+    ? style==='dashed'?'pass':style==='wave'?'dribble':style==='solid'&&kind!=='shoot'?'cut':undefined
+    :undefined;
+   if(classified&&kind!==classified){
+    kind=classified;confidence=Math.min(confidence,.45);
+    warnings.push(`Action ${id} : type choisi d’après le style du trait, à vérifier.`);
+   }else if(kind==='screen'){kind='cut';confidence=Math.min(confidence,.4)}
+  }
   if(!owner||!from||distance(to,terminal)>.035)confidence=Math.min(confidence,.4);
   if(!from||distance(from,to)<.004){visiting.delete(id);return undefined}
   const mids=list(node.points).map(point).filter((p):p is AiPoint=>!!p).map(scene.map);

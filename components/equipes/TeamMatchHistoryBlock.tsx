@@ -1,5 +1,6 @@
 "use client";
 import PostMatchSummary from "./PostMatchSummary";
+import { formatBoxMinutes } from "@/lib/historical-boxscores";
 
 import { useEffect, useMemo, useState } from "react";
 import { createPortal } from "react-dom";
@@ -13,10 +14,13 @@ type MatchRow = {
   them_score: number | null;
   result: string | null;
   home: boolean | null;
+  source?: string | null;
+  minutes_by_player?: Record<string,number|null> | null;
 };
 
 type PlayerStatRow = {
   player_id: string | null;
+  minutes_seconds?: number | null;
   pts: number | null;
   p2m: number | null;
   p2a: number | null;
@@ -285,7 +289,7 @@ export default function TeamMatchHistoryBlock({ teamId }: { teamId: string }) {
 
       const { data, error } = await supabase
         .from("match_stats")
-        .select("id, opponent, match_date, us_score, them_score, result, home")
+        .select("id, opponent, match_date, us_score, them_score, result, home, source, minutes_by_player:project_state->minutesByPlayer")
         .eq("team_id", teamId)
         .order("match_date", { ascending: false });
 
@@ -330,7 +334,7 @@ export default function TeamMatchHistoryBlock({ teamId }: { teamId: string }) {
         supabase
           .from("match_player_stats")
           .select(
-            "player_id, pts, p2m, p2a, p3m, p3a, ftm, fta, off_reb, def_reb, reb, ast, stl, blk, turnovers, pf, present",
+            "player_id, minutes_seconds, pts, p2m, p2a, p3m, p3a, ftm, fta, off_reb, def_reb, reb, ast, stl, blk, turnovers, pf, present",
           )
           .eq("match_id", matchId),
         supabase
@@ -476,6 +480,7 @@ export default function TeamMatchHistoryBlock({ teamId }: { teamId: string }) {
                     <span className="place">
                       {match.home === false ? "Extérieur" : "Domicile"}
                     </span>
+                    {match.source==="external"&&<span className="place" style={{marginLeft:6}}>Feuille importée</span>}
                   </div>
 
                   <div className="score">
@@ -695,6 +700,7 @@ export default function TeamMatchHistoryBlock({ teamId }: { teamId: string }) {
                       <thead>
                         <tr>
                           <th className="left">Joueur</th>
+                          <th>MIN</th>
                           <th>PTS</th>
                           <th>2PTS</th>
                           <th>3PTS</th>
@@ -719,6 +725,7 @@ export default function TeamMatchHistoryBlock({ teamId }: { teamId: string }) {
                                 {details.playerNames[playerId] ||
                                   `Joueur ${playerId.slice(0, 8)}`}
                               </td>
+                              <td>{formatBoxMinutes(selectedMatch?.minutes_by_player?.[playerId]??row.minutes_seconds??null)||"—"}</td>
                               <td className="strong">{n(row.pts)}</td>
                               <td>
                                 {n(row.p2m)}-{n(row.p2a)}
@@ -750,6 +757,7 @@ export default function TeamMatchHistoryBlock({ teamId }: { teamId: string }) {
                       <tfoot>
                         <tr>
                           <td className="left">TOTAL</td>
+                          <td>—</td>
                           <td>{collective.pts}</td>
                           <td>
                             {collective.p2m}-{collective.p2a}

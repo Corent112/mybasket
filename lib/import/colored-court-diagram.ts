@@ -1,3 +1,4 @@
+import { mergeTerminalRoutes, readTerminalRoutes } from "./terminal-reader";
 import { courtToCanonical } from "./court-geometry";
 import { ocrLandmarkGlyph } from "./ocr";
 import type { AiDiagramAction, AiDiagramObject, AiDiagramPlayer, AiPoint, AiRect } from "./types";
@@ -896,7 +897,11 @@ export async function readColoredCourtDiagram(source: HTMLCanvasElement) {
     dribbleEnds.set(source.player.key,end);
     used.add(trace);
     const to=canonical(end);
-    const points=[source.player,...sampleStroke(followStroke(trace,end,ball)).map(canonical),to];
+    const shaft=followStroke(trace,end,ball);
+    if(!isZigzag(shaft,unit)){
+      dribbleEnds.delete(source.player.key);used.delete(trace);continue;
+    }
+    const points=[source.player,...sampleStroke(shaft).map(canonical),to];
     actions.push({action:"dribble",from:source.player,to,points,fromPlayer:source.player.key,
       confidence:.8,source:"Trajet court dans le prolongement du ballon"});
   }
@@ -1200,5 +1205,9 @@ export async function readColoredCourtDiagram(source: HTMLCanvasElement) {
     actions.splice(index,1);
     actions.splice(actions.indexOf(feeds[0])+1,0,dribble);
   }
-  return {canvas,play,players:roster.map(item=>item.player),objects,actions};
+  const terminalRoutes=readTerminalRoutes(ink,w,h,unit,roster.map(item=>({
+    key:item.player.key,center:item.center,radius:item.radius,
+  })));
+  const verified=mergeTerminalRoutes(actions,terminalRoutes,unit,toImage,canonical);
+  return {canvas,play,players:roster.map(item=>item.player),objects,actions:verified};
 }

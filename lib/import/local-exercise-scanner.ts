@@ -49,6 +49,7 @@ import {
   regionSignature,
   signatureDistance,
 } from "./court-geometry";
+import { readAlignedTerminalRoutes } from "./terminal-reader";
 import { readColoredCourtDiagram } from "./colored-court-diagram";
 import { registerMarkedCourt } from "./marked-court";
 import { traceLandmarkArrows } from "./landmark-arrows";
@@ -1204,8 +1205,9 @@ export async function scanExerciseLocally(
               return { ...action, fromPlayer, order: index + 1,
                 toPlayer: action.action === "pass" ? nearby(action.to, fromPlayer) : undefined };
             }) : marked ? [] : fallbackActions;
+            const verified=await debug.time("terminaisons-encre",()=>readAlignedTerminalRoutes(ink,play,players,actions)).catch(()=>actions);
             state.referenceFallback = {
-              detected: true, courtType: "half", players, objects: [], actions, notes: "", rectified: true,
+              detected: true, courtType: "half", players, objects: [], actions: verified, notes: "", rectified: true,
               courtReference, landmarkAligned: true, landmarkMarkerCount: marked?.markers.length,
             };
             continue;

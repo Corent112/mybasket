@@ -1,5 +1,5 @@
 import type { AiExerciseDiagram, AiPoint } from './types';
-export type ScanTerminal = AiPoint & { id: string; kind: 'arrow'|'bar'; confidence: number };
+export type ScanTerminal = AiPoint & { id: string; kind: 'arrow'|'bar'; confidence: number; strokeStyle?: 'dashed'|'wave'|'solid'|'unknown'; styleConfidence?: number };
 export type DiagramScanAudit = {
   version: 'mybasket-diagram-v1';
   sourceCorners?: AiPoint[];

@@ -145,7 +145,7 @@ export default function ExercisePhotoImport({ onImported, playersOnly = false, d
               const read=result.assistantResult;
               if(read?.status==='partial'){
                 setAssistantNotice(`Lecture IA incomplète. ${read.message??'Des repères restent à vérifier.'}${read.reference?` Référence : ${read.reference}.`:''}`);
-                if(read.retryable===false)assistantUnavailable=true;
+                if(read.retryable===false||read.code==='provider_rate')assistantUnavailable=true;
               }
             }
             catch (cause) {
@@ -153,7 +153,7 @@ export default function ExercisePhotoImport({ onImported, playersOnly = false, d
               const failure=cause as {status?:number;diagnostic?:{reference?:string;code?:string;stage?:string;retryable?:boolean}};
               const code=failure?.status;
               const diagnostic=failure?.diagnostic;
-              if(code&&[401,403,429,503].includes(code)||diagnostic?.retryable===false)assistantUnavailable=true;
+              if(code&&[401,403,429,503].includes(code)||diagnostic?.retryable===false||diagnostic?.code==='provider_rate')assistantUnavailable=true;
               setAssistantNotice(`${message}${diagnostic?.reference?` Référence : ${diagnostic.reference}.`:''} Brouillon local uniquement : la lecture IA a échoué.`);
               result = { ...result, assistantResult:{status:'failed',reference:diagnostic?.reference,code:diagnostic?.code,stage:diagnostic?.stage,message,retryable:diagnostic?.retryable},warnings: [...result.warnings, message] };
             }

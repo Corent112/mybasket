@@ -716,6 +716,7 @@ function computeLiveStats(rows: any[], matchesById: Map<string, any>): PlayerLiv
       present: row.present !== false,
       hasScore: match?.us_score != null && match?.them_score != null,
       minutes: row.minutes_seconds != null ? statNumber(row.minutes_seconds) / 60
+        : match?.source === "external" || (match?.project_state?.minutesByPlayer && Object.hasOwn(match.project_state.minutesByPlayer,String(row.player_id))) ? null
         : [row.min, row.minutes, row.playing_time, row.playing_time_minutes, row.time_played].some(value => value != null && value !== "")
           ? statMinutes([row.min, row.minutes, row.playing_time, row.playing_time_minutes, row.time_played].find(value => value != null && value !== "")) : null,
       eval:statNumber(row.pts)+offReb+defReb+statNumber(row.ast)+statNumber(row.stl)+statNumber(row.blk)-Math.max(0,statNumber(row.p2a)-statNumber(row.p2m))-Math.max(0,statNumber(row.p3a)-statNumber(row.p3m))-Math.max(0,statNumber(row.fta)-statNumber(row.ftm))-statNumber(row.turnovers)-statNumber(row.pf),

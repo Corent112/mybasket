@@ -2,6 +2,7 @@
 
 // app/equipes/[teamId]/page.tsx
 import { currentBasketballSeason, linkedCompetitionSeason } from "@/lib/team-season";
+import HistoricalBoxscoreImport from "@/components/equipes/HistoricalBoxscoreImport";
 import TeamMatchHistoryBlock from "@/components/equipes/TeamMatchHistoryBlock";
 import TeamGoogleDriveSettings from "@/components/video/TeamGoogleDriveSettings";
 import TeamProfilingTab from "@/components/equipes/TeamProfilingTab";
@@ -800,6 +801,7 @@ export default function EquipeDetailPage({
   const bannerRef = useRef<HTMLInputElement>(null);
 
   const dashboard = useTeamDashboardData(teamId, team);
+  const [boxscoreRevision, setBoxscoreRevision] = useState(0);
   const officialStats = useLnbTeamStatistics(teamId, team?.competitionSource === "lnb", competitionRevision);
   const rosterPlayers = useMemo(() => {
     const source=institutionalTeam&&selectionRoster ? selectionRoster.players.filter(entry=>entry.player).map(entry=>{
@@ -1738,9 +1740,11 @@ export default function EquipeDetailPage({
 
         {activeTab === "stats" && (
           <div className="team-tab-panel stats-panel">
+            {isOwner && <HistoricalBoxscoreImport teamId={linkedStatsTeamId} roster={team.players.map(player=>({id:player.supabasePlayerId||player.id,name:`${player.firstName} ${player.lastName}`,number:player.num}))} onSaved={()=>{setBoxscoreRevision(value=>value+1);setShowCodedStats(true);void reload();}} />}
             {team.competitionSource === "lnb" && <div style={{display:"flex",gap:8,marginBottom:12}}><button className="tl-btn" onClick={() => setShowCodedStats(false)} aria-pressed={!showCodedStats}>Statistiques officielles LNB</button><button className="tl-btn" onClick={() => setShowCodedStats(true)} aria-pressed={showCodedStats}>Matchs codés MyBasket</button></div>}
             {team.competitionSource === "lnb" && !showCodedStats && <><LnbPlayerStats initialView="defense" teamId={teamId} revision={competitionRevision} onProfilesCreated={reload} externalData={officialStats.data} externalLoading={officialStats.loading} externalError={officialStats.error} /><TeamLeadersBlock teamId={teamId} players={team.players} matchCategory={statsMatchCategory} officialRows={officialStats.data?.players || []} officialLoading={officialStats.loading} /></>}
             {(team.competitionSource !== "lnb" || showCodedStats) && <>
+            <div key={boxscoreRevision}>
             <LiveStatsSourceBanner dashboard={dashboard} />
             <MatchCategoryTabs value={statsMatchCategory} onChange={setStatsMatchCategory} />
             {dashboard.statRows.length === 0 && (team.statsHistory || []).length > 0 && (
@@ -1756,6 +1760,7 @@ export default function EquipeDetailPage({
             <TeamLineupsBlock teamId={linkedStatsTeamId} matchCategory={statsMatchCategory} />
             <TeamMatchHistoryBlock teamId={linkedStatsTeamId} />
             <TeamSeasonRecordsBlock teamId={linkedStatsTeamId} matchCategory={statsMatchCategory} />
+            </div>
             </>}
           </div>
         )}
