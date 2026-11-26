@@ -57,10 +57,13 @@ export async function readLnbPlayerStats(sourceUrl: string, personId?: number, r
   const competitions = await request(`competition/getDivisionCompetitionByYear?year=${year}&division_external_id=${divisions[abbrev]}`, token);
   const competition = competitions.find((item: any) => Number(item.year) === year && (item.competition_abbrev === abbrev || normalizeLnbName(item.competition_name || "") === ({ ESPA: "espoirselite", ESPB: "espoirselite2", PROA: "betclicelite", PROB: "elite2" } as Record<string, string>)[abbrev]));
   if (!competition) throw new Error("Championnat LNB introuvable pour cette saison.");
-  const [rows, roster, totals] = await Promise.all([
+  const [rows, roster, totals, standings] = await Promise.all([
     request("altrstats/getPersonCriterion", token, { competitionExternalId: competition.external_id, year, format: "average", criterion: "sPoints" }),
     request(`teams/getRoster?team_external_id=${teamId}&year=${year}`, token),
     request("altrstats/getPersonCriterion", token, { competitionExternalId: competition.external_id, year, format: "total", criterion: "sPoints" }),
+    request("altrstats/getStandingByCompetition", token, {
+      competition_external_id: competition.external_id, competition_filter_name: "all", round_numbers: [],
+    }).catch(() => null),
   ]);
   if (!Array.isArray(rows) || !Array.isArray(totals) || !Array.isArray(roster)) throw new Error("Liste des statistiques LNB invalide.");
   const players = rows.filter((row: any) => Number(row.team?.external_id) === teamId).map((row: any) => {
@@ -70,6 +73,14 @@ export async function readLnbPlayerStats(sourceUrl: string, personId?: number, r
   if (Array.isArray(roster)) for (const player of roster) {
     if (Number.isSafeInteger(player.person?.external_id) && !players.some((p: any) => p.person.external_id === player.person.external_id)) players.push({ person: player.person, player_role: player.player_role, team: { external_id: teamId, team_name: players[0]?.team?.team_name || "" } });
   }
+  const standing = Array.isArray(standings)
+    ? standings.flatMap(group => Array.isArray(group.data) ? group.data : [])
+      .find(row => Number(row.team?.external_id) === teamId)
+    : null;
+  const rawRank = Number(standing?.rank);
+  const ranking = Number.isSafeInteger(rawRank) && rawRank > 0 ? rawRank : null;
+  const standingGames = Number(standing?.s_games);
+  const gamesPlayed = Number.isSafeInteger(standingGames) && standingGames > 0 ? standingGames : null;
   let detail = null;
   if (personId) {
     if (!players.some((row: any) => Number(row.person?.external_id) === personId)) throw new Error("Ce joueur n’a pas de statistiques dans cette équipe et cette saison.");
@@ -80,7 +91,7 @@ export async function readLnbPlayerStats(sourceUrl: string, personId?: number, r
     detail = await request("person/getPersonSeasonAll", token, { competition_external_id: competition.external_id, team_external_id: teamId, person_external_id: personId, format: "average" });
     if (detail?.general?.competition?.competition_abbrev !== abbrev || !Array.isArray(detail.general_game_log)) throw new Error("Détail LNB incompatible avec le championnat choisi.");
   }
-  const value = { sourceUrl, year, competitionExternalId:competition.external_id, competition: competition.competition_name, players, detail, updatedAt: new Date().toISOString() };
+  const value = { sourceUrl, year, competitionExternalId:competition.external_id, competition: competition.competition_name, ranking, gamesPlayed, players, detail, updatedAt: new Date().toISOString() };
   if (cache.size > 100) cache.clear();
   cache.set(key, { value, expires: Date.now() + 300000 });
   return value;

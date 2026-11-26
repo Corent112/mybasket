@@ -37,6 +37,10 @@ import { createClient } from "@/lib/supabase/client";
 import { getTeams } from "@/lib/equipes-store";
 import GamePlanScoutingDataPicker, { type ScoutImportItem } from "./GamePlanScoutingDataPicker";
 import GamePlanMontage, { type GamePlanMontageItem } from "./GamePlanMontage";
+import { loadMatchAnalysis, loadOfficialTeamMatches } from "@/lib/analytics/load-matches";
+import { loadLnbTeamStatistics } from "@/lib/lnb-statistics-client";
+import { fillLnbIdentity } from "@/lib/lnb-statistics-model";
+import { score, codedPlayerStats, officialPlayerStats, scoutingTeamStats, teamMetrics, formatScoutingStat } from "@/lib/scouting-report-stats";
 import GamePlanScoutingBoard, { type ScoutBoardValue } from "./GamePlanScoutingBoard";
 
 /* =============================== Stores ================================ */
@@ -122,6 +126,7 @@ type Scouting = {
   depthChart?: Record<string, string[]>;
   importantStats?: Array<{ id: string; metric: string; limit: number }>;
   playerCards?: ScoutBoardValue["playerCards"];
+  printPlayerIds?: string[];
 };
 
 type SystemSection = "offensive" | "scout" | "blob" | "slob" | "end";
@@ -1889,7 +1894,12 @@ async function imageToDataUrl(src: string): Promise<string | null> {
   if (!src) return null;
   if (src.startsWith("data:image")) return src;
   try {
-    const res = await fetch(src, { mode: "cors" });
+    const url = new URL(src, window.location.origin);
+    const target = url.origin === "https://assets.altrstat.xyz"
+      ? `/api/lnb/report-image?path=${encodeURIComponent(url.pathname)}`
+      : src;
+    const res = await fetch(target, { mode: "cors" });
+    if (!res.ok || !res.headers.get("content-type")?.startsWith("image/")) return null;
     const blob = await res.blob();
     return await new Promise((resolve) => {
       const reader = new FileReader();
@@ -1953,16 +1963,22 @@ async function exportGamePlanPdf(team: Team, gp: GamePlan, rotation: Rotation | 
       y += 11 + lines.length * 4.2;
     };
 
+    const scoutTeam = gp.scouting.scoutTeamId
+      ? (await readTeams()).find(team => team.id === gp.scouting.scoutTeamId)
+      : undefined;
+    const opponentLogo = scoutTeam?.logo ? await imageToDataUrl(scoutTeam.logo) : null;
     const header = async () => {
       doc.setFillColor(...burgundy);
       doc.rect(0, 0, W, 24, "F");
       doc.setTextColor(255, 255, 255);
       doc.setFont("helvetica", "bold");
       doc.setFontSize(20);
-      doc.text("GAME PLAN", M, 15);
+      if (opponentLogo) doc.addImage(opponentLogo, "PNG", M, 3, 18, 18);
+      const titleX = opponentLogo ? M + 22 : M;
+      doc.text(scoutTeam ? "SCOUTING ADVERSE" : "GAME PLAN", titleX, 13);
       doc.setFontSize(9);
       doc.setFont("helvetica", "normal");
-      doc.text(`${team.name || "Équipe"}${team.cat ? " · " + team.cat : ""}`, M, 20);
+      doc.text(scoutTeam?.name || `${team.name || "Équipe"}${team.cat ? " · " + team.cat : ""}`, titleX, 20, { maxWidth: W - titleX - M - 20 });
       if (team.logo) {
         const logo = await imageToDataUrl(team.logo);
         if (logo) doc.addImage(logo, "PNG", W - M - 16, 4, 16, 16);
@@ -2059,12 +2075,19 @@ async function exportGamePlanPdf(team: Team, gp: GamePlan, rotation: Rotation | 
     }
 
     if (gp.scouting.scoutTeamId || hasScoutData(gp)) {
-      const allTeams = await readTeams();
-      const scoutTeam = allTeams.find((candidate) => candidate.id === gp.scouting.scoutTeamId);
+      const db = createClient();
+      const [official, coded, fixtures] = scoutTeam ? await Promise.all([
+        scoutTeam.competitionSource === "lnb" ? loadLnbTeamStatistics(scoutTeam.id).catch(() => null) : null,
+        loadMatchAnalysis(db, scoutTeam.id).catch(() => ({ matches: [], rows: [] })),
+        loadOfficialTeamMatches(db, scoutTeam.id).catch(() => []),
+      ]) : [null, { matches: [], rows: [] }, []] as const;
+      const { autoStats, uniqueMatches } = scoutingTeamStats(coded, fixtures, official);
+      const localPlayers = codedPlayerStats(coded);
+      const selected = gp.scouting.printPlayerIds == null ? null : new Set(gp.scouting.printPlayerIds);
       doc.addPage(); y = 10;
       // Header scouting inspiré du document de référence : adversaire à gauche, titre/date au centre, notre club à droite.
       doc.setFillColor(15,15,18); doc.rect(M, y, W-M*2, 20, "F");
-      const leftLogo = scoutTeam?.logo ? await imageToDataUrl(scoutTeam.logo) : null;
+      const leftLogo = opponentLogo;
       const rightLogo = team.logo ? await imageToDataUrl(team.logo) : null;
       if (leftLogo) doc.addImage(leftLogo, "PNG", M+3, y+2, 16,16);
       if (rightLogo) doc.addImage(rightLogo, "PNG", W-M-19, y+2, 16,16);
@@ -2073,9 +2096,26 @@ async function exportGamePlanPdf(team: Team, gp: GamePlan, rotation: Rotation | 
       doc.setTextColor(...gold); doc.setFontSize(8); doc.text(`SCOUTING ADVERSE${gp.date ? " · "+fmtDateLong(gp.date) : ""}`, W/2, y+14, {align:"center"});
       y += 25;
       const scoutPlayers = scoutTeam?.players || [];
+      title("Bilan et statistiques collectives");
+      const wins = uniqueMatches.filter(match => score(match, "us")! > score(match, "them")!).length;
+      const losses = uniqueMatches.filter(match => score(match, "us")! < score(match, "them")!).length;
+      const record = uniqueMatches.length ? `${wins} V · ${losses} D · ${uniqueMatches.length} MJ` : "Bilan indisponible";
+      const ranking = official?.ranking ? `${official.ranking}e · ${official.competition} · ` : "";
+      doc.setTextColor(...burgundy); doc.setFontSize(10);
+      doc.text(ranking + record, M, y); y += 6;
+      const metricWidth = (W - 2 * M) / 4;
+      teamMetrics.forEach(([key, label], index) => {
+        const x = M + (index % 4) * metricWidth;
+        const yy = y + Math.floor(index / 4) * 10;
+        const n = Object.prototype.hasOwnProperty.call(gp.scouting.teamStats || {}, key) ? gp.scouting.teamStats?.[key] : autoStats[key];
+        doc.setFillColor(249, 245, 241); doc.rect(x, yy, metricWidth - 1, 9, "F");
+        doc.setTextColor(...muted); doc.setFontSize(6.5); doc.text(label, x + 2, yy + 3);
+        doc.setTextColor(...black); doc.setFontSize(9); doc.text(n == null ? "—" : formatScoutingStat(n), x + 2, yy + 7.3);
+      });
+      y += Math.ceil(teamMetrics.length / 4) * 10 + 5;
       const depth = gp.scouting.depthChart || {};
       doc.setFillColor(15,15,18); doc.rect(M,y,W-M*2,7,"F"); doc.setTextColor(255,255,255); doc.setFontSize(9); doc.text("DEPTH CHART",M+3,y+5); y+=8;
-      const cw=(W-M*2)/5; for(let i=0;i<5;i++){const x=M+i*cw;doc.setFillColor(242,242,242);doc.rect(x,y,cw,6,"F");doc.setTextColor(...black);doc.setFontSize(7);doc.text(String(i+1),x+cw/2,y+4,{align:"center"}); const ids=(depth[String(i+1)]||[]).slice(0,3);ids.forEach((id:string,j:number)=>{const p=scoutPlayers.find((q:any)=>q.id===id);if(p)doc.text(`#${p.num ?? "—"} ${playerLabel(p)}`,x+cw/2,y+10+j*5,{align:"center",maxWidth:cw-2})})} y+=27;
+      const cw=(W-M*2)/5; for(let i=0;i<5;i++){const x=M+i*cw;doc.setFillColor(242,242,242);doc.rect(x,y,cw,6,"F");doc.setTextColor(...black);doc.setFontSize(7);doc.text(String(i+1),x+cw/2,y+4,{align:"center"}); const ids=(depth[String(i+1)]||[]).slice(0,3);ids.filter(id=>!selected||selected.has(id)).forEach((id:string,j:number)=>{const p=scoutPlayers.find((q:any)=>q.id===id);if(p)doc.text(playerLabel(p),x+cw/2,y+10+j*5,{align:"center",maxWidth:cw-2})})} y+=27;
       doc.setFillColor(15,15,18);doc.rect(M,y,W-M*2,7,"F");doc.setTextColor(255,255,255);doc.text("TEAM INFORMATION",W/2,y+5,{align:"center"});y+=9;
       const half=(W-M*2-3)/2; const infoH=56; doc.setDrawColor(170,170,170);doc.rect(M,y,half,infoH);doc.rect(M+half+3,y,half,infoH);
       const infoCol=(x:number,label:string,txt:string)=>{doc.setTextColor(...burgundy);doc.setFont("helvetica","bold");doc.setFontSize(8);doc.text(label,x+3,y+6);doc.setTextColor(...black);doc.setFont("helvetica","normal");doc.setFontSize(7.2);doc.text(doc.splitTextToSize(txt||"",half-6).slice(0,13),x+3,y+12)};
@@ -2085,44 +2125,53 @@ async function exportGamePlanPdf(team: Team, gp: GamePlan, rotation: Rotation | 
       if ((gp.scouting.importantStats||[]).length){doc.setFillColor(15,15,18);doc.rect(M,y,W-M*2,7,"F");doc.setTextColor(255,255,255);doc.text("STATS IMPORTANTES",W/2,y+5,{align:"center"});y+=10;doc.setTextColor(...black);doc.setFontSize(7);doc.text("Les tableaux sélectionnés dans MyBasket sont calculés automatiquement depuis les matchs codés.",M,y);y+=7;}
       const scoutSystems=gp.librarySystems.filter((system)=>sysSection(system)==="scout");
       if(scoutSystems.length){doc.addPage();y=10;doc.setFillColor(15,15,18);doc.rect(M,y,W-M*2,9,"F");doc.setTextColor(255,255,255);doc.setFontSize(11);doc.text("TOP PLAYS",W/2,y+6,{align:"center"});y+=14;for(const system of scoutSystems){ensure(58);doc.setTextColor(...black);doc.setFont("helvetica","bold");doc.setFontSize(9);doc.text(system.title,W/2,y,{align:"center"});y+=4;const imgs=(system.schemaImages?.length?system.schemaImages:[system.schemaImage]).filter(Boolean).slice(0,3);for(let i=0;i<imgs.length;i++){const im=await imageToDataUrl(String(imgs[i]));if(im)doc.addImage(im,"PNG",M+i*58,y,52,39)}y+=44;}}
-      const cards=gp.scouting.playerCards||[];
-      if (cards.length) {
-        doc.addPage();
-        y = 10;
-        for (const card of cards) {
-          const p = scoutPlayers.find((player) => player.id === card.playerId);
-          if (!p) continue;
-          ensure(56);
-          doc.setDrawColor(30, 30, 30);
-          doc.rect(M, y, W - M * 2, 52);
-          if (p.photo) {
-            const photo = await imageToDataUrl(p.photo);
-            if (photo) doc.addImage(photo, "JPEG", M + 1, y + 1, 28, 41);
-          }
-          doc.setFillColor(75, 75, 77);
-          doc.rect(M + 30, y, W - M * 2 - 30, 7, "F");
-          doc.setTextColor(255, 255, 255);
-          doc.setFont("helvetica", "bold");
-          doc.setFontSize(8);
-          doc.text(`#${p.num ?? "—"} · ${playerLabel(p)} · Poste ${p.poste || "—"} · ${p.taille || "—"} · ${p.mainDominante || ""}`, M + 33, y + 5);
-          doc.setTextColor(...burgundy);
-          doc.text(card.profile || "PROFIL", M + 33, y + 13);
-          doc.setTextColor(...black);
-          doc.setFont("helvetica", "normal");
-          doc.setFontSize(7.3);
-          let notesY = y + 19;
-          if (card.liveStats) {
-            const stats = Object.entries(card.liveStats)
-              .filter((entry): entry is [string, number] => entry[1] != null)
-              .map(([key, n]) => `${key} ${n.toLocaleString("fr-FR", { maximumFractionDigits: 1 })}`)
-              .join(" · ");
-            const lines = doc.splitTextToSize(stats, W - M * 2 - 38);
-            doc.text(lines, M + 33, notesY);
-            notesY += lines.length * 3.2 + 2;
-          }
-          const notes = [card.notes, card.defend ? `Défendre : ${card.defend}` : ""].filter(Boolean).join("\n");
-          doc.text(doc.splitTextToSize(notes, W - M * 2 - 38).slice(0, 6), M + 33, notesY);
-          y += 56;
+      const selectedPlayers = scoutPlayers.filter(player => !selected || selected.has(player.id));
+      if (selectedPlayers.length) {
+        let playersOnPage = 0;
+        const startPage = () => {
+          doc.addPage();
+          y = 16;
+          title("Fiches joueurs");
+          playersOnPage = 0;
+        };
+        startPage();
+        for (const player of selectedPlayers) {
+          const card = gp.scouting.playerCards?.find(item => item.playerId === player.id);
+          const row = official?.players?.find((item: { playerId?: string }) => item.playerId === player.id);
+          const p = row ? fillLnbIdentity(player, row) : player;
+          const stats = card?.liveStats ?? officialPlayerStats(row) ?? localPlayers.get(p.id);
+          const x = M + 30;
+          const width = W - M - x - 4;
+          doc.setFont("helvetica", "normal"); doc.setFontSize(8);
+          const notes = [card?.notes, card?.defend && `Comment le défendre · ${card.defend}`].filter(Boolean).join("\n");
+          const lines = notes ? doc.splitTextToSize(notes, width).slice(0, 18) : [];
+          const height = 36 + (lines.length ? 4 + lines.length * 3.6 : 0);
+          if (playersOnPage >= 6 || y + height > H - M) startPage();
+          doc.setDrawColor(215, 200, 199); doc.setFillColor(252, 249, 246);
+          doc.roundedRect(M, y, W - 2 * M, height, 2, 2, "FD");
+          const photo = p.photo ? await imageToDataUrl(p.photo) : null;
+          if (photo) doc.addImage(photo, "JPEG", M + 3, y + 4, 23, 28);
+          doc.setTextColor(...burgundy); doc.setFont("helvetica", "bold"); doc.setFontSize(11);
+          doc.text(playerLabel(p), x, y + 6, { maxWidth: width });
+          const details = [p.poste || p.postePrincipal, p.taille ? `${p.taille} cm` : "", p.age ? `${p.age} ans` : "", row?.person?.nationality, p.mainDominante].filter(Boolean).join(" · ");
+          const profile = [card?.profile, card?.profile2].filter(Boolean).join(" · ");
+          doc.setTextColor(...black); doc.setFont("helvetica", "normal"); doc.setFontSize(8);
+          doc.text(details, x, y + 10, { maxWidth: width });
+          if (profile) doc.text(`Profil · ${profile}`, x, y + 14, { maxWidth: width });
+          const values = Object.entries(stats || {});
+          const cellWidth = width / 8;
+          values.forEach(([key, value], index) => {
+            const dx = x + (index % 8) * cellWidth;
+            const dy = y + 16 + Math.floor(index / 8) * 6;
+            doc.setFillColor(241, 232, 228); doc.rect(dx, dy, cellWidth - 1, 5.5, "F");
+            doc.setTextColor(...muted); doc.setFontSize(6.4); doc.text(key, dx + 1.2, dy + 2.2);
+            doc.setTextColor(...black); doc.setFontSize(8); doc.text(value == null ? "—" : formatScoutingStat(value), dx + 1.2, dy + 4.9);
+          });
+          if (!values.length) doc.text("Statistiques indisponibles", x, y + 24);
+          doc.setTextColor(...black); doc.setFontSize(8);
+          if (lines.length) doc.text(lines, x, y + 39);
+          y += height + 4;
+          playersOnPage++;
         }
       }
     }

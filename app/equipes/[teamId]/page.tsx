@@ -1152,7 +1152,10 @@ export default function EquipeDetailPage({
   const couleurs = team.couleurs?.length
     ? team.couleurs
     : ["#7a1228", "#e0a82e"];
-  const KPIS = computeLinkedKpis(team, dashboard, ffbbBanner);
+  const lnbRank = officialStats.data?.ranking;
+  const KPIS = computeLinkedKpis(team, dashboard, typeof lnbRank === "number"
+    ? { ...ffbbBanner, ranking: lnbRank === 1 ? "1er" : `${lnbRank}e` }
+    : ffbbBanner);
 
   // Une seule liste pour la fiche équipe :
   // calendrier MyBasket (entraînements/séances/événements) + prochain match FFBB.
