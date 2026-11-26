@@ -53,19 +53,13 @@ export const teamMetrics = [
 ] as const;
 
 export function scoutingTeamStats(data: { matches: readonly DataRow[]; rows: readonly DataRow[] }, fixtures: readonly DataRow[], official?: DataRow | null) {
-  const recordSource: readonly DataRow[] = fixtures.length
-    ? fixtures
-    : Array.isArray(official?.matches) && official.matches.length
-      ? official.matches
-      : data.matches;
-  const recordMatches = recordSource.filter(
-    (m) => score(m, "us") != null && score(m, "them") != null,
-  );
-  const uniqueMatches = [
-    ...new Map<string, DataRow>(
-      recordMatches.map((m) => [String(m.source_match_key || m.external_id || m.id), m]),
-    ).values(),
-  ];
+  const officialMatches = Array.isArray(official?.matches) ? official.matches as DataRow[] : [];
+  const recordMatches = [fixtures, officialMatches, data.matches]
+    .map(source => source.filter(match => score(match, "us") != null && score(match, "them") != null))
+    .find(source => source.length) ?? [];
+  const uniqueMatches = [...new Map(recordMatches.map((match, index) => [
+    String(match.source_match_key || match.external_id || match.id || index), match,
+  ])).values()];
   const ids = new Set(data.matches.map(match => String(match.id)));
   const codedRows = data.rows.filter(row => ids.has(String(row.match_id)) && row.present !== false);
   const codedGames = new Set(codedRows.map(row => row.match_id)).size;
@@ -182,4 +176,37 @@ export function shotSplit(two: unknown, three: unknown) {
   const p2 = numeric(two), p3 = numeric(three);
   if (p2 == null || p3 == null || p2 < 0 || p3 < 0 || p2 + p3 === 0) return null;
   return { p2, p3, share2: p2 / (p2 + p3) };
+}
+
+export function scoutingTeamForm(matches: readonly DataRow[]) {
+  const results = matches.flatMap(match => {
+    const forPoints = score(match, "us"), against = score(match, "them");
+    if (forPoints == null || against == null) return [];
+    const location = match.home_away ?? match.homeAway;
+    const venue = location === "home" ? "Domicile" : location === "away" ? "Extérieur"
+      : typeof (match.home ?? match.is_home) === "boolean"
+        ? (match.home ?? match.is_home) ? "Domicile" : "Extérieur" : "—";
+    const outcome = forPoints > against ? "V" : forPoints < against ? "D" : "N";
+    return [{
+      id: String(match.source_match_key || match.id || ""),
+      date: String(match.match_date ?? match.date ?? "").slice(0, 10),
+      opponent: String(match.opponent || match.opponent_name || match.opponentName || "Adversaire non renseigné"),
+      venue, outcome, forPoints, against,
+    }];
+  });
+  const summaries = [
+    ["Domicile", results.filter(match => match.venue === "Domicile")],
+    ["Extérieur", results.filter(match => match.venue === "Extérieur")],
+    ["Victoires", results.filter(match => match.outcome === "V")],
+    ["Défaites", results.filter(match => match.outcome === "D")],
+  ] as const;
+  return {
+    splits: summaries.map(([label, games]) => ({
+      label, games: games.length,
+      forPoints: ratio(games.reduce((sum, match) => sum + match.forPoints, 0), games.length),
+      against: ratio(games.reduce((sum, match) => sum + match.against, 0), games.length),
+    })),
+    recent: results.filter(match => /^\d{4}-\d{2}-\d{2}$/.test(match.date))
+      .sort((a, b) => b.date.localeCompare(a.date)).slice(0, 3),
+  };
 }

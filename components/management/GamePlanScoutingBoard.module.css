@@ -198,3 +198,34 @@
 .root .statMark { width: 100%; padding: 5px; border: 0; border-radius: 4px; color: #33262a; }
 .root .statMark[data-color="green"] { background: #def1e4; color: #175631; }
 .root .statMark[data-color="red"] { background: #fae0e3; color: #8b2334; }
+
+.teamStatControl { display: flex; align-items: stretch; gap: 4px; }
+.teamStatControl input { min-width: 0; }
+.root .teamStatControl .statMark { width: 32px; flex-shrink: 0; }
+.root .teamStatControl input[data-color="green"], .matchOutcome[data-result="V"] { background: #def1e4; color: #175631; }
+.root .teamStatControl input[data-color="red"], .matchOutcome[data-result="D"] { background: #fae0e3; color: #8b2334; }
+.matchOutcome { display: inline-block; padding: 2px 5px; border-radius: 4px; white-space: nowrap; }
+.teamStatField { display: grid; gap: 4px; }
+
+.playerCard { display: grid; gap: 14px; }
+.playerHeader { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px; padding: 10px 12px; border-left: 3px solid var(--scout-secondary); background: #faf7f7; border-radius: 10px; }
+.playerHeader .identity { margin: 0; }
+.playerHeader .identity p { margin: 4px 0 0; }
+.root .pdfToggle { display: inline-flex; align-items: center; gap: 7px; padding: 6px 9px; border: 1px solid #eadfe3; border-radius: 7px; background: white; }
+.root .pdfToggle input { width: 15px; height: 15px; accent-color: var(--scout-primary); }
+.playerFields { display: grid; grid-template-columns: repeat(auto-fit,minmax(min(140px,100%),1fr)); gap: 10px; align-items: end; }
+.playerFields select, .playerFields input[type="number"] { min-height: 38px; }
+.photoField, .profilePanel { display: grid; gap: 8px; }
+.root .photoButton { display: block; position: relative; border: 1px solid #eadfe3; padding: 9px; border-radius: 8px; color: var(--scout-ink); cursor: pointer; }
+.root .photoButton:focus-within { outline: 2px solid var(--scout-primary); }
+.root .photoButton input { position: absolute; inset: 0; opacity: 0; cursor: pointer; }
+.profileSlots { display: flex; flex-wrap: wrap; gap: 6px; }
+.root .profileSlots button { display: inline-flex; align-items: center; gap: 6px; padding: 5px 9px; min-height: 36px; }
+.profileSlots img { width: 24px; height: 24px; object-fit: contain; }
+.profileLibrary { min-width: 0; padding: 8px; border: 1px solid #eadfe3; border-radius: 8px; }
+.iconGrid { display: grid; grid-template-columns: repeat(auto-fit,minmax(76px,1fr)); gap: 8px; margin: 10px 0; }
+.root .iconGrid button, .iconGrid figure { display: grid; justify-items: center; align-content: center; gap: 4px; margin: 0; padding: 6px; text-align: center; border: 1px solid #eadfe3; border-radius: 8px; font-size: 11px; min-width: 0; }
+.root .iconGrid button[aria-pressed="true"] { border-color: var(--scout-primary); background: #faf4f6; }
+.root .iconGrid button:disabled { opacity: .45; cursor: default; }
+.iconGrid img { width: 42px; height: 42px; object-fit: contain; }
+.playerCard textarea { min-height: 80px; }

@@ -40,8 +40,9 @@ import GamePlanMontage, { type GamePlanMontageItem } from "./GamePlanMontage";
 import { loadMatchAnalysis, loadOfficialTeamMatches } from "@/lib/analytics/load-matches";
 import { loadLnbTeamStatistics } from "@/lib/lnb-statistics-client";
 import { fillLnbIdentity } from "@/lib/lnb-statistics-model";
-import { compactPlayerMetrics, shotSplit, codedPlayerStats, officialPlayerStats, scoutingTeamStats, teamMetrics, formatScoutingStat } from "@/lib/scouting-report-stats";
+import { compactPlayerMetrics, shotSplit, codedPlayerStats, officialPlayerStats, scoutingTeamStats, scoutingTeamForm, teamMetrics, formatScoutingStat } from "@/lib/scouting-report-stats";
 import { scoutingHighlights, highlightColors } from "@/lib/scouting-highlights";
+import { scoutingProfileIcon, scoutingProfileLabel } from "@/lib/scouting-profiles";
 import { scoutingColors } from "@/lib/scouting-colors";
 import GamePlanScoutingBoard, { type ScoutBoardValue } from "./GamePlanScoutingBoard";
 
@@ -124,6 +125,7 @@ type Scouting = {
   offensiveKeys?: string;
   defensiveKeys?: string;
   teamStats?: Record<string,number|null>;
+  teamStatColors?: ScoutBoardValue["teamStatColors"];
   offense?: string;
   defense?: string;
   depthChart?: Record<string, string[]>;
@@ -2112,7 +2114,8 @@ async function exportGamePlanPdf(team: Team, gp: GamePlan, rotation: Rotation | 
         loadOfficialTeamMatches(db, scoutTeam.id).catch(() => []),
       ]) : [null, { matches: [], rows: [], actions: [] }, []] as const;
       const { matches, rows, actions } = coded;
-      const { autoStats } = scoutingTeamStats({ matches, rows }, fixtures, official);
+      const { autoStats, uniqueMatches } = scoutingTeamStats({ matches, rows }, fixtures, official);
+      const { splits, recent } = scoutingTeamForm(uniqueMatches);
       const localPlayers = codedPlayerStats({ matches, rows });
       const selected = gp.scouting.printPlayerIds == null ? null : new Set(gp.scouting.printPlayerIds);
       const scoutPlayers = scoutTeam?.players || [];
@@ -2157,7 +2160,9 @@ async function exportGamePlanPdf(team: Team, gp: GamePlan, rotation: Rotation | 
         const x = M + (index % 4) * metricWidth;
         const yy = y + Math.floor(index / 4) * 9;
         const n = teamStat(key);
-        doc.setFillColor(249, 245, 241); doc.rect(x, yy, metricWidth - 1, 8, "F");
+        const color = gp.scouting.teamStatColors?.[key];
+        doc.setFillColor(...(color === "green" ? [222, 241, 228] : color === "red" ? [250, 224, 227] : [249, 245, 241]));
+        doc.rect(x, yy, metricWidth - 1, 8, "F");
         doc.setTextColor(...muted); doc.setFontSize(6.5); doc.text(label, x + 2, yy + 3);
         doc.setTextColor(...black); doc.setFontSize(9); doc.text(n == null ? "—" : formatScoutingStat(n), x + 2, yy + 7);
       });
@@ -2166,6 +2171,36 @@ async function exportGamePlanPdf(team: Team, gp: GamePlan, rotation: Rotation | 
         pie(M + 8, y + 8, 8, teamStat("p2a"), teamStat("p3a"));
         y += 20;
       }
+
+      const summaryTable = (heading: string, columns: string[], values: string[][], widths: number[]) => {
+        ensure(20 + values.length * 8);
+        title(heading);
+        const drawRow = (cells: string[], header: boolean, index: number) => {
+          doc.setFillColor(header ? "#eee9e7" : index % 2 ? "#ffffff" : "#f9f5f1");
+          doc.rect(M, y, W - 2 * M, 8, "F");
+          doc.setFont("helvetica", header ? "bold" : "normal");
+          doc.setTextColor(...(header ? burgundy : black)); doc.setFontSize(8);
+          let x = M;
+          cells.forEach((cell, column) => {
+            const lines = doc.splitTextToSize(cell, widths[column] - 4).slice(0, 2);
+            doc.text(lines, x + 2, y + (lines.length === 2 ? 3 : 5));
+            x += widths[column];
+          });
+          y += 8;
+        };
+        drawRow(columns, true, 0);
+        values.forEach((row, index) => drawRow(row, false, index));
+        y += 5;
+      };
+      const tableWidth = W - 2 * M;
+      const showStat = (value: number | null) => value == null ? "—" : formatScoutingStat(value);
+      summaryTable("Points par match", ["Situation", "MJ", "Marqués", "Encaissés"],
+        splits.map(row => [row.label, String(row.games), showStat(row.forPoints), showStat(row.against)]),
+        [0.4, 0.15, 0.225, 0.225].map(part => part * tableWidth));
+      if (recent.length) summaryTable("Forme du moment", ["Date", "Adversaire", "Lieu", "Score", "Résultat"],
+        recent.map(match => [match.date.split("-").reverse().join("/"), match.opponent, match.venue,
+          `${match.forPoints}–${match.against}`, match.outcome === "V" ? "Victoire" : match.outcome === "D" ? "Défaite" : "Nul"]),
+        [0.16, 0.38, 0.18, 0.14, 0.14].map(part => part * tableWidth));
 
       const side = gp.scouting.highlightSide ?? "attaque";
       const highlights = scoutingHighlights(actions, side, gp.scouting.highlightMatchIds);
@@ -2308,10 +2343,18 @@ async function exportGamePlanPdf(team: Team, gp: GamePlan, rotation: Rotation | 
           doc.setTextColor(...burgundy); doc.setFont("helvetica", "bold"); doc.setFontSize(11);
           doc.text(playerLabel(p), x, y + 6, { maxWidth: width });
           const details = [p.poste || p.postePrincipal, (card?.taille || p.taille) ? `${card?.taille || p.taille} cm` : "", p.age ? `${p.age} ans` : "", row?.person?.nationality, card?.mainDominante || p.mainDominante].filter(Boolean).join(" · ");
-          const profile = [card?.profile, card?.profile2].filter(Boolean).join(" · ");
+          const profile = [card?.profile, card?.profile2].map(scoutingProfileLabel).filter(Boolean).join(" · ");
           doc.setTextColor(...black); doc.setFont("helvetica", "normal"); doc.setFontSize(8);
           doc.text(details, x, y + 10, { maxWidth: width });
-          if (profile) doc.text(`Profil · ${profile}`, x, y + 14, { maxWidth: width });
+          if (profile) {
+            let iconX = x;
+            for (const label of [card?.profile, card?.profile2]) {
+              const src = scoutingProfileIcon(label);
+              const icon = src && await imageToDataUrl(src);
+              if (icon) { doc.addImage(icon, "PNG", iconX, y + 10.5, 5, 5); iconX += 6; }
+            }
+            doc.text(`Profil · ${profile}`, iconX, y + 14.5, { maxWidth: width - (iconX - x) });
+          }
           const cellWidth = width / compactPlayerMetrics.length;
           compactPlayerMetrics.forEach((key, index) => {
             const value = stats?.[key];

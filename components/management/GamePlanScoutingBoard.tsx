@@ -11,10 +11,11 @@ import {
 } from "@/lib/analytics/matches";
 import { fillLnbIdentity } from "@/lib/lnb-statistics-model";
 import { useLnbTeamStatistics } from "@/lib/lnb-statistics-client";
-import { compactPlayerMetrics, shotSplit, codedPlayerStats, officialPlayerStats, scoutingTeamStats, teamMetrics } from "@/lib/scouting-report-stats";
+import { compactPlayerMetrics, shotSplit, codedPlayerStats, officialPlayerStats, scoutingTeamStats, scoutingTeamForm, teamMetrics } from "@/lib/scouting-report-stats";
 import { scoutingColors } from "@/lib/scouting-colors";
 import type { CSSProperties } from "react";
 import { scoutingHighlights, highlightColors, type ScoutingSide } from "@/lib/scouting-highlights";
+import { scoutingProfiles, scoutingProfileIcon, scoutingProfileLabel } from "@/lib/scouting-profiles";
 import styles from "./GamePlanScoutingBoard.module.css";
 
 type P = {
@@ -58,6 +59,7 @@ export type ScoutBoardValue = {
   offensiveKeys?: string;
   defensiveKeys?: string;
   teamStats?: Record<string, number | null>;
+  teamStatColors?: ScoutCard["statColors"];
   depthChart?: Record<string, string[]>;
   importantStats?: ScoutStat[];
   playerCards?: ScoutCard[];
@@ -96,18 +98,6 @@ async function scoutingPhoto(file: File) {
   }
 }
 
-const PROFILES = [
-  "Shooteur",
-  "Driver",
-  "Créateur",
-  "P&R Handler",
-  "Physique",
-  "Rebondeur",
-  "Post-up",
-  "Défenseur",
-  "Slasher",
-  "Scoreur",
-];
 const label = (p: P) =>
   [p.firstName, p.lastName].filter(Boolean).join(" ") || "Joueur";
 const fmt = (n: unknown) =>
@@ -136,6 +126,7 @@ function ScoutingContent({
   onAddSystem,
 }: ScoutingProps) {
   const team = scoutTeams.find((t) => t.id === value.scoutTeamId);
+  const [profilePicker, setProfilePicker] = useState<{ id: string; slot: "profile" | "profile2" } | null>(null);
   const [photoError, setPhotoError] = useState("");
   const [importedCount, setImportedCount] = useState(0);
   const [tab, setTab] = useState<"team" | "players" | "plays">("team");
@@ -185,7 +176,8 @@ function ScoutingContent({
       live = false;
     };
   }, [team]);
-  const { officialRows, autoStats } = scoutingTeamStats(data, fixtures, official);
+  const { officialRows, autoStats, uniqueMatches } = scoutingTeamStats(data, fixtures, official);
+  const { splits, recent } = scoutingTeamForm(uniqueMatches);
   const liveStats = useMemo(() => codedPlayerStats(data), [data]);
   const importCount = players.filter(player => liveStats.has(player.id)).length;
 
@@ -211,9 +203,12 @@ function ScoutingContent({
   const teamStat = (key: string) => Object.prototype.hasOwnProperty.call(value.teamStats || {}, key)
     ? value.teamStats?.[key] : autoStats[key];
   const statField = (key: string, title: string) => (
-    <label key={key}>
-      {title}
+    <div className={styles.teamStatField} key={key}>
+      <label htmlFor={`scout-stat-${key}`}>{title}</label>
+      <span className={styles.teamStatControl}>
       <input
+        id={`scout-stat-${key}`}
+        data-color={value.teamStatColors?.[key]}
         type="number"
         min={0}
         step="0.1"
@@ -232,7 +227,14 @@ function ScoutingContent({
           })
         }
       />
-    </label>
+      <button type="button" className={styles.statMark} data-color={value.teamStatColors?.[key]}
+        title="Passer de neutre à vert, puis rouge"
+        aria-label={`Couleur · ${title} · ${value.teamStatColors?.[key] === "green" ? "verte" : value.teamStatColors?.[key] === "red" ? "rouge" : "neutre"}`}
+        onClick={() => onChange({ teamStatColors: { ...value.teamStatColors,
+          [key]: !value.teamStatColors?.[key] ? "green" : value.teamStatColors[key] === "green" ? "red" : undefined,
+        } })}>◉</button>
+      </span>
+    </div>
   );
   const palette = scoutingColors(myTeam?.couleurs);
   const highlightSide = value.highlightSide ?? "attaque";
@@ -275,6 +277,7 @@ function ScoutingContent({
               highlightMatchIds: undefined,
               highlightNotes: "",
               teamStats: {},
+              teamStatColors: {},
             })
           }
         >
@@ -332,6 +335,26 @@ function ScoutingContent({
                       : "Statistiques MyBasket"}{" "}
                     · moyennes par match. Les champs restent modifiables.
                   </p>
+                </section>
+              </div>
+              <div className={styles.grid}>
+                <section className={styles.card}>
+                  <h3>Points par match</h3>
+                  <div className={styles.scroll}><table>
+                    <thead><tr><th>Situation</th><th>MJ</th><th>Marqués</th><th>Encaissés</th></tr></thead>
+                    <tbody>{splits.map(row => <tr key={row.label}><th>{row.label}</th><td>{row.games}</td><td>{fmt(row.forPoints)}</td><td>{fmt(row.against)}</td></tr>)}</tbody>
+                  </table></div>
+                </section>
+                <section className={styles.card}>
+                  <h3>Forme du moment</h3>
+                  {recent.length ? <div className={styles.scroll}><table>
+                    <thead><tr><th>Date</th><th>Adversaire</th><th>Lieu</th><th>Score</th><th>Résultat</th></tr></thead>
+                    <tbody>{recent.map((match, index) => <tr key={`${match.id}-${index}`}>
+                      <td>{match.date.split("-").reverse().join("/")}</td><th>{match.opponent}</th><td>{match.venue}</td>
+                      <td>{match.forPoints}–{match.against}</td>
+                      <td><span className={styles.matchOutcome} data-result={match.outcome}>{match.outcome === "V" ? "Victoire" : match.outcome === "D" ? "Défaite" : "Nul"}</span></td>
+                    </tr>)}</tbody>
+                  </table></div> : <p>Aucun résultat daté disponible.</p>}
                 </section>
               </div>
               <section className={styles.card}>
@@ -489,6 +512,12 @@ function ScoutingContent({
                   : "Aucune statistique joueur à importer depuis les matchs scoutés."}</p>
                 {importedCount > 0 && <p role="status">Statistiques importées pour {importedCount} joueur(s).</p>}
               </section>
+              <details className={styles.card}>
+                <summary>Bibliothèque d’icônes de profil</summary>
+                <div className={styles.iconGrid}>{scoutingProfiles.map(profile => <figure key={profile}>
+                  <img src={scoutingProfileIcon(profile)!} alt="" loading="lazy" /><figcaption>{profile}</figcaption>
+                </figure>)}</div>
+              </details>
               {players.map((player) => {
                 const published = official?.players?.find(
                   (row: DataRow) => row.playerId === player.id,
@@ -499,14 +528,11 @@ function ScoutingContent({
                 const card = cards.find((c) => c.playerId === p.id);
                 const officialStats = officialPlayerStats(published);
                 const stats = card?.liveStats ?? officialStats ?? liveStats.get(p.id);
+                const activeSlot = profilePicker && profilePicker.id === p.id ? profilePicker.slot : null;
                 const columns = compactPlayerMetrics.map(title => [title, stats?.[title] ?? null] as const);
                 return (
-                  <article className={styles.card} key={p.id}>
-                    <label>
-                      <input type="checkbox" style={{ width: 16, height: 16 }} checked={printIds.includes(p.id)} onChange={event => onChange({
-                        printPlayerIds: event.target.checked ? [...printIds, p.id] : printIds.filter(id => id !== p.id),
-                      })} /> Inclure {label(p)} dans le PDF
-                    </label>
+                  <article className={`${styles.card} ${styles.playerCard}`} key={p.id}>
+                    <header className={styles.playerHeader}>
                     <div className={styles.identity}>
                       {(card?.photo || p.photo) ? (
                         <img src={card?.photo || p.photo} alt="" />
@@ -526,8 +552,14 @@ function ScoutingContent({
                         </p>
                       </div>
                     </div>
-                    <div className={styles.stats}>
-                      <label>Photo dans le scouting
+                    <label className={styles.pdfToggle}>
+                      <input type="checkbox" aria-label={`Inclure ${label(p)} dans le PDF`} style={{ width: 16, height: 16 }} checked={printIds.includes(p.id)} onChange={event => onChange({
+                        printPlayerIds: event.target.checked ? [...printIds, p.id] : printIds.filter(id => id !== p.id),
+                      })} /> <span>Inclure dans le PDF</span>
+                    </label>
+                    </header>
+                    <div className={styles.playerFields}>
+                      <div className={styles.photoField}><label className={styles.photoButton}>Modifier la photo
                         <input type="file" accept="image/*" onChange={async event => {
                           const input = event.currentTarget;
                           const file = input.files?.[0];
@@ -540,9 +572,10 @@ function ScoutingContent({
                             setPhotoError(p.id);
                           }
                         }} />
+                      </label>
                         {photoError === p.id && <small role="alert">Impossible de lire cette image.</small>}
                         {card?.photo && <button type="button" onClick={() => patchCard(p.id, { photo: undefined })}>Retirer la photo ajoutée</button>}
-                      </label>
+                      </div>
                       <label>Taille (cm)
                         <input type="number" min={90} max={260} value={card?.taille ?? p.taille ?? ""} onChange={event => patchCard(p.id, { taille: event.target.value })} />
                       </label>
@@ -580,31 +613,33 @@ function ScoutingContent({
                       </table>
                     </div>
                     <div className={styles.grid}>
-                      <label>
-                        Profil
-                        <select
-                          value={card?.profile || ""}
-                          onChange={(e) =>
-                            patchCard(p.id, { profile: e.target.value })
-                          }
-                        >
-                          <option value="">Choisir le profil</option>
-                          {PROFILES.map((profile) => (
-                            <option key={profile}>{profile}</option>
-                          ))}
-                        </select>
-                        <select
-                          aria-label="Second profil"
-                          value={card?.profile2 || ""}
-                          onChange={(e) =>
-                            patchCard(p.id, { profile2: e.target.value })
-                          }
-                        >
-                          <option value="">Second profil (facultatif)</option>
-                          {PROFILES.map((profile) => (
-                            <option key={profile}>{profile}</option>
-                          ))}
-                        </select>
+                      <div className={styles.profilePanel}>
+                        <strong>Profils du joueur</strong>
+                        <div className={styles.profileSlots}>
+                          {(["profile", "profile2"] as const).map((slot, index) => {
+                            const profile = scoutingProfileLabel(card?.[slot]);
+                            const icon = scoutingProfileIcon(profile);
+                            const opened = activeSlot === slot;
+                            return <button key={slot} type="button" aria-expanded={opened}
+                              onClick={() => setProfilePicker(opened ? null : { id: p.id, slot })}>
+                              {icon && <img src={icon} alt="" />}
+                              {profile || (index === 0 ? "Choisir le profil" : "Ajouter un second profil")}
+                            </button>;
+                          })}
+                        </div>
+                        {activeSlot && <fieldset className={styles.profileLibrary}>
+                          <legend>{activeSlot === "profile" ? "Icônes · profil principal" : "Icônes · second profil"}</legend>
+                          <div className={styles.iconGrid}>
+                            {scoutingProfiles.map(profile => <button key={profile} type="button"
+                              aria-pressed={scoutingProfileLabel(card?.[activeSlot]) === profile}
+                              disabled={scoutingProfileLabel(card?.[activeSlot === "profile" ? "profile2" : "profile"]) === profile}
+                              onClick={() => { patchCard(p.id, { [activeSlot]: profile }); setProfilePicker(null); }}>
+                              <img src={scoutingProfileIcon(profile)!} alt="" loading="lazy" /><span>{profile}</span>
+                            </button>)}
+                          </div>
+                          <button type="button" onClick={() => { patchCard(p.id, { [activeSlot]: "" }); setProfilePicker(null); }}>Retirer ce profil</button>
+                        </fieldset>}
+                        <label>Observations
                         <textarea
                           value={card?.notes || ""}
                           onChange={(e) =>
@@ -612,7 +647,8 @@ function ScoutingContent({
                           }
                           placeholder="Qualités, habitudes et tendances…"
                         />
-                      </label>
+                        </label>
+                      </div>
                       <label>
                         Comment le défendre
                         <textarea
