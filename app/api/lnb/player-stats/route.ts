@@ -25,6 +25,7 @@ export async function POST(request: Request) {
     const sourceUrl = connections.data?.find(row => /^https:\/\/(www\.)?lnb\.fr\//i.test(row.source_url))?.source_url;
     if (!sourceUrl) throw new Error("Connecte d’abord cette équipe à la LNB.");
     const official = await readLnbPlayerStats(sourceUrl);
+    if (!official.players.length) throw new Error("La LNB n’a renvoyé aucun joueur pour cette équipe et cette saison.");
     const owned = await sb.from("players").select("id,team_id,first_name,last_name,birth_date,number,photo_url,position_primary,height,age,metadata").eq("user_id", user.id);
     if (owned.error) throw owned.error;
     if (action === "complete") {
@@ -80,7 +81,7 @@ export async function POST(request: Request) {
     }
     const latest = await sb.from("teams").select("metadata").eq("id", teamId).eq("user_id", user.id).single();
     if (latest.error) throw latest.error;
-    const update = await sb.from("teams").update({ metadata: { ...latest.data.metadata, lnbPlayerLinks: { ...latest.data.metadata?.lnbPlayerLinks, ...savedLinks } } }).eq("id", teamId).eq("user_id", user.id).select("id");
+    const update = await sb.from("teams").update({ metadata: { ...latest.data.metadata, lnbPlayerLinks: { ...latest.data.metadata?.lnbPlayerLinks, ...savedLinks }, lnbScoutSeason: official } }).eq("id", teamId).eq("user_id", user.id).select("id");
     if (update.error || !update.data?.length) throw new Error(update.error?.message || "Liaisons non enregistrées.");
     return Response.json({ created, reused });
   } catch (error) { return Response.json({ error: error instanceof Error ? error.message : "Création impossible. Les fiches déjà créées sont conservées ; tu peux relancer." }, { status: 400 }); }
@@ -93,6 +94,7 @@ export async function GET(request: Request) {
     const params = new URL(request.url).searchParams;
     const teamId = params.get("teamId");
     let sourceUrl = params.get("sourceUrl") || "";
+    let savedSeason: Awaited<ReturnType<typeof readLnbPlayerStats>> | undefined;
     let localPlayers: any[] = [], links = {}, canEdit = false, isScout = false, matches: any[] = [];
     if (teamId) {
       const team = await sb.from("teams").select("id,user_id,metadata,team_type").eq("id", teamId).single();
@@ -112,11 +114,18 @@ export async function GET(request: Request) {
       localPlayers = (players.data || []).filter(p => p.team_id === teamId || p.metadata?.additionalTeamIds?.includes(teamId));
       links = team.data.metadata?.lnbPlayerLinks || {};
       canEdit = team.data.user_id === user.id;
+      if (team.data.metadata?.lnbScoutSeason?.sourceUrl === sourceUrl && Array.isArray(team.data.metadata.lnbScoutSeason.players)) {
+        savedSeason = team.data.metadata.lnbScoutSeason;
+      }
       isScout = team.data.team_type === "scout" || team.data.metadata?.isScoutTeam === true || team.data.metadata?.scout === true;
     }
     const personId = params.get("personId") ? Number(params.get("personId")) : undefined;
     if (personId !== undefined && (!Number.isSafeInteger(personId) || personId <= 0)) throw new Error("Joueur LNB invalide.");
-    const stats = await readLnbPlayerStats(sourceUrl, personId, params.get("refresh") === "1");
+    const refresh = params.get("refresh") === "1";
+    const stats = await readLnbPlayerStats(sourceUrl, personId, refresh).catch(error => {
+      if (savedSeason && personId === undefined && !refresh) return savedSeason;
+      throw error;
+    });
     return Response.json({ ...stats, connected: true, canEdit, isScout, matches, localPlayers: localPlayers.map(p => ({ id: p.id, name: `${p.first_name || p.metadata?.firstName || ""} ${p.last_name || p.metadata?.lastName || ""}`.trim() })), players: stats.players.map((row: any) => ({ ...row, playerId: resolveLnbPlayer(row.person, localPlayers, links) })) });
   } catch (error) {
     return Response.json({ error: error instanceof Error ? error.message : "Statistiques LNB indisponibles." }, { status: 502 });

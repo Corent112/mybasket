@@ -6021,8 +6021,8 @@ export default function PriseStatsProPage() {
                     <span>👁️</span><b>Scouting adverse</b><small>Observer une équipe pour préparer un futur match.</small>
                   </button>
                 </div>
-                {analysisScope === 'scout' && scoutTeams.length === 0 && (
-                  <div className="cm-scout-empty">Aucune équipe scoutée. <button type="button" onClick={quickCreateScoutTeam}>＋ Créer ici</button><button type="button" onClick={() => { window.location.href='/mon-compte?tab=equipes&teamType=scout'; }}>Gérer les équipes scoutées</button></div>
+                {analysisScope === 'scout' && (
+                  <div className="cm-scout-empty">{!scoutTeams.length && <>Aucune équipe scoutée. <button type="button" onClick={quickCreateScoutTeam}>＋ Créer ici</button></>}<button type="button" onClick={() => { window.location.href='/mon-compte?tab=equipes&createScout=1'; }}>＋ Importer une équipe LNB</button><button type="button" onClick={() => { window.location.href='/mon-compte?tab=equipes&teamType=scout'; }}>Gérer les équipes scoutées</button></div>
                 )}
               </section>
 

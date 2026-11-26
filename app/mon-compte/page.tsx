@@ -1448,7 +1448,7 @@ return (
               </div>
 
               {teamsView === "scout" ? (
-                <ScoutTeamsManager teams={teams} onReload={reloadTeams} />
+                <ScoutTeamsManager teams={teams} onReload={reloadTeams} initialCreate={searchParams.get("createScout") === "1"} />
               ) : teamsView === "partners" ? (
                 <div className="mc-teamgrid">
                   {displayedPartnerTeams.map((item:any) => (

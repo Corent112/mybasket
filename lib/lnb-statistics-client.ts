@@ -14,9 +14,65 @@ export async function loadLnbTeamStatistics(teamId: string, refresh = false): Pr
   return request;
 }
 export function notifyLnbUpdated(teamId: string) { window.dispatchEvent(new CustomEvent("mybasket:lnb-updated", { detail: teamId })); }
+const AUTO_REFRESH_MS = 5 * 60 * 1000;
+
 export function useLnbTeamStatistics(teamId: string, enabled: boolean, revision = 0) {
-  const [data, setData] = useState<any>(null), [loading, setLoading] = useState(false), [error, setError] = useState(""), [updates, setUpdates] = useState(0);
-  useEffect(() => { const handler = (event: Event) => { if ((event as CustomEvent).detail === teamId) setUpdates(v => v + 1); }; window.addEventListener("mybasket:lnb-updated", handler); return () => window.removeEventListener("mybasket:lnb-updated", handler); }, [teamId]);
-  useEffect(() => { let active = true; setData(null); setError(""); if (!enabled || !teamId) { setLoading(false); return; } setLoading(true); loadLnbTeamStatistics(teamId, updates > 0).then(result => { if (active) setData(result); }).catch(e => { if (active) setError(e.message); }).finally(() => { if (active) setLoading(false); }); return () => { active = false; }; }, [teamId, enabled, revision, updates]);
-  return { data, loading, error };
+  const [result, setResult] = useState<{ teamId: string; data: any } | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    if (!enabled || !teamId) {
+      setResult(null);
+      setLoading(false);
+      setError("");
+      return;
+    }
+
+    let active = true;
+    let requestId = 0;
+    let lastAttempt = 0;
+    async function read(force = false, showLoading = false) {
+      const id = ++requestId;
+      lastAttempt = Date.now();
+      if (showLoading) setLoading(true);
+      try {
+        const data = await loadLnbTeamStatistics(teamId, force);
+        if (active && id === requestId) {
+          setResult({ teamId, data });
+          setError("");
+        }
+      } catch (failure) {
+        if (active && id === requestId) {
+          setError(failure instanceof Error ? failure.message : "Statistiques LNB indisponibles.");
+        }
+      } finally {
+        if (active && id === requestId) setLoading(false);
+      }
+    }
+
+    function refreshWhenVisible() {
+      if (!document.hidden && Date.now() - lastAttempt >= AUTO_REFRESH_MS) void read();
+    }
+
+    function refreshOnRequest(event: Event) {
+      if ((event as CustomEvent).detail === teamId) void read(true, true);
+    }
+
+    setError("");
+    void read(false, true);
+    const timer = window.setInterval(refreshWhenVisible, AUTO_REFRESH_MS);
+    window.addEventListener("focus", refreshWhenVisible);
+    document.addEventListener("visibilitychange", refreshWhenVisible);
+    window.addEventListener("mybasket:lnb-updated", refreshOnRequest);
+    return () => {
+      active = false;
+      window.clearInterval(timer);
+      window.removeEventListener("focus", refreshWhenVisible);
+      document.removeEventListener("visibilitychange", refreshWhenVisible);
+      window.removeEventListener("mybasket:lnb-updated", refreshOnRequest);
+    };
+  }, [teamId, enabled, revision]);
+
+  return { data: enabled && result?.teamId === teamId ? result.data : null, loading, error };
 }

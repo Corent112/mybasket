@@ -14,6 +14,7 @@ import {
   type DataRow,
 } from "@/lib/analytics/matches";
 import { lnbFieldMap, fillLnbIdentity } from "@/lib/lnb-statistics-model";
+import { useLnbTeamStatistics } from "@/lib/lnb-statistics-client";
 import styles from "./GamePlanScoutingBoard.module.css";
 
 type P = {
@@ -41,6 +42,7 @@ export type ScoutCard = {
   profile2?: string;
   notes: string;
   defend?: string;
+  liveStats?: Record<string, number | null>;
 };
 export type ScoutStat = { id: string; metric: string; limit: number };
 export type ScoutBoardValue = {
@@ -125,12 +127,14 @@ function ScoutingContent({
   onAddSystem,
 }: ScoutingProps) {
   const team = scoutTeams.find((t) => t.id === value.scoutTeamId);
+  const [importedCount, setImportedCount] = useState(0);
   const [tab, setTab] = useState<"team" | "players" | "plays">("team");
   const [data, setData] = useState<{ matches: DataRow[]; rows: DataRow[] }>({
     matches: [],
     rows: [],
   });
-  const [official, setOfficial] = useState<DataRow | null>(null);
+  const { data: official, loading: officialLoading, error: officialError } =
+    useLnbTeamStatistics(team?.id || "", team?.competitionSource === "lnb");
   const [fixtures, setFixtures] = useState<DataRow[]>([]);
   const [loading, setLoading] = useState(Boolean(team));
   const [errors, setErrors] = useState<string[]>([]);
@@ -138,7 +142,6 @@ function ScoutingContent({
   const cards = value.playerCards || [];
   useEffect(() => {
     let live = true;
-    const controller = new AbortController();
     if (!team) return;
     const db = createClient();
     const coded = loadMatchAnalysis(db, team.id)
@@ -163,30 +166,11 @@ function ScoutingContent({
             "Les résultats officiels ne sont pas disponibles.",
           ]);
       });
-    const lnb =
-      team.competitionSource === "lnb"
-        ? fetch(`/api/lnb/player-stats?teamId=${encodeURIComponent(team.id)}`, {
-            signal: controller.signal,
-          })
-            .then(async (r) => {
-              const data = await r.json();
-              if (!r.ok) throw Error();
-              if (live && data.connected) setOfficial(data);
-            })
-            .catch(() => {
-              if (live)
-                setErrors((e) => [
-                  ...e,
-                  "Les statistiques LNB ne sont pas disponibles.",
-                ]);
-            })
-        : Promise.resolve();
-    Promise.allSettled([coded, synced, lnb]).finally(() => {
+    Promise.allSettled([coded, synced]).finally(() => {
       if (live) setLoading(false);
     });
     return () => {
       live = false;
-      controller.abort();
     };
   }, [team]);
   const recordSource: DataRow[] = fixtures.length
@@ -245,10 +229,59 @@ function ScoutingContent({
     ast: ratio(sourceBox.ast, teamGames),
     to: ratio(sourceBox.turnovers, teamGames),
   };
-  const appearances = useMemo(
-    () => participation(data.rows, new Map(data.matches.map((m) => [m.id, m]))),
-    [data],
-  );
+  const liveStats = useMemo(() => {
+    const matches = new Map(data.matches.map(match => [String(match.id), match]));
+    const grouped = new Map<string, Map<string, DataRow>>();
+    for (const row of data.rows) {
+      const matchId = String(row.match_id);
+      if (!matches.has(matchId) || !row.player_id || row.present === false) continue;
+      const id = String(row.player_id);
+      const rows = grouped.get(id) ?? new Map<string, DataRow>();
+      rows.set(matchId, row);
+      grouped.set(id, rows);
+    }
+    const stats = new Map<string, Record<string, number | null>>();
+    for (const [id, playerRows] of grouped) {
+      const rows = [...playerRows.values()];
+      const played = participation(rows, matches)[id];
+      const box = boxOf(rows);
+      const avg = (key: string) => ratio(sumKnown(rows, key), played.games);
+      const evaluation = rows.map(row => {
+        const recorded = numeric(row.eval);
+        if (recorded != null) return { value: recorded };
+        const fields = ["pts", "reb", "ast", "stl", "blk", "p2a", "p2m", "p3a", "p3m", "fta", "ftm", "turnovers", "pf"];
+        const values = fields.map(key => numeric(row[key]));
+        if (!values.every((v): v is number => v != null)) return { value: null };
+        const [pts, reb, ast, stl, blk, p2a, p2m, p3a, p3m, fta, ftm, turnovers, pf] = values;
+        return { value: pts + reb + ast + stl + blk - Math.max(0, p2a - p2m)
+          - Math.max(0, p3a - p3m) - Math.max(0, fta - ftm) - turnovers - pf };
+      });
+      stats.set(id, {
+        MJ: played.games,
+        MIN: ratio(played.seconds / 60, played.minutesKnown),
+        PTS: avg("pts"), "2R": avg("p2m"), "2T": avg("p2a"), "2 %": ratio(box.p2m, box.p2a, 100),
+        "3R": avg("p3m"), "3T": avg("p3a"), "3 %": ratio(box.p3m, box.p3a, 100),
+        LFR: avg("ftm"), LFT: avg("fta"), "LF %": ratio(box.ftm, box.fta, 100),
+        RO: avg("off_reb"), RD: avg("def_reb"), PD: avg("ast"), BP: avg("turnovers"),
+        REB: avg("reb"), INT: avg("stl"), CTR: avg("blk"), F: avg("pf"), FP: avg("fpf"),
+        "ÉVAL": ratio(sumKnown(evaluation, "value"), played.games),
+      });
+    }
+    return stats;
+  }, [data]);
+  const importCount = players.filter(player => liveStats.has(player.id)).length;
+
+  function importLiveStats() {
+    const next = new Map(cards.map(card => [card.playerId, card]));
+    for (const { id } of players) {
+      const stats = liveStats.get(id);
+      if (!stats) continue;
+      next.set(id, { playerId: id, profile: "", notes: "", ...next.get(id), liveStats: stats });
+    }
+    onChange({ playerCards: [...next.values()] });
+    setImportedCount(importCount);
+  }
+
   function patchCard(id: string, patch: Partial<ScoutCard>) {
     const existing = cards.find((c) => c.playerId === id);
     onChange({
@@ -331,10 +364,10 @@ function ScoutingContent({
           </button>
         ))}
       </nav>
-      {loading && <p role="status">Préremplissage depuis les données liées…</p>}
-      {!!errors.length && (
+      {(loading || officialLoading) && <p role="status">Préremplissage depuis les données liées…</p>}
+      {(errors.length > 0 || officialError) && (
         <p role="status" className={styles.note}>
-          {errors.join(" ")}
+          {[...errors, officialError].filter(Boolean).join(" ")}
         </p>
       )}
       {!team ? (
@@ -527,6 +560,15 @@ function ScoutingContent({
           )}
           {tab === "players" && (
             <div className={styles.players}>
+              <section className={styles.card}>
+                <button type="button" disabled={loading || !importCount} onClick={importLiveStats}>
+                  Importer les stats LiveStats
+                </button>
+                <p role="status">{loading ? "Chargement des matchs scoutés…" : importCount
+                  ? `${importCount} joueur(s) avec des statistiques sur les matchs scoutés terminés.`
+                  : "Aucune statistique joueur à importer depuis les matchs scoutés."}</p>
+                {importedCount > 0 && <p role="status">Statistiques importées pour {importedCount} joueur(s).</p>}
+              </section>
               {players.map((player) => {
                 const published = official?.players?.find(
                   (row: DataRow) => row.playerId === player.id,
@@ -534,87 +576,20 @@ function ScoutingContent({
                 const p = published
                   ? fillLnbIdentity(player, published)
                   : player;
-                const localRows = data.rows.filter(
-                  (r) => r.player_id === player.id && r.present !== false,
-                );
-                const b = boxOf(localRows);
-                const participationRow = appearances[player.id];
-                const games = published
-                  ? numeric(published.s_games)
-                  : participationRow?.games || null;
-                const avg = (key: string) =>
-                  published
-                    ? numeric(published[lnbFieldMap[key] || key])
-                    : ratio(
-                        sumKnown(
-                          localRows,
-                          (
-                            {
-                              offReb: "off_reb",
-                              defReb: "def_reb",
-                              to: "turnovers",
-                            } as Record<string, string>
-                          )[key] || key,
-                        ),
-                        games,
-                      );
                 const card = cards.find((c) => c.playerId === p.id);
-                const columns = [
-                  ["MJ", games],
-                  [
-                    "MIN",
-                    published
-                      ? numeric(published.s_minutes_average)
-                      : participationRow?.minutesKnown
-                        ? participationRow.seconds /
-                          60 /
-                          participationRow.minutesKnown
-                        : null,
-                  ],
-                  ["PTS", avg("pts")],
-                  ["2R", avg("p2m")],
-                  ["2T", avg("p2a")],
-                  [
-                    "2 %",
-                    published
-                      ? numeric(published.s_two_pointers_percentage)
-                      : ratio(b.p2m, b.p2a, 100),
-                  ],
-                  ["3R", avg("p3m")],
-                  ["3T", avg("p3a")],
-                  [
-                    "3 %",
-                    published
-                      ? numeric(published.s_three_pointers_percentage)
-                      : ratio(b.p3m, b.p3a, 100),
-                  ],
-                  ["LFR", avg("ftm")],
-                  ["LFT", avg("fta")],
-                  [
-                    "LF %",
-                    published
-                      ? numeric(published.s_free_throws_percentage)
-                      : ratio(b.ftm, b.fta, 100),
-                  ],
-                  ["RO", avg("offReb")],
-                  ["RD", avg("defReb")],
-                  ["PD", avg("ast")],
-                  ["BP", avg("to")],
-                  ["REB", avg("reb")],
-                  ["INT", avg("stl")],
-                  ["CTR", avg("blk")],
-                  ["F", avg("pf")],
-                  [
-                    "FP",
-                    published
-                      ? numeric(published.s_fouls_on_average)
-                      : avg("fpf"),
-                  ],
-                  [
-                    "ÉVAL",
-                    published ? numeric(published.s_efficiency_average) : null,
-                  ],
-                ];
+                const officialStats = published && numeric(published.s_games) != null ? {
+                  MJ: numeric(published.s_games), MIN: numeric(published.s_minutes_average),
+                  PTS: numeric(published[lnbFieldMap.pts]),
+                  "2R": numeric(published[lnbFieldMap.p2m]), "2T": numeric(published[lnbFieldMap.p2a]), "2 %": numeric(published.s_two_pointers_percentage),
+                  "3R": numeric(published[lnbFieldMap.p3m]), "3T": numeric(published[lnbFieldMap.p3a]), "3 %": numeric(published.s_three_pointers_percentage),
+                  LFR: numeric(published[lnbFieldMap.ftm]), LFT: numeric(published[lnbFieldMap.fta]), "LF %": numeric(published.s_free_throws_percentage),
+                  RO: numeric(published[lnbFieldMap.offReb]), RD: numeric(published[lnbFieldMap.defReb]), PD: numeric(published[lnbFieldMap.ast]), BP: numeric(published[lnbFieldMap.to]),
+                  REB: numeric(published[lnbFieldMap.reb]), INT: numeric(published[lnbFieldMap.stl]), CTR: numeric(published[lnbFieldMap.blk]),
+                  F: numeric(published[lnbFieldMap.pf]), FP: numeric(published.s_fouls_on_average), "ÉVAL": numeric(published.s_efficiency_average),
+                } : null;
+                const stats = card?.liveStats ?? officialStats ?? liveStats.get(p.id);
+                const columns = ["MJ", "MIN", "PTS", "2R", "2T", "2 %", "3R", "3T", "3 %", "LFR", "LFT", "LF %", "RO", "RD", "PD", "BP", "REB", "INT", "CTR", "F", "FP", "ÉVAL"]
+                  .map(title => [title, stats?.[title as keyof typeof stats] ?? null] as const);
                 return (
                   <article className={styles.card} key={p.id}>
                     <div className={styles.identity}>
@@ -636,6 +611,7 @@ function ScoutingContent({
                         </p>
                       </div>
                     </div>
+                    {stats && <p className={styles.note}>{card?.liveStats ? "LiveStats · stats importées" : officialStats ? "LNB · saison" : "LiveStats · matchs scoutés"}</p>}
                     <div className={styles.scroll}>
                       <table>
                         <thead>
