@@ -21,6 +21,7 @@ Module._load = function(name,parent,main) {
     modelInput=options.messages;
     return (async function*(){yield {choices:[{delta:{content:'Réponse Groq [W1]'}}]}})();
   }}}})};
+  if(name==='@/lib/ai/coach-pilot-quota')return {getCoachPilotRestriction:async()=>process.env.TEST_COACH_QUOTA || null};
   if(name==='@/lib/ai/coach-local')return {getLocalCoach:()=>({model:'gpt-oss:20b',client:{chat:{completions:{create:async options=>{
     assert.equal(options.model,'gpt-oss:20b');
     assert.equal(options.max_tokens,1500);
@@ -139,6 +140,13 @@ const errorLog=console.error;console.error=()=>{};
   assert(localStream.includes('Réponse MyBasket locale') && localStream.includes('event: done'));
   assert(modelInput.at(-1).content.includes('Défense Blitz.txt'));
   assert.equal(calls,beforeFree,'Self-hosted mode does not call OpenAI');
+  process.env.TEST_COACH_QUOTA='Quota quotidien atteint.';
+  const beforeLimit=publicQueries.length;
+  const limited=await chat.POST(req('Définis une possession avec des sources',true));
+  const limitedStream=await limited.text();
+  assert(limitedStream.includes('Contrôle du ballon.') && limitedStream.includes('Quota quotidien atteint.'));
+  assert(limitedStream.includes('event: done'));
+  assert.equal(publicQueries.length,beforeLimit,'Blocked pilot never uses a search request');
   console.error=errorLog;Module._load=original;
   console.log('Chat initialization passed: missing schema versus empty knowledge base, no provider call before readiness, clear errors without database/provider leakage, authenticated SSE success. No real AI call.');
 })().catch(e=>{console.error=errorLog;Module._load=original;console.error(e);process.exitCode=1});

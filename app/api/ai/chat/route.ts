@@ -19,6 +19,7 @@ import { getOpenAI } from "@/lib/ai/openai";
 import { getGroqCoach, GROQ_COACH_MODEL } from "@/lib/ai/coach-groq";
 import { searchCoachWeb } from "@/lib/ai/coach-brave";
 import { getLocalCoach } from "@/lib/ai/coach-local";
+import { getCoachPilotRestriction } from "@/lib/ai/coach-pilot-quota";
 import { asksForWebResearch, publicBasketballQuestion, publicSourceLinks, researchBasketballWeb, researchCachePolicy, shouldResearchCoachingQuestion, WEB_RESEARCH_MODEL } from "@/lib/ai/basketball-web-research";
 import {
   apiError,
@@ -126,8 +127,15 @@ export async function POST(request: Request) {
   if (!message) return apiError("Le message est vide.");
 
   // The documentary assistant works without a model or embedding API.
-  const client = externalCoach ? compatibleClient : body.workspace === true || process.env.MYBASKET_COACH_MODE === "generative" ? getOpenAI() : null;
-  const model = compatibleClient ? (local?.model ?? GROQ_COACH_MODEL) : client ? (body.workspace === true ? WEB_RESEARCH_MODEL : AI_CHAT_MODEL) : "mybasket-documents";
+  const pilotRestriction = externalCoach
+    ? compatibleClient
+      ? await getCoachPilotRestriction(actor.userId)
+      : "Le moteur de réponse IA est en cours d’activation. MyBasket peut consulter le lexique et les documents disponibles."
+    : null;
+  const client = externalCoach
+    ? pilotRestriction ? null : compatibleClient
+    : body.workspace === true || process.env.MYBASKET_COACH_MODE === "generative" ? getOpenAI() : null;
+  const model = client ? (externalCoach ? local?.model ?? GROQ_COACH_MODEL : body.workspace === true ? WEB_RESEARCH_MODEL : AI_CHAT_MODEL) : "mybasket-documents";
 
   const moduleKey = str(body.module, 60) || "coach-chat";
   const writer = getWriterClient(actor.supabase);
@@ -377,7 +385,7 @@ export async function POST(request: Request) {
           const greeting = /^(?:bonjour|salut|hello|merci|ok)[.! ]*$/iu.test(message);
           const requiresWeb = !greeting && (explicitWeb || !evidenceAvailable || (workspace && shouldResearchCoachingQuestion(searchQuestion)));
           const braveKey = externalCoach ? process.env.BRAVE_SEARCH_API_KEY : undefined;
-          if (compatibleClient && braveKey && webQuestion && requiresWeb) {
+          if (client && compatibleClient && braveKey && webQuestion && requiresWeb) {
             try { webBrief = await searchCoachWeb(webQuestion, braveKey); }
             catch { console.warn("[AI][chat] recherche Brave indisponible"); }
           }
@@ -427,6 +435,7 @@ export async function POST(request: Request) {
             } else {
               answer = "Je n’ai pas trouvé de définition ni de passage correspondant dans les ressources MyBasket. Précise le terme, la compétition ou le contexte basket de ta question.";
             }
+            if (pilotRestriction) answer += "\n\n" + pilotRestriction;
             push("delta", { text: answer });
           } else {
             if (quotaUnavailable) throw Object.assign(new Error("Crédits IA épuisés"), { code: "insufficient_quota" });
