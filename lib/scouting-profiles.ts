@@ -1,14 +1,15 @@
 const icons: Record<string, string> = {
-  Shooteur: "shooter", Driver: "slasher", Créateur: "creator",
+  Shooteur: "precision", Driver: "slasher", Créateur: "creator",
   "Joueur de pick and roll": "pick-roll", Physique: "physical", Rebondeur: "rebounder",
   "Post-up": "post-up", Défenseur: "defender", Slasher: "slasher", Scoreur: "scorer",
-  Energizer: "energizer", "Floor General": "floor-general", Précision: "precision",
+  Energizer: "energizer", "Floor General": "floor-general",
   Polyvalent: "versatile",
 };
 
 export const scoutingProfiles = Object.keys(icons);
 
 export function scoutingProfileLabel(profile?: string) {
+  if (profile === "Précision") return "Shooteur";
   return profile === "P&R Handler" ? "Joueur de pick and roll" : profile;
 }
 
