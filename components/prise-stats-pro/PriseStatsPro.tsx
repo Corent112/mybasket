@@ -14,6 +14,7 @@
  *  - box-score consultable + analyses (temps forts/joueur, lineups, stops, possessions)
  */
 
+import ClearVideoPlayer from "@/components/prise-stats-pro/ClearVideoPlayer";
 import { isPickCoverage, matchCompetitionType, orderOffensiveSystems } from "@/lib/live-system-layout";
 import { createPortal } from "react-dom";
 import { type MouseEvent, useEffect, useRef, useState } from 'react';
@@ -5794,7 +5795,7 @@ export default function PriseStatsProPage() {
             <section className={`lc lc-video liveControlPane ${workTab === 'center' ? 'mshow' : ''}`}>
               {showVideoPanel && <div className="videoSlot big">
                 {(videoProvider === 'local' || videoProvider === 'google_drive') && videoUrl ? (
-                  <video ref={videoRef} className="vplayer" src={videoUrl} controls preload="auto" onWheel={handleTrackpadScrub} title="Trackpad : glisse horizontalement pour avancer/reculer avec précision" onLoadedMetadata={(e) => {
+                  <ClearVideoPlayer key={videoUrl} videoRef={videoRef} src={videoUrl} playbackRate={playbackRate} onWheel={handleTrackpadScrub} title="Trackpad : glisse horizontalement pour avancer/reculer avec précision" onLoadedMetadata={(e) => {
                     const savedTime = inspectionVideoTimeRef.current ?? lastProjectVideoTimeRef.current;
                     if (savedTime == null) return;
                     try {
