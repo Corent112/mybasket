@@ -18,6 +18,7 @@ function formatTime(value: number) {
  * Keep playback controls outside the picture, including while paused. */
 export default function ClearVideoPlayer({ videoRef, playbackRate, onLoadedMetadata, ...props }: Props) {
   const container = useRef<HTMLDivElement>(null);
+  const lastAudibleVolume = useRef(1);
   const [time, setTime] = useState(0);
   const [duration, setDuration] = useState(0);
   const [playing, setPlaying] = useState(false);
@@ -30,6 +31,17 @@ export default function ClearVideoPlayer({ videoRef, playbackRate, onLoadedMetad
     if (video.paused) void video.play().catch(() => {});
     else video.pause();
   }
+  function toggleSound() {
+    const video = videoRef.current;
+    if (!video) return;
+    if (video.muted || video.volume === 0) {
+      if (video.volume === 0) video.volume = lastAudibleVolume.current;
+      video.muted = false;
+    } else {
+      video.muted = true;
+    }
+  }
+
   async function fullscreen() {
     if (document.fullscreenElement === container.current) { await document.exitFullscreen().catch(() => {}); return; }
     await container.current?.requestFullscreen?.().catch(() => {});
@@ -48,7 +60,12 @@ export default function ClearVideoPlayer({ videoRef, playbackRate, onLoadedMetad
       onDurationChange={event => setDuration(Number.isFinite(event.currentTarget.duration) ? event.currentTarget.duration : 0)}
       onTimeUpdate={event => setTime(event.currentTarget.currentTime)}
       onPlay={() => setPlaying(true)} onPause={() => setPlaying(false)} onEnded={() => setPlaying(false)}
-      onVolumeChange={event => { setMuted(event.currentTarget.muted); setVolume(event.currentTarget.volume); }}
+      onVolumeChange={event => {
+        const video = event.currentTarget;
+        if (video.volume > 0) lastAudibleVolume.current = video.volume;
+        setMuted(video.muted || video.volume === 0);
+        setVolume(video.volume);
+      }}
     />
     <div className="clear-player-controls" aria-label="Commandes vidéo" onKeyDown={event => event.stopPropagation()}>
       <button type="button" onClick={toggle} aria-label={playing ? "Pause" : "Lecture"} title={playing ? "Pause" : "Lecture"}>{playing ? "Ⅱ" : "▶"}</button>
@@ -57,21 +74,21 @@ export default function ClearVideoPlayer({ videoRef, playbackRate, onLoadedMetad
         onChange={event => { const next = Number(event.target.value); if (videoRef.current) videoRef.current.currentTime = next; setTime(next); }} />
       <span>{formatTime(duration)}</span>
       <button type="button" aria-label={muted ? "Activer le son" : "Couper le son"} title={muted ? "Activer le son" : "Couper le son"}
-        onClick={() => { if (videoRef.current) videoRef.current.muted = !videoRef.current.muted; }}>{muted ? "🔇" : "🔊"}</button>
-      <input className="clear-player-volume" type="range" aria-label="Volume" min={0} max={1} step={0.05} value={muted ? 0 : volume}
+        onClick={toggleSound}>{muted ? "🔇" : "🔊"}</button>
+      <input className="clear-player-volume" type="range" aria-label="Volume de la vidéo" title="Volume de la vidéo" min={0} max={1} step={0.05} value={muted ? 0 : volume}
         onChange={event => { const video = videoRef.current; if (video) { video.volume = Number(event.target.value); video.muted = video.volume === 0; } }} />
       <button type="button" aria-label="Plein écran" title="Plein écran" onClick={() => void fullscreen()}>⛶</button>
     </div>
     <style jsx>{`
-      .clear-player { display:grid; grid-template-rows:minmax(0,1fr) auto; flex:1; width:100%; height:100%; min-height:0; background:#000; overflow:hidden; }
-      .clear-player-picture { display:block; width:100%; height:100%; min-height:0; object-fit:contain; background:#000; opacity:1!important; filter:none!important; mix-blend-mode:normal!important; }
-      .clear-player-controls { display:flex; align-items:center; gap:7px; padding:5px 8px; min-height:32px; background:#171c2a; color:#fff; font-size:11px; font-variant-numeric:tabular-nums; white-space:nowrap; }
+      .clear-player { display:flex; flex-direction:column; flex:1 1 0; width:100%; min-height:0; background:#000; overflow:hidden; }
+      .clear-player-picture { display:block; flex:1 1 0; width:100%; height:0; min-height:0; object-fit:contain; background:#000; opacity:1!important; filter:none!important; mix-blend-mode:normal!important; }
+      .clear-player-controls { display:flex; flex:0 0 auto; align-items:center; gap:7px; padding:5px 8px; min-height:32px; background:#171c2a; color:#fff; font-size:11px; font-variant-numeric:tabular-nums; white-space:nowrap; }
       .clear-player-controls button { flex-shrink:0; min-width:25px; min-height:25px; border:0; border-radius:5px; background:transparent; color:#fff; font-size:14px; cursor:pointer; }
       .clear-player-controls button:hover { background:#333b4d; }
       .clear-player-controls input { flex:1; min-width:20px; width:0; accent-color:#d4a24c; cursor:pointer; }
       .clear-player-controls .clear-player-volume { flex:0 1 52px; }
       .clear-player:fullscreen { width:100vw; height:100vh; }
-      @media(max-width:500px) { .clear-player-controls .clear-player-volume { display:none; } }
+      @media(max-width:500px) { .clear-player-controls { gap:4px; padding-inline:4px; } .clear-player-controls .clear-player-volume { flex-basis:42px; } }
     `}</style>
   </div>;
 }
