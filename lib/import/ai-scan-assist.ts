@@ -1,4 +1,4 @@
-import type { AiExerciseImport, AiExerciseDiagram } from './types';
+import type { AiExerciseImport, AiExerciseDiagram, AiDiagramAction } from './types';
 import { refineDiagramInk } from './guided-ink';
 import { courtToCanonical } from './court-geometry';
 import { changeImportedActionKind } from './action-kind';
@@ -10,25 +10,23 @@ export function reconcileScan(local: AiExerciseImport, ai: AiExerciseImport): Ai
  const base=current[0]||local.referenceFallback;
  // The request currently analyses one court. Never replace a multi-court page.
  if(current.length>1)return supplementScan(local,ai);
- // Preserve the geometry of a complete locally reconstructed digital
- // diagram. Vision can still label unread tokens or suggest an overlooked
- // terminal, but it cannot replace the verified routes at a crossing.
- if(base?.scanAudit?.terminals.some(terminal=>terminal.id.startsWith("digital-"))&&
-    base.actions.length>0&&!unresolvedScanTerminals(base).length){
-  return supplementScan(local,ai);
- }
  const diagram=ai.diagram;
  const labels=diagram?.players.filter(p=>p.label && p.label!=='?' && p.labelConfident!==false)??[];
  const unique=new Set(labels.map(p=>`${p.team}:${p.label}`));
  const keys=new Set(diagram?.players.map(p=>p.key));
  const audited=diagram?.scanAudit?.version==='mybasket-diagram-v1';
- const coherent=diagram?.detected && (!base||diagram.courtType===base.courtType) && (audited || (labels.length>=2 && unique.size===labels.length && labels.length/diagram.players.length>=.75))
+ const coherent=diagram?.detected && (!base||diagram.courtType===base.courtType)
+   && unique.size===labels.length && (audited || (labels.length>=2 && labels.length/diagram.players.length>=.75))
    && keys.size===diagram.players.length
    && diagram.actions.every(a=>(!a.fromPlayer||keys.has(a.fromPlayer))&&(!a.toPlayer||keys.has(a.toPlayer)));
- const weak=audited || !base || !!local.referenceFallback || base.players.length===0
-   || base.players.filter(p=>p.label==='?'||p.labelConfident===false||(p.confidence??1)<.5).length>base.players.length/3;
- if(!weak)return supplementScan(local,ai);
  if(!coherent)return {...local,assistantResult:ai.assistantResult,warnings:[...local.warnings,'La lecture IA reste incertaine : le calque local est conservé pour vérification.']};
+
+ const stableDigital=base?.scanAudit?.terminals.some(terminal=>terminal.id.startsWith("digital-")) &&
+   base.actions.length>0 && !unresolvedScanTerminals(base).length;
+ const weak=!base || !!local.referenceFallback || base.players.length===0 ||
+   base.players.filter(p=>p.label==='?'||p.labelConfident===false||(p.confidence??1)<.5).length>base.players.length/3 ||
+   (!base.actions.length && diagram.actions.length>0);
+ if(stableDigital || !weak)return supplementScan(local,ai);
  // Keep reliable numbered players even if vision misses an isolated/off-court marker.
  const players=diagram.players.map(p=>({...p}));
  for(const p of base?.players??[]){
@@ -49,9 +47,12 @@ export function reconcileScan(local: AiExerciseImport, ai: AiExerciseImport): Ai
   const match=exact.length===1?exact[0]:nearby[0]?.gap<.035&&(!nearby[1]||nearby[1].gap-nearby[0].gap>.018)?nearby[0].v:undefined;
   return [p.key,match?.key];
  }));
- const localActions=(base?.actions??[]).flatMap(action=>{
+ const localActions=(base?.actions??[]).flatMap<AiDiagramAction>(action=>{
   const fromPlayer=mapping.get(action.fromPlayer||'');
-  return fromPlayer?[{...action,fromPlayer,toPlayer:mapping.get(action.toPlayer||'')}]:[];
+  const toPlayer=mapping.get(action.toPlayer||'');
+  if(fromPlayer)return [{...action,fromPlayer,toPlayer}];
+  if(action.geometry==="traced"&&action.points&&action.points.length>2)return [{...action,fromPlayer:undefined,toPlayer,confidence:Math.min(action.confidence??1,.45)}];
+  return [];
  });
  const verified=localActions.filter(action=>
   ((action.source?.startsWith("Pointe ou barre vérifiée")||action.source?.startsWith("Trajectoire et terminaison vérifiées"))&&(action.confidence??0)>=.85)||
@@ -76,8 +77,8 @@ export function reconcileScan(local: AiExerciseImport, ai: AiExerciseImport): Ai
    ...(local.action==="pass"&&!local.toPlayer&&action.action==="pass"?{toPlayer:action.toPlayer}:{})};
  });
  // Keep independently reliable local movements that vision did not recover.
- const retained=localActions.filter(a=>((a.confidence??0)>=.8||verified.includes(a))&&!used.has(a)
-   && !corrected.some(b=>b.action===a.action&&distance(b.to,a.to)<.027&&b.fromPlayer===a.fromPlayer&&(!b.from||!a.from||distance(b.from,a.from)<.045)));
+ const retained=localActions.filter(a=>((a.confidence??0)>=.8||verified.includes(a)||a.geometry==="traced")&&!used.has(a)
+   && !corrected.some(b=>b.action===a.action&&distance(b.to,a.to)<.027&&(b.fromPlayer===a.fromPlayer||!a.fromPlayer&&sameTail(a,b))&&(!b.from||!a.from||distance(b.from,a.from)<.045)));
  const actions=[...corrected,...retained].map((a,index)=>{
   const line={...a,order:index+1};
   if(line.action!=='dribble'||!line.from||audited||line.geometry==='traced')return line;
@@ -122,9 +123,17 @@ export function supplementScan(local:AiExerciseImport,ai:AiExerciseImport):AiExe
    if(duplicate.action!==candidate.action&&!verifiedDigital){duplicate.confidence=Math.min(duplicate.confidence??1,.45);duplicate.source=`${duplicate.source??"Détection"} · type à confirmer`;}
    continue;
   }
-  actions.push({...candidate,fromPlayer,toPlayer,confidence:Math.min(candidate.confidence??.5,fromPlayer ? .7 : .35),source:'Proposition IA à confirmer',order:actions.length+1});added++;
+  actions.push({...candidate,fromPlayer,toPlayer,confidence:Math.min(candidate.confidence??.5,fromPlayer ? .45 : .35),source:'Proposition IA à confirmer',order:actions.length+1});added++;
  }
- const diagram={...base,detected:players.length>0,players,actions};
+ const localTerminals=base.scanAudit?.terminals??[];
+ const visionAudit=ai.diagram.scanAudit;
+ const audit=base.scanAudit??visionAudit;
+ const scanAudit=audit&&visionAudit?{...audit,terminals:[
+  ...localTerminals,
+  ...visionAudit.terminals.filter(terminal=>!localTerminals.some(other=>
+   other.kind===terminal.kind&&distance(other,terminal)<.024)).map(terminal=>({...terminal,id:`vision-${terminal.id}`}))
+ ]}:audit;
+ const diagram={...base,detected:players.length>0||actions.length>0,players,actions,scanAudit};
  return{...local,diagram,diagrams:[diagram],source:'ai',assistantResult:ai.assistantResult,warnings:[...local.warnings,...ai.warnings,`L’IA a proposé ${added} action(s) supplémentaire(s). Vérifie leur départ, leur arrivée et leur ordre avant de valider.`]};
 }
 /** Send precisely the same calibrated photograph as the review canvas, without native court lines. */

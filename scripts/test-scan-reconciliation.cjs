@@ -14,6 +14,16 @@ const duplicate={...ai,diagram:{...ai.diagram,players:[player('1','1',.5,.4),pla
 assert.equal(reconcileScan(local,{...ai,diagram:{...ai.diagram,actions:[{...ai.diagram.actions[0],fromPlayer:'invented'}]}}).diagram,empty,'Broken player links never replace local');
 assert.equal(reconcileScan({...local,diagrams:[ai.diagram,ai.diagram]},ai).diagram,empty,'Multi-court local diagrams preserved');
 const stable={...local,referenceFallback:undefined,diagram:ai.diagram,diagrams:[ai.diagram]};assert.deepEqual(reconcileScan(stable,ai).diagram.actions,ai.diagram.actions,'Reliable geometry not overwritten');
+const stableAudit={version:'mybasket-diagram-v1',terminals:[],passes:2,warnings:[]};
+const shiftedVision={...ai,diagram:{...ai.diagram,scanAudit:stableAudit,players:ai.diagram.players.map(p=>({...p,x:p.x+.015})),actions:ai.diagram.actions.slice(0,2)}};
+const combined=reconcileScan(stable,shiftedVision).diagram;
+assert.deepEqual(combined.players,stable.diagram.players,'Audited Vision does not shift confirmed local players');
+assert.deepEqual(combined.actions,stable.diagram.actions,'Audited Vision does not discard a reliable local action');
+const auditedDuplicates={...duplicate,diagram:{...duplicate.diagram,scanAudit:stableAudit}};
+assert.equal(reconcileScan(local,auditedDuplicates).diagram,empty,'Audit metadata alone cannot validate duplicate player labels');
+const orphan={action:'cut',from:{x:.6,y:.1},to:{x:.8,y:.15},points:[{x:.6,y:.1},{x:.7,y:.1},{x:.8,y:.15}],geometry:'traced',confidence:.45};
+const partlyRead={...local,referenceFallback:{...local.referenceFallback,actions:[orphan]}};
+assert.deepEqual(reconcileScan(partlyRead,ai).diagram.actions.at(-1).points,orphan.points,'A measured orphan stroke remains available in review');
 // A visual pass confirmed by the terminal reader replaces the same AI
 // displacement rather than appearing as a duplicate action.
 const verifiedPass={action:'pass',fromPlayer:'local-1',toPlayer:'local-3',from:{x:.5,y:.4},to:{x:.8,y:.3},confidence:.86,source:'Pointe ou barre vérifiée · encre suivie jusqu’au départ'};
