@@ -28,7 +28,7 @@ type Player = {
   id: string;
   firstName?: string;
   lastName?: string;
-  num?: string | number;
+  num?: string | number | null;
   photo?: string | null;
 };
 
@@ -60,6 +60,7 @@ type CalEvent = {
   time: string;
   type: string;
   title: string;
+  team_id?: string | null;
   session_id?: string | null;
   location?: string | null;
 };
@@ -91,6 +92,7 @@ type CalendarRow = {
   end_time: string | null;
   location: string | null;
   event_type: string | null;
+  team_id?: string | null;
   session_id: string | null;
   attachment_url: string | null;
 };
@@ -122,6 +124,7 @@ function normCalendarEvent(row: CalendarRow): CalEvent {
     type: String(row.event_type ?? "other").toLowerCase(),
     title: String(row.title ?? "Évènement"),
     session_id: row.session_id ?? null,
+    team_id: row.team_id ?? null,
     location: row.location ?? null,
   };
 }
@@ -226,8 +229,8 @@ const initial = (p: Player) => (p.firstName || "?")[0].toUpperCase();
 
 /* ============================ Composant ================================= */
 
-export default function GestionAdminModule() {
-  const supabase = createClient();
+export default function GestionAdminModule({ clubId }: { clubId: string }) {
+  const supabase = useMemo(() => createClient(), []);
 
   const [teams, setTeams] = useState<Team[]>([]);
   const [teamId, setTeamId] = useState<string>("");
@@ -250,15 +253,14 @@ export default function GestionAdminModule() {
       setLoading(true);
 
       try {
-        const loadedTeams = ((await getTeams()) ?? []) as Team[];
+        const loadedTeams = (await getTeams()).filter(team =>
+          !team.isShared && !team.isScoutTeam && (!team.clubId || team.clubId === clubId)
+        );
 
         setTeams(loadedTeams);
 
-        const nextTeamId =
-          preferredTeamId ||
-          teamId ||
-          loadedTeams[0]?.id ||
-          "";
+        const preferred = preferredTeamId || teamId;
+        const nextTeamId = loadedTeams.find(team => team.id === preferred)?.id || loadedTeams[0]?.id || "";
 
         setTeamId(nextTeamId);
 
@@ -310,7 +312,7 @@ export default function GestionAdminModule() {
         setLoading(false);
       }
     },
-    [supabase, teamId, includeUnlinked]
+    [supabase, teamId, includeUnlinked, clubId]
   );
 
   async function loadEventsForTeam(targetTeamId: string, sourceTeams = teams) {
@@ -358,6 +360,7 @@ export default function GestionAdminModule() {
     );
 
     const matched = allEvents.filter((event) => {
+      if (event.team_id) return String(event.team_id) === targetTeamId;
       const linkedBySession = event.session_id && sessionIds.has(String(event.session_id));
       const linkedByLocation =
         !!targetTeam?.name &&
@@ -375,7 +378,7 @@ export default function GestionAdminModule() {
 
   useEffect(() => {
     load();
-  }, []);
+  }, [clubId]);
 
   useEffect(() => {
     if (!teamId) return;
@@ -662,7 +665,7 @@ export default function GestionAdminModule() {
 
       <div className="ga-hint">
         💡 Suivi des cotisations, licences, certificats médicaux, et présences synchronisées avec{" "}
-        <b>Mon Calendrier</b>.
+        <b>Mon Calendrier</b>. <a href="/mon-compte/presences">Faire l’appel</a>
       </div>
 
       {/* ----- Administratif ----- */}

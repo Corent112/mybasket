@@ -2,7 +2,7 @@
 import KnowledgeDiagram from "@/components/assistant/KnowledgeDiagram";
 import type { AuthChangeEvent, Session, User } from "@supabase/supabase-js";
 
-import { useEffect, useRef, useState } from "react";
+import { Fragment, useEffect, useRef, useState } from "react";
 import { usePathname } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import type { AiCitation } from "@/lib/ai/knowledge/types";
@@ -13,6 +13,33 @@ type Message = {
   text: string;
   citations?: AiCitation[];
 };
+function AnswerWithSources({ text, citations }: { text: string; citations?: AiCitation[] }) {
+  const sources = (citations ?? []).flatMap(citation => {
+    if (citation.kind !== "web" || !citation.url || !/^https?:\/\//i.test(citation.url)) return [];
+    return [{ ...citation, url: citation.url }];
+  }).sort((a, b) => (a.endIndex ?? text.length) - (b.endIndex ?? text.length));
+  if (!sources.length || !text) return <p>{text || "Je consulte les ressources…"}</p>;
+  const uniqueSources = [...new Map(sources.map(source => [source.url, source])).values()];
+  const numbers = new Map(uniqueSources.map((source, index) => [source.url, index + 1]));
+  let offset = 0;
+  return <>
+    <p>{sources.map((source, index) => {
+      const end = Math.max(offset, Math.min(source.endIndex ?? text.length, text.length));
+      const part = text.slice(offset, end);
+      offset = end;
+      return <Fragment key={`${source.id}-${index}`}>{part}<a className={styles.citation}
+        href={source.url} target="_blank" rel="noopener noreferrer" title={source.label}
+        aria-label={`Source ${numbers.get(source.url)} · ${source.label}`}>[{numbers.get(source.url)}]</a></Fragment>;
+    })}{text.slice(offset)}</p>
+    <div className={styles.sources}>
+      <strong>Sources web</strong>
+      <ol>{uniqueSources.map(source => <li key={source.url}>
+        <a href={source.url} target="_blank" rel="noopener noreferrer">{source.label}</a>
+      </li>)}</ol>
+    </div>
+  </>;
+}
+
 export default function KnowledgeChat() {
   const path = usePathname();
   const [enabled, setEnabled] = useState(false);
@@ -196,7 +223,7 @@ export default function KnowledgeChat() {
                 key={i}
                 className={m.role === "user" ? styles.user : styles.assistant}
               >
-                <p>{m.text || "Je consulte les ressources…"}</p>
+                <AnswerWithSources text={m.text} citations={m.citations} />
                 <KnowledgeDiagram citations={m.citations} />
               </article>
             ))}

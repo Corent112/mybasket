@@ -141,3 +141,9 @@
     height: min(540px, calc(100dvh - 170px));
   }
 }
+
+.citation{color:#6b1a2c;font-weight:750;margin-inline-start:3px}
+.sources{border-top:1px solid #eadce0;margin-top:12px;padding-top:8px;font-size:12px}
+.sources ol{padding-left:18px;margin:5px 0 0}
+.sources li+li{margin-top:4px}
+.sources a{color:#6b1a2c;overflow-wrap:anywhere}

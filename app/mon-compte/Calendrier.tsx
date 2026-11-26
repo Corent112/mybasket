@@ -513,6 +513,7 @@ export default function MonCalendrier() {
       <div className="cal-head">
         <h2 className="cal-title">{title}</h2>
         <div className="cal-actions">
+          <a href="/mon-compte/presences" className="btn btn-outline btn-small">Faire l’appel</a>
           <button className="btn btn-outline btn-small" onClick={prev}>‹</button>
           <button className="btn btn-outline btn-small" onClick={next}>›</button>
           <button className="btn btn-black btn-small" onClick={() => openCreate(`${year}-${pad(month + 1)}-${pad(today.getDate())}`)}>+ Événement</button>
@@ -736,6 +737,9 @@ export default function MonCalendrier() {
             </div>
 
             <div className="cal-modal-actions">
+              {editingId && events.some(event => event.id === editingId && event.type === "entrainement") && (
+                <a href={`/mon-compte/presences?eventId=${encodeURIComponent(editingId)}`} className="btn btn-outline">Faire l’appel</a>
+              )}
               {editingId && <button type="button" className="cal-del" onClick={deleteEvent}>Supprimer</button>}
               <span className="spacer" />
               <button type="button" className="btn btn-outline" onClick={() => setOpen(false)}>Annuler</button>

@@ -34,7 +34,6 @@ import PlayerForm from '@/components/equipes/PlayerForm';
 import ScoutTeamsManager from '@/components/equipes/ScoutTeamsManager';
 import type { Player, Team } from '@/types/player';
 import GamePlanModule from "@/components/management/GamePlanModule";
-import GestionAdminModule from "@/components/management/GestionAdminModule";
 import VideoMatchFolderModule from "@/components/management/VideoMatchFolderModule";
 
 
@@ -84,6 +83,7 @@ const MENU: MenuItem[] = [
 
   { key: 'abonnement', label: 'Mon Abonnement', icon: '💎' },
   { key: 'calendrier', label: 'Mon Calendrier', icon: '📒' },
+  { key: 'presences', label: 'Faire l’appel', icon: '✅', href: '/mon-compte/presences' },
 
   {
   key: 'exercices',
@@ -166,7 +166,6 @@ export default function MonComptePage() {
   | "historique"
   | "rotation"
   | "gameplan"
-  | "gestion-admin"
 >("rotation");
   const [form, setForm] = useState<Form>(blank());
   const [toast, setToast] = useState('');
@@ -201,7 +200,6 @@ export default function MonComptePage() {
       "historique",
       "rotation",
       "gameplan",
-      "gestion-admin",
     ]);
 
     if (requestedTab && allowedTabs.has(requestedTab)) {
@@ -1864,15 +1862,6 @@ return (
         🧠 Game Plan
       </button>
 
-      {isAdmin && (
-  <button
-    type="button"
-    className={managementView === "gestion-admin" ? "on" : ""}
-    onClick={() => setManagementView("gestion-admin")}
-  >
-    ⚙️ Gestion Admin
-  </button>
-)}
     </div>
 
     <div className="mc-management-content">
@@ -1916,9 +1905,6 @@ return (
   <GamePlanModule />
 )}
 
-{managementView === "gestion-admin" && isAdmin && (
-  <GestionAdminModule />
-)}
     </div>
   </div>
 )}

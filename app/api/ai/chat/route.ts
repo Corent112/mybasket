@@ -16,6 +16,7 @@ import {
 import type { AiCitation } from "@/lib/ai/knowledge";
 import { createAdminClient } from "@/lib/supabase/admin-server";
 import { getOpenAI } from "@/lib/ai/openai";
+import { asksForWebResearch, researchBasketballWeb, researchCachePolicy, WEB_RESEARCH_MODEL } from "@/lib/ai/basketball-web-research";
 import {
   apiError,
   boolOr,
@@ -255,7 +256,7 @@ export async function POST(request: Request) {
       }
     }
     const diagramUrl = diagramImageUrl(term?.schema_url);
-    const citations: AiCitation[] = client
+    let citations: AiCitation[] = client
       ? context.citations.filter((citation) => citation.diagramUrl)
       : term && diagramUrl ? [{ kind: "term", id: term.id, label: term.term, diagramUrl }] : [];
 
@@ -266,6 +267,8 @@ export async function POST(request: Request) {
         };
 
         let answer = "";
+        let answerModel = model;
+        let usedResearchCache = false;
         let promptTokens = 0;
         let completionTokens = 0;
         let failure: string | null = null;
@@ -278,19 +281,55 @@ export async function POST(request: Request) {
         });
 
         try {
-          if (!client) {
+          const evidenceAvailable = client ? !!(context.chunks?.length || context.terms?.length) : !!(passages.length || term);
+          const explicitWeb = asksForWebResearch(message);
+          const researchClient = explicitWeb || !evidenceAvailable ? getOpenAI() : null;
+          if (researchClient) {
+            try {
+              const { queryKey, refresh, cutoff } = researchCachePolicy(searchQuestion);
+              const cached = refresh ? null : await actor.supabase.from("ai_basketball_web_research")
+                .select("answer,citations").eq("user_id", actor.userId).eq("query_key", queryKey)
+                .gte("researched_at", cutoff).maybeSingle();
+              if (cached?.data) {
+                answer = cached.data.answer;
+                citations = cached.data.citations;
+                answerModel = WEB_RESEARCH_MODEL;
+                usedResearchCache = true;
+              } else {
+                const web = await researchBasketballWeb(researchClient, searchQuestion);
+                promptTokens = web.promptTokens;
+                completionTokens = web.completionTokens;
+                if (web.complete && web.answer && web.citations.length && web.searched) {
+                  answer = web.answer;
+                  citations = web.citations;
+                  answerModel = WEB_RESEARCH_MODEL;
+                  const { error } = await actor.supabase.from("ai_basketball_web_research").upsert({
+                    user_id: actor.userId, query_key: queryKey, question: searchQuestion, answer,
+                    citations, researched_at: new Date().toISOString(),
+                  });
+                  if (error) console.warn("[AI][chat] sauvegarde recherche web", error.code);
+                }
+              }
+            } catch (error) {
+              console.warn("[AI][chat] recherche web indisponible", error instanceof Error ? error.name : "Erreur");
+            }
+          }
+          if (answer) {
+            push("context", { conversationId: finalConversationId, citations, degraded: false, notes: [] });
+            push("delta", { text: answer });
+          } else if (!client) {
             if (passages.length) {
               answer = passages.map(({ excerpt }) => excerpt.text).join("\n\n");
             } else if (term) {
               answer = `${term.term} — ${term.definition}`;
             } else {
-              answer = "Je n’ai pas trouvé de définition ni de passage correspondant dans les ressources MyBasket. Essaie avec le nom précis du terme ou quelques mots-clés.";
+              answer = "Je n’ai pas trouvé de définition ni de passage correspondant dans les ressources MyBasket. Précise le terme, la compétition ou le contexte basket de ta question.";
             }
             push("delta", { text: answer });
           } else {
             const openaiStream = await client.responses.create({
               model,
-              instructions: context.systemPrompt + "\nDonne une réponse détaillée. Réunis tous les éléments pertinents disponibles, en présentant directement toutes les options, leurs conditions, les consignes et les exemples. N’affiche aucun nom de source, fichier, numéro de page ni citation. Évite les répétitions et signale les éléments que les sources ne permettent pas de préciser.",
+              instructions: context.systemPrompt + "\nRéponds exclusivement aux questions liées au basketball. Demande le contexte basket s’il manque. Donne une réponse détaillée. Réunis tous les éléments pertinents disponibles, en présentant directement toutes les options, leurs conditions, les consignes et les exemples. N’affiche aucun nom de source, fichier, numéro de page ni citation. Évite les répétitions et signale les éléments que les sources ne permettent pas de préciser.",
               input: [
                 ...previous.map((m) => ({ role: m.role, content: m.content })),
                 { role: "user" as const, content: message },
@@ -309,8 +348,8 @@ export async function POST(request: Request) {
                 const usage = (
                   event as { response?: { usage?: Record<string, number> } }
                 ).response?.usage;
-                promptTokens = usage?.input_tokens ?? 0;
-                completionTokens = usage?.output_tokens ?? 0;
+                promptTokens += usage?.input_tokens ?? 0;
+                completionTokens += usage?.output_tokens ?? 0;
               } else if (event.type === "error") {
                 failure = String(
                   (event as { message?: string }).message || "Erreur du modèle.",
@@ -336,7 +375,7 @@ export async function POST(request: Request) {
               role: "assistant",
               content: answer,
               citations,
-              model,
+              model: answerModel,
               prompt_tokens: promptTokens,
               completion_tokens: completionTokens,
               latency_ms: latency,
@@ -345,7 +384,7 @@ export async function POST(request: Request) {
             .select("id")
             .single();
 
-          if (saved?.id && !failure && passages.length && sharedWriter) {
+          if (saved?.id && !failure && answerModel === model && passages.length && sharedWriter) {
             const { error } = await sharedWriter.rpc("ai_record_shared_passages", {
               p_chunk_ids: [...new Set(passages.map(({ chunk }) => chunk.id))],
             });
@@ -365,7 +404,7 @@ export async function POST(request: Request) {
             clubId: actor.clubIds[0] ?? null,
             module: moduleKey,
             operation: "chat",
-            model,
+            model: answerModel,
             promptTokens,
             completionTokens,
             latencyMs: latency,
@@ -373,6 +412,7 @@ export async function POST(request: Request) {
             error: failure,
             metadata: {
               citations: citations.length,
+              web_cache_hit: usedResearchCache,
               degraded: context.degraded,
             },
           });

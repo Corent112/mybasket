@@ -171,12 +171,14 @@ export type AiConversation = {
 };
 
 export type AiCitation = {
-  kind: "document" | "term" | "rule" | "reference" | "correction";
+  kind: "document" | "term" | "rule" | "reference" | "correction" | "web";
   id: string;
   label: string;
   detail?: string | null;
   score?: number | null;
   diagramUrl?: string;
+  url?: string;
+  endIndex?: number;
 };
 
 export type AiMessage = {

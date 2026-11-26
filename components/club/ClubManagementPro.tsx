@@ -17,6 +17,7 @@ import ClubSettingsProSection from "@/components/club/ClubSettingsProSection";
 import ClubFinanceProSection from "@/components/club/ClubFinanceProSection";
 import ClubAuditExportsSection from "@/components/club/ClubAuditExportsSection";
 import ClubDashboardOverviewV2 from "@/components/club/ClubDashboardOverviewV2";
+import GestionAdminModule from "@/components/management/GestionAdminModule";
 import ClubSectionPolish from "@/components/club/ClubSectionPolish";
 
 type Props = { clubId:string; clubName?:string|null; logoUrl?:string|null };
@@ -31,6 +32,7 @@ const TABS = [
   { key:"drive", label:"Documents", icon:"📁" },
   { key:"communication", label:"Communication", icon:"💬" },
   { key:"mailing", label:"Mailings", icon:"✉️" },
+  { key:"administratif", label:"Gestion admin", icon:"📋" },
   { key:"cotisations", label:"Cotisations", icon:"💳" },
   { key:"relances", label:"Relances", icon:"🚨" },
   { key:"finance", label:"Finance", icon:"💰" },
@@ -49,7 +51,8 @@ export default function ClubManagementPro({ clubId, clubName, logoUrl }: Props) 
   const [season,setSeason] = useState("2026-2027");
 
   useEffect(() => {
-    const saved = window.localStorage.getItem(STORAGE_KEY) as TabKey | null;
+    const requested = new URLSearchParams(window.location.search).get("tab") as TabKey | null;
+    const saved = requested || window.localStorage.getItem(STORAGE_KEY) as TabKey | null;
     if(saved && TABS.some((t)=>t.key===saved)) setActiveTab(saved);
     const supabase = createClient();
     void Promise.all([
@@ -155,6 +158,7 @@ export default function ClubManagementPro({ clubId, clubName, logoUrl }: Props) 
           {activeTab==="drive" && <ClubDriveSection clubId={clubId}/>}
           {activeTab==="communication" && <ClubCommunicationProSection clubId={clubId} clubName={name}/>}
           {activeTab==="mailing" && <ClubMailingListsSection clubId={clubId}/>}
+          {activeTab==="administratif" && <GestionAdminModule clubId={clubId}/>}
           {activeTab==="cotisations" && <ClubCotisationsSection clubId={clubId}/>}
           {activeTab==="relances" && <ClubRelancesSection clubId={clubId} clubName={name}/>}
           {activeTab==="finance" && <ClubFinanceProSection clubId={clubId}/>}

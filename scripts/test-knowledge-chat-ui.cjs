@@ -37,6 +37,7 @@ require.extensions[".tsx"] = (m, file) =>
     }).outputText,
     file,
   );
+require.extensions[".ts"] = require.extensions[".tsx"];
 require.extensions[".css"] = (m) => {
   m.exports = new Proxy({}, { get: (_, key) => String(key) });
 };
@@ -57,6 +58,7 @@ const original = Module._load;
 Module._load = function (name, parent, main) {
   if (name === "next/navigation") return { usePathname: () => "/mon-compte" };
   if (name === "@/lib/supabase/client") return { createClient: () => mockDb };
+  if (name.startsWith("@/")) name = path.resolve(__dirname, "..", name.slice(2));
   return original.call(this, name, parent, main);
 };
 global.fetch = async (url, options) => {
@@ -83,6 +85,14 @@ global.fetch = async (url, options) => {
             kind: "term",
             id: "possession",
             label: "Lexique MyBasket · Possession",
+            diagramUrl: "https://example.org/possession.png",
+          },
+          {
+            kind: "web",
+            id: "fiba",
+            label: "Règlement FIBA",
+            url: "https://www.fiba.basketball/rules",
+            endIndex: 52,
           },
         ],
       },
@@ -164,7 +174,11 @@ global.fetch = async (url, options) => {
     "Opening the chat makes no generation request",
   );
   await ask("Qu’est-ce qu’une possession ?");
-  assert(document.body.textContent.includes("Lexique MyBasket · Possession"));
+  assert(document.querySelector('img[alt="Schéma associé à la définition"]'));
+  const source = document.querySelector('[aria-label="Source 1 · Règlement FIBA"]');
+  assert.equal(source?.href, "https://www.fiba.basketball/rules");
+  assert(source?.closest("p"), "Source link appears inline beside the answer");
+  assert(document.body.textContent.includes("Sources web"));
   assert(document.body.textContent.includes("Oui, explique-moi"));
   assert.equal(questionBodies[0].module, "coach-chat");
   await click(

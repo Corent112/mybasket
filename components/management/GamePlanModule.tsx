@@ -33,6 +33,7 @@ import type {
   TouchEvent as ReactTouchEvent,
 } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
+import { Trash2 } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import { getTeams } from "@/lib/equipes-store";
 import GamePlanScoutingDataPicker, { type ScoutImportItem } from "./GamePlanScoutingDataPicker";
@@ -167,7 +168,10 @@ const SECTION_LABEL: Record<SystemSection, string> = {
   end: "Fin de match",
 };
 
+type SavedGamePlan = { id: string; title: string; match_date: string | null; updated_at: string };
+
 type GamePlan = {
+  savedPlanId?: string;
   opponent: string;
   date: string;
   matchTime: string;
@@ -267,6 +271,7 @@ function normalizeGamePlanRow(row: any): GamePlan {
   const scouting = row?.scouting && typeof row.scouting === "object" ? row.scouting : EMPTY_GP.scouting;
   return {
     ...EMPTY_GP,
+    savedPlanId: typeof drawings.savedPlanId === "string" ? drawings.savedPlanId : undefined,
     opponent: row?.opponent ?? "",
     date: row?.date ?? "",
     matchTime: row?.match_time ?? "",
@@ -343,7 +348,7 @@ async function writeGP(supabase: ReturnType<typeof createClient>, teamId: string
     end_game_systems: gp.endGameSystems || null,
     scouting: gp.scouting ?? EMPTY_GP.scouting,
     library_systems: gp.librarySystems ?? [],
-    drawings: gp.drawings ?? EMPTY_GP.drawings,
+    drawings: { ...gp.drawings, savedPlanId: gp.savedPlanId },
     updated_at: new Date().toISOString(),
   };
 
@@ -529,6 +534,11 @@ export default function GamePlanModule() {
   const [drawingFor, setDrawingFor] = useState<Section | null>(null);
   const [addSysFor, setAddSysFor] = useState<SystemSection | null>(null);
   const [savedFlash, setSavedFlash] = useState(false);
+  const [savedPlans, setSavedPlans] = useState<SavedGamePlan[] | null>(null);
+  const [planAction, setPlanAction] = useState(false);
+  const planActionRef = useRef(false);
+  const planRevision = useRef(0);
+  const writeQueue = useRef<Promise<void>>(Promise.resolve());
   const [loading, setLoading] = useState(true);
   const [rotationTick, setRotationTick] = useState(0);
   const [activeTab, setActiveTab] = useState<"match" | "systems" | "scout" | "keys" | "montage" | "rotation">("match");
@@ -549,6 +559,27 @@ export default function GamePlanModule() {
   const gpRef = useRef(gp);
   gpRef.current = gp;
   teamIdRef.current = teamId;
+
+  const writeCurrentPlan = useCallback((id: string, plan: GamePlan) => {
+    const pending = writeQueue.current.then(() => writeGP(supabase, id, plan));
+    writeQueue.current = pending.catch(() => {});
+    return pending;
+  }, [supabase]);
+
+  async function runPlanAction(action: () => Promise<void>, message: string) {
+    if (planActionRef.current) return;
+    planActionRef.current = true;
+    setPlanAction(true);
+    try {
+      await action();
+    } catch (error) {
+      console.error(message, error);
+      window.alert(message);
+    } finally {
+      planActionRef.current = false;
+      setPlanAction(false);
+    }
+  }
 
   const flash = useCallback(() => {
     setSavedFlash(true);
@@ -614,7 +645,7 @@ export default function GamePlanModule() {
       }
 
       try {
-        await writeGP(supabase, saveTeamId, next);
+        await writeCurrentPlan(saveTeamId, next);
         dirtyRef.current = false;
         flash();
         return true;
@@ -624,11 +655,13 @@ export default function GamePlanModule() {
         return false;
       }
     },
-    [supabase, flash]
+    [writeCurrentPlan, flash]
   );
 
   /* --- détecte un système dessiné ou sélectionné renvoyé par la Plaquette / page Systèmes --- */
   const checkPendingDraw = useCallback(async () => {
+    if (planActionRef.current) return;
+    const revision = planRevision.current;
     const pendingBase = lsGet<{ section?: SystemSection; teamId?: string; title?: string; mode?: string }>(K_PENDING);
     const targetTeamId = pendingBase?.teamId || teamIdRef.current;
 
@@ -662,6 +695,7 @@ export default function GamePlanModule() {
         librarySystems: [...baseGp.librarySystems, sys],
       };
 
+      if (planActionRef.current || revision !== planRevision.current) return;
       if (targetTeamId !== teamIdRef.current) {
         teamIdRef.current = targetTeamId;
         setTeamId(targetTeamId);
@@ -717,6 +751,7 @@ export default function GamePlanModule() {
       lsSet(K_SEL, targetTeamId);
     }
 
+    if (planActionRef.current || revision !== planRevision.current) return;
     await persistGamePlanNow(next, targetTeamId);
 
     try {
@@ -733,11 +768,13 @@ export default function GamePlanModule() {
     const t = await readTeams();
     setTeams(t);
     setRotationTick((x) => x + 1);
+    if (planActionRef.current) return;
     checkPendingDraw();
     const id = teamIdRef.current;
+    const revision = planRevision.current;
     if (id && !dirtyRef.current) {
       const next = await readGP(supabase, id);
-      if (!dirtyRef.current) {
+      if (!planActionRef.current && revision === planRevision.current && teamIdRef.current === id && !dirtyRef.current) {
         setGp(next); // FIX #1 : ne clobber jamais une saisie non enregistrée
       }
     }
@@ -766,27 +803,29 @@ export default function GamePlanModule() {
 
   /* --- AUTOSAVE débordé : tout passe par là (FIX #6) --- */
   useEffect(() => {
-    if (loading || !teamId || !dirtyRef.current) return;
+    if (loading || planAction || !teamId || !dirtyRef.current) return;
     const t = window.setTimeout(async () => {
       try {
-        await writeGP(supabase, teamId, gpRef.current);
-        dirtyRef.current = false;
+        if (planActionRef.current || teamIdRef.current !== teamId || !dirtyRef.current) return;
+        const next = gpRef.current;
+        await writeCurrentPlan(teamId, next);
+        if (gpRef.current === next) dirtyRef.current = false;
         flash();
       } catch {
         /* échec silencieux : on retentera au prochain changement / save manuel */
       }
     }, 800);
     return () => window.clearTimeout(t);
-  }, [gp, teamId, loading, supabase, flash]);
+  }, [gp, teamId, loading, planAction, writeCurrentPlan, flash]);
 
   const flushSave = useCallback(async () => {
     if (dirtyRef.current && teamIdRef.current) {
       try {
-        await writeGP(supabase, teamIdRef.current, gpRef.current);
+        await writeCurrentPlan(teamIdRef.current, gpRef.current);
         dirtyRef.current = false;
       } catch {}
     }
-  }, [supabase]);
+  }, [writeCurrentPlan]);
 
   /* --- dérivés --- */
   const team = useMemo(() => teams.find((t) => t.id === teamId && !isScoutTeam(t)) || null, [teams, teamId]);
@@ -820,14 +859,18 @@ export default function GamePlanModule() {
   }, [rotation, team]);
 
   const selectTeam = async (id: string) => {
-    await flushSave();
-    teamIdRef.current = id;
-    setTeamId(id);
-    lsSet(K_SEL, id);
-    const next = await readGP(supabase, id);
-    gpRef.current = next;
-    dirtyRef.current = false;
-    setGp(next);
+    await runPlanAction(async () => {
+      await flushSave();
+      const next = await readGP(supabase, id);
+      planRevision.current++;
+      teamIdRef.current = id;
+      setTeamId(id);
+      lsSet(K_SEL, id);
+      gpRef.current = next;
+      dirtyRef.current = false;
+      setGp(next);
+      setSavedPlans(null);
+    }, "Impossible de changer d’équipe.");
   };
 
   const ensureCalendarMatchEvent = useCallback(
@@ -923,103 +966,93 @@ export default function GamePlanModule() {
     [team]
   );
 
-  const saveNow = async () => {
-    try {
-      let next = gpRef.current;
-      if (teamIdRef.current && next.date) {
-        next = await ensureCalendarMatchEvent(next);
+  const saveNow = async (keepCopy = false) => {
+    await runPlanAction(async () => {
+      const id = teamIdRef.current;
+      if (!id) return;
+      const current = gpRef.current;
+      let next = current.date ? await ensureCalendarMatchEvent(current) : current;
+      if (keepCopy) {
+        const { data: { user } } = await supabase.auth.getUser();
+        if (!user) throw new Error("Connexion requise.");
+        next = { ...next, savedPlanId: next.savedPlanId || crypto.randomUUID() };
+        const opponent = next.opponent.trim() || teams.find(t => t.id === next.scouting.scoutTeamId)?.name;
+        const { error } = await supabase.from("management_saved_gameplans").upsert({
+          id: next.savedPlanId,
+          user_id: user.id,
+          team_id: id,
+          title: opponent || "Game Plan sans adversaire",
+          match_date: next.date || null,
+          snapshot: next,
+          updated_at: new Date().toISOString(),
+        });
+        if (error) throw error;
         gpRef.current = next;
         setGp(next);
+        dirtyRef.current = true;
+        setSavedPlans(null);
       }
-
-      if (teamIdRef.current) {
-        await writeGP(supabase, teamIdRef.current, next);
-        dirtyRef.current = false;
-      }
+      await writeCurrentPlan(id, next);
+      gpRef.current = next;
+      setGp(next);
+      dirtyRef.current = false;
       flash();
-    } catch (error) {
-      console.error("Impossible de sauvegarder le Game Plan:", error);
-      window.alert("Impossible de sauvegarder le Game Plan.");
+    }, "Impossible de sauvegarder le Game Plan.");
+  };
+
+  const showSavedPlans = async () => {
+    if (savedPlans !== null) {
+      setSavedPlans(null);
+      return;
     }
+    await runPlanAction(async () => {
+      const { data, error } = await supabase.from("management_saved_gameplans")
+        .select("id,title,match_date,updated_at")
+        .eq("team_id", teamId)
+        .order("updated_at", { ascending: false });
+      if (error) throw error;
+      setSavedPlans(data ?? []);
+    }, "Impossible de charger les Game Plans sauvegardés.");
+  };
+
+  const replaceCurrentPlan = async (next: GamePlan) => {
+    planRevision.current++;
+    await writeCurrentPlan(teamId, next);
+    try {
+      const pending = lsGet<{ teamId?: string }>(K_PENDING);
+      const selectedSystem = lsGet<{ teamId?: string }>(K_SELECTED_SYSTEM);
+      if (!pending?.teamId || pending.teamId === teamId) {
+        localStorage.removeItem(K_PLQ_RESULT);
+        localStorage.removeItem(K_PENDING);
+        localStorage.removeItem("mybasket_scouting_pending");
+      }
+      if (!selectedSystem?.teamId || selectedSystem.teamId === teamId) localStorage.removeItem(K_SELECTED_SYSTEM);
+      localStorage.removeItem(`mybasket_gameplan_backup_${teamId}`);
+    } catch {}
+    gpRef.current = next;
+    dirtyRef.current = false;
+    setGp(next);
+    setSavedPlans(null);
+    setPendingDraw(null);
+    setAddSysFor(null);
+    setDrawingFor(null);
+    setShowScoutDataPicker(false);
+    setActiveTab("match");
+  };
+
+  const resumeSavedPlan = async (id: string) => {
+    if (!window.confirm("Reprendre cette sauvegarde ? Elle remplacera le plan de travail en cours. Sauvegarde-le d’abord si tu veux le conserver.")) return;
+    await runPlanAction(async () => {
+      const { data, error } = await supabase.from("management_saved_gameplans")
+        .select("snapshot").eq("team_id", teamId).eq("id", id).single();
+      if (error || !data?.snapshot) throw error || new Error("Sauvegarde indisponible.");
+      await replaceCurrentPlan({ ...data.snapshot, savedPlanId: id });
+    }, "Impossible de reprendre le Game Plan.");
   };
 
   const resetGamePlan = async () => {
-    if (!teamId) return;
-
-    const ok = window.confirm(
-      [
-        "Créer un nouveau Game Plan ?",
-        "",
-        "Cette action remettra à zéro le Game Plan de cette équipe :",
-        "• informations du match",
-        "• systèmes offensifs / BLOB / SLOB / fin de match",
-        "• scouting adverse",
-        "• dessins",
-        "• points clés",
-        "• lien calendrier",
-        "",
-        "Cette action ne supprime pas ton équipe ni ta rotation."
-      ].join("\n")
-    );
-
-    if (!ok) return;
-
-    const clean: GamePlan = JSON.parse(JSON.stringify(EMPTY_GP));
-
-    try {
-      const {
-        data: { user },
-      } = await supabase.auth.getUser();
-
-      if (!user) {
-        window.alert("Impossible de réinitialiser : utilisateur non connecté.");
-        return;
-      }
-
-      const { error } = await supabase.from("management_gameplans").upsert(
-        {
-          user_id: user.id,
-          team_id: teamId,
-          opponent: null,
-          date: null,
-          match_time: null,
-          competition: null,
-          calendar_event_id: null,
-          objective: null,
-          key_players: null,
-          attack_schemes: null,
-          defense_schemes: null,
-          key_points: null,
-          include_rotation: false,
-          blob: null,
-          slob: null,
-          end_game_systems: null,
-          scouting: EMPTY_GP.scouting,
-          library_systems: [],
-          drawings: EMPTY_GP.drawings,
-          updated_at: new Date().toISOString(),
-        },
-        { onConflict: "user_id,team_id" }
-      );
-
-      if (error) throw error;
-
-      try {
-        localStorage.removeItem(K_PLQ_RESULT);
-        localStorage.removeItem(K_PENDING);
-      } catch {}
-
-      dirtyRef.current = false;
-      setGp(clean);
-      setPendingDraw(null);
-      setAddSysFor(null);
-      setDrawingFor(null);
-      setActiveTab("match");
-      flash();
-    } catch (e) {
-      console.error("Erreur reset Game Plan:", e);
-      window.alert("Impossible de réinitialiser le Game Plan.");
-    }
+    if (!window.confirm("Vider le Game Plan en cours ? Les informations du match, le scouting, les systèmes et les dessins seront réinitialisés. Les Game Plans sauvegardés seront conservés.")) return;
+    await runPlanAction(() => replaceCurrentPlan(EMPTY_GP), "Impossible de réinitialiser le Game Plan.");
   };
 
   /* --- Mon Calendrier (localStorage) : ajout robuste, sans erreur --- */
@@ -1035,7 +1068,7 @@ export default function GamePlanModule() {
       gpRef.current = next;
       setGp(next);
       dirtyRef.current = true;
-      await writeGP(supabase, teamIdRef.current, next);
+      await writeCurrentPlan(teamIdRef.current, next);
       dirtyRef.current = false;
       flash();
       window.alert("Match ajouté au calendrier et lié au Game Plan.");
@@ -1181,7 +1214,7 @@ export default function GamePlanModule() {
   ];
 
   return (
-    <div className="gp">
+    <div className="gp" inert={planAction} aria-busy={planAction}>
       <TeamBar teams={teams.filter((t) => !isScoutTeam(t))} teamId={teamId} onSelect={selectTeam} />
 
       <div className="gp-hero">
@@ -1193,12 +1226,12 @@ export default function GamePlanModule() {
           <p>Choisis le match, construis ton scouting à partir des données codées, puis prépare notre plan.</p>
         </div>
         <div className="gp-heroactions">
-          <button
-            type="button"
-            className="gp-reset"
-            onClick={resetGamePlan}
-          >
-            🔄 Nouveau Game Plan
+          <button type="button" className="gp-reset" aria-expanded={savedPlans !== null} onClick={showSavedPlans}>
+            Reprendre un Game Plan
+          </button>
+          <button type="button" className="gp-reset gp-trash" onClick={resetGamePlan}
+            aria-label="Réinitialiser le Game Plan en cours" title="Réinitialiser le Game Plan en cours">
+            <Trash2 size={18} aria-hidden="true" />
           </button>
           <button
             type="button"
@@ -1212,6 +1245,22 @@ export default function GamePlanModule() {
           </button>
         </div>
       </div>
+
+      {savedPlans !== null && (
+        <section className="gp-card gp-saved-plans" aria-label="Game Plans sauvegardés">
+          <h3>Game Plans sauvegardés</h3>
+          {savedPlans.length ? <ul>
+            {savedPlans.map(plan => (
+              <li key={plan.id}>
+                <div><strong>{plan.title}</strong><small>
+                  {plan.match_date ? fmtDateLong(plan.match_date) : "Sans date de match"} · enregistré le {new Date(plan.updated_at).toLocaleDateString("fr-FR")}
+                </small></div>
+                <button type="button" className="gp-btn ghost" aria-label={`Reprendre ${plan.title}`} onClick={() => resumeSavedPlan(plan.id)}>Reprendre</button>
+              </li>
+            ))}
+          </ul> : <p>Aucun Game Plan sauvegardé pour cette équipe.</p>}
+        </section>
+      )}
 
       {pendingDraw && (
         <div className="gp-drawbanner">
@@ -1445,7 +1494,7 @@ export default function GamePlanModule() {
 
       <div className="gp-actions">
         {savedFlash && <span className="gp-saved">✓ Enregistré</span>}
-        <button type="button" className="gp-btn ghost" onClick={saveNow}>
+        <button type="button" className="gp-btn ghost" onClick={() => saveNow(true)}>
           💾 Sauvegarder le Game Plan
         </button>
         <button
@@ -2512,6 +2561,11 @@ const styles = `
   .gp-mainexport,.gp-reset,.gp-btn.black { border:none; background:#6B1A2C; color:#fff; border-radius:12px; padding:.75rem 1rem; font-weight:900; cursor:pointer; }
   .gp-mainexport { background:#D4A24C; color:#1A0F12; }
   .gp-reset { background:rgba(255,255,255,.11); color:#fff; border:1px solid rgba(255,255,255,.25); }
+  .gp-trash { display:grid; place-items:center; }
+  .gp-saved-plans { margin-bottom:1rem; }
+  .gp-saved-plans ul { list-style:none; padding:0; margin:0; }
+  .gp-saved-plans li { display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:.5rem; padding:.65rem 0; border-bottom:1px solid #eadfe1; }
+  .gp-saved-plans small { display:block; margin-top:.25rem; }
   .gp-reset:hover { background:rgba(255,255,255,.18); }
   .gp-mainsteps{display:grid!important;grid-template-columns:repeat(3,1fr)!important;gap:8px!important;border:0!important;background:#f7f1eb!important;padding:6px!important;border-radius:14px!important}.gp-mainsteps button{display:flex!important;align-items:center!important;justify-content:center!important;gap:8px!important;border:0!important;border-radius:10px!important;padding:11px!important}.gp-mainsteps button>span{width:23px;height:23px;display:grid;place-items:center;border-radius:50%;background:#eadfd5;color:#6B1A2C;font-size:.7rem;font-weight:950}.gp-mainsteps button.active{background:#6B1A2C!important;color:#fff!important;border:0!important}.gp-mainsteps button.active>span{background:#D4A24C;color:#fff}.gp-tools{display:flex;align-items:center;justify-content:flex-end;gap:6px;margin:-6px 0 12px}.gp-tools>span{font-size:.6rem;text-transform:uppercase;color:#9a8d85;font-weight:900;margin-right:3px}.gp-tools button{border:1px solid #e1d6cc;background:#fff;color:#6B1A2C;border-radius:8px;padding:6px 9px;font-size:.65rem;font-weight:850;cursor:pointer}.gp-tools button.active{background:#fff4dc;border-color:#D4A24C}.gp-match-next{display:flex;align-items:center;justify-content:space-between;gap:15px;border:1px solid #eadfce;background:#fffaf2;border-radius:14px;padding:13px 15px;margin-bottom:14px}.gp-match-next b,.gp-match-next span{display:block}.gp-match-next b{color:#6B1A2C}.gp-match-next span{font-size:.7rem;color:#877a72;margin-top:2px}.gp-match-next button{border:0;background:#6B1A2C;color:#fff;border-radius:9px;padding:9px 12px;font-weight:900;cursor:pointer}@media(max-width:650px){.gp-mainsteps{grid-template-columns:1fr!important}.gp-tools{justify-content:flex-start;margin-top:0}.gp-match-next{align-items:flex-start;flex-direction:column}}
   .gp-tabs { display:flex; gap:.55rem; margin-bottom:1rem; padding:.35rem; background:#FFF9F0; border:1px solid #eadfce; border-radius:16px; overflow-x:auto; }
