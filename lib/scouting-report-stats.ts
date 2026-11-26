@@ -175,3 +175,11 @@ export function officialPlayerStats(published?: DataRow): ScoutingStats | null {
 export function formatScoutingStat(value: number) {
   return value.toLocaleString("fr-FR", { maximumFractionDigits: 1 });
 }
+
+export const compactPlayerMetrics = ["MIN", "PTS", "RO", "RD", "REB", "PD", "BP", "INT", "ÉVAL"] as const;
+
+export function shotSplit(two: unknown, three: unknown) {
+  const p2 = numeric(two), p3 = numeric(three);
+  if (p2 == null || p3 == null || p2 < 0 || p3 < 0 || p2 + p3 === 0) return null;
+  return { p2, p3, share2: p2 / (p2 + p3) };
+}

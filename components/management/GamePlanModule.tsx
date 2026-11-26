@@ -40,7 +40,9 @@ import GamePlanMontage, { type GamePlanMontageItem } from "./GamePlanMontage";
 import { loadMatchAnalysis, loadOfficialTeamMatches } from "@/lib/analytics/load-matches";
 import { loadLnbTeamStatistics } from "@/lib/lnb-statistics-client";
 import { fillLnbIdentity } from "@/lib/lnb-statistics-model";
-import { score, codedPlayerStats, officialPlayerStats, scoutingTeamStats, teamMetrics, formatScoutingStat } from "@/lib/scouting-report-stats";
+import { compactPlayerMetrics, shotSplit, codedPlayerStats, officialPlayerStats, scoutingTeamStats, teamMetrics, formatScoutingStat } from "@/lib/scouting-report-stats";
+import { scoutingHighlights, highlightColors } from "@/lib/scouting-highlights";
+import { scoutingColors } from "@/lib/scouting-colors";
 import GamePlanScoutingBoard, { type ScoutBoardValue } from "./GamePlanScoutingBoard";
 
 /* =============================== Stores ================================ */
@@ -95,6 +97,7 @@ type Team = {
   players?: Player[];
   teamType?: string;
   competitionSource?:string;
+  couleurs?: string[];
   kind?: string;
   isScoutTeam?: boolean;
   scout?: boolean;
@@ -127,6 +130,10 @@ type Scouting = {
   importantStats?: Array<{ id: string; metric: string; limit: number }>;
   playerCards?: ScoutBoardValue["playerCards"];
   printPlayerIds?: string[];
+  playNotes?: ScoutBoardValue["playNotes"];
+  highlightSide?: ScoutBoardValue["highlightSide"];
+  highlightMatchIds?: string[];
+  highlightNotes?: string;
 };
 
 type SystemSection = "offensive" | "scout" | "blob" | "slob" | "end";
@@ -209,6 +216,7 @@ function normalizeTeam(row: any): Team {
     cat: String(row?.cat ?? row?.category ?? row?.categorie ?? ""),
     logo: row?.logo ?? row?.logo_url ?? row?.club_logo_url ?? "",
     competitionSource: row?.competitionSource||row?.metadata?.competitionSource,
+    couleurs: row?.couleurs ?? row?.metadata?.couleurs,
     teamType: String(row?.teamType ?? row?.team_type ?? row?.type ?? row?.metadata?.teamType ?? ""),
     kind: String(row?.kind ?? row?.metadata?.kind ?? ""),
     isScoutTeam: Boolean(row?.isScoutTeam ?? row?.is_scout_team ?? row?.metadata?.isScoutTeam),
@@ -1912,6 +1920,28 @@ async function imageToDataUrl(src: string): Promise<string | null> {
   }
 }
 
+async function circularScoutingPhoto(src: string) {
+  const data = await imageToDataUrl(src);
+  if (!data) return null;
+  try {
+    const image = new Image();
+    image.src = data;
+    await image.decode();
+    const canvas = document.createElement("canvas");
+    canvas.width = canvas.height = 96;
+    const context = canvas.getContext("2d");
+    if (!context) return null;
+    const size = Math.min(image.width, image.height);
+    context.beginPath();
+    context.arc(48, 48, 48, 0, 2 * Math.PI);
+    context.clip();
+    context.drawImage(image, (image.width - size) / 2, (image.height - size) / 2, size, size, 0, 0, 96, 96);
+    return canvas.toDataURL("image/png");
+  } catch {
+    return null;
+  }
+}
+
 async function exportGamePlanPdf(team: Team, gp: GamePlan, rotation: Rotation | null, options: { download?: boolean } = {}) {
   try {
     const jsPDF = await loadPdfJs();
@@ -1921,8 +1951,9 @@ async function exportGamePlanPdf(team: Team, gp: GamePlan, rotation: Rotation | 
     const M = 12;
     let y = M;
 
-    const burgundy = [107, 26, 44];
-    const gold = [212, 162, 76];
+    const palette = scoutingColors(gp.scouting.scoutTeamId ? team.couleurs : undefined);
+    const burgundy = palette.inkRgb;
+    const gold = palette.secondaryRgb;
     const black = [15, 15, 18];
     const muted = [95, 95, 95];
 
@@ -1968,9 +1999,9 @@ async function exportGamePlanPdf(team: Team, gp: GamePlan, rotation: Rotation | 
       : undefined;
     const opponentLogo = scoutTeam?.logo ? await imageToDataUrl(scoutTeam.logo) : null;
     const header = async () => {
-      doc.setFillColor(...burgundy);
+      doc.setFillColor(...palette.primaryRgb);
       doc.rect(0, 0, W, 24, "F");
-      doc.setTextColor(255, 255, 255);
+      doc.setTextColor(palette.onPrimary);
       doc.setFont("helvetica", "bold");
       doc.setFontSize(20);
       if (opponentLogo) doc.addImage(opponentLogo, "PNG", M, 3, 18, 18);
@@ -1989,7 +2020,7 @@ async function exportGamePlanPdf(team: Team, gp: GamePlan, rotation: Rotation | 
     await header();
 
     const meta = [
-      ["Adversaire", gp.opponent],
+      ["Adversaire", scoutTeam ? "" : gp.opponent],
       ["Date", gp.date ? fmtDateLong(gp.date) : ""],
       ["Heure", gp.matchTime],
       ["Compétition", gp.competition],
@@ -2014,7 +2045,7 @@ async function exportGamePlanPdf(team: Team, gp: GamePlan, rotation: Rotation | 
       y += 18;
     }
 
-    title("Clés du match");
+    if ([gp.keyPoints, gp.attackSchemes, gp.defenseSchemes, gp.objective].some(hasText)) title("Clés du match");
     box("Clé du match", gp.keyPoints);
     box("Clé offensive", gp.attackSchemes);
     box("Clé défensive", gp.defenseSchemes);
@@ -2025,7 +2056,6 @@ async function exportGamePlanPdf(team: Team, gp: GamePlan, rotation: Rotation | 
       ["blob", "BLOB"],
       ["slob", "SLOB"],
       ["end", "Fin de match"],
-      ["scout", "Systèmes adverses"],
     ];
 
     for (const [section, label] of systemSections) {
@@ -2078,53 +2108,176 @@ async function exportGamePlanPdf(team: Team, gp: GamePlan, rotation: Rotation | 
       const db = createClient();
       const [official, coded, fixtures] = scoutTeam ? await Promise.all([
         scoutTeam.competitionSource === "lnb" ? loadLnbTeamStatistics(scoutTeam.id).catch(() => null) : null,
-        loadMatchAnalysis(db, scoutTeam.id).catch(() => ({ matches: [], rows: [] })),
+        loadMatchAnalysis(db, scoutTeam.id).catch(() => ({ matches: [], rows: [], actions: [] })),
         loadOfficialTeamMatches(db, scoutTeam.id).catch(() => []),
-      ]) : [null, { matches: [], rows: [] }, []] as const;
-      const { autoStats, uniqueMatches } = scoutingTeamStats(coded, fixtures, official);
-      const localPlayers = codedPlayerStats(coded);
+      ]) : [null, { matches: [], rows: [], actions: [] }, []] as const;
+      const { matches, rows, actions } = coded;
+      const { autoStats } = scoutingTeamStats({ matches, rows }, fixtures, official);
+      const localPlayers = codedPlayerStats({ matches, rows });
       const selected = gp.scouting.printPlayerIds == null ? null : new Set(gp.scouting.printPlayerIds);
-      doc.addPage(); y = 10;
-      // Header scouting inspiré du document de référence : adversaire à gauche, titre/date au centre, notre club à droite.
-      doc.setFillColor(15,15,18); doc.rect(M, y, W-M*2, 20, "F");
-      const leftLogo = opponentLogo;
-      const rightLogo = team.logo ? await imageToDataUrl(team.logo) : null;
-      if (leftLogo) doc.addImage(leftLogo, "PNG", M+3, y+2, 16,16);
-      if (rightLogo) doc.addImage(rightLogo, "PNG", W-M-19, y+2, 16,16);
-      doc.setTextColor(255,255,255); doc.setFont("helvetica","bold"); doc.setFontSize(13);
-      doc.text(scoutTeam?.name || gp.opponent || "ADVERSAIRE", W/2, y+8, {align:"center"});
-      doc.setTextColor(...gold); doc.setFontSize(8); doc.text(`SCOUTING ADVERSE${gp.date ? " · "+fmtDateLong(gp.date) : ""}`, W/2, y+14, {align:"center"});
-      y += 25;
       const scoutPlayers = scoutTeam?.players || [];
-      title("Bilan et statistiques collectives");
-      const wins = uniqueMatches.filter(match => score(match, "us")! > score(match, "them")!).length;
-      const losses = uniqueMatches.filter(match => score(match, "us")! < score(match, "them")!).length;
-      const record = uniqueMatches.length ? `${wins} V · ${losses} D · ${uniqueMatches.length} MJ` : "Bilan indisponible";
-      const ranking = official?.ranking ? `${official.ranking}e · ${official.competition} · ` : "";
-      doc.setTextColor(...burgundy); doc.setFontSize(10);
-      doc.text(ranking + record, M, y); y += 6;
+      const cards = new Map((gp.scouting.playerCards || []).map(card => [card.playerId, card]));
+      const officialPlayers = new Map<string, any>((official?.players || []).map((row: any) => [row.playerId, row]));
+      const teamStat = (key: string) => Object.prototype.hasOwnProperty.call(gp.scouting.teamStats || {}, key)
+        ? gp.scouting.teamStats?.[key] : autoStats[key];
+
+      const sector = (x: number, yy: number, radius: number, start: number, share: number, color: string) => {
+        if (share <= 0) return;
+        doc.setFillColor(color);
+        if (share >= 1) { doc.circle(x, yy, radius, "F"); return; }
+        const segments = Math.max(1, Math.ceil(share * 64));
+        const points = Array.from({ length: segments + 1 }, (_, index) => {
+          const angle = -Math.PI / 2 + (start + index / segments * share) * 2 * Math.PI;
+          return [Math.cos(angle) * radius, Math.sin(angle) * radius];
+        });
+        const edges = [points[0], ...points.slice(1).map(([px, py], index) => [px - points[index][0], py - points[index][1]])];
+        doc.lines(edges, x, yy, [1, 1], "F", true);
+      };
+      const pie = (x: number, yy: number, radius: number, two: unknown, three: unknown) => {
+        const split = shotSplit(two, three);
+        if (!split) return;
+        sector(x, yy, radius, 0, split.share2, palette.primary);
+        sector(x, yy, radius, split.share2, 1 - split.share2, palette.secondary);
+        doc.setFont("helvetica", "normal"); doc.setFontSize(7);
+        doc.setTextColor(...black);
+        doc.text("Tirs tentés", x + radius + 3, yy - 3);
+        doc.text(`2 pts · ${formatScoutingStat(split.p2)} (${formatScoutingStat(split.share2 * 100)} %)`, x + radius + 3, yy + 1);
+        doc.text(`3 pts · ${formatScoutingStat(split.p3)} (${formatScoutingStat((1 - split.share2) * 100)} %)`, x + radius + 3, yy + 5);
+      };
+
+      ensure(82);
+      title("Statistiques collectives");
+      if (official?.ranking) {
+        doc.setTextColor(...burgundy); doc.setFontSize(10);
+        doc.text(`${official.ranking}e · ${official.competition}`, M, y);
+        y += 6;
+      }
       const metricWidth = (W - 2 * M) / 4;
       teamMetrics.forEach(([key, label], index) => {
         const x = M + (index % 4) * metricWidth;
-        const yy = y + Math.floor(index / 4) * 10;
-        const n = Object.prototype.hasOwnProperty.call(gp.scouting.teamStats || {}, key) ? gp.scouting.teamStats?.[key] : autoStats[key];
-        doc.setFillColor(249, 245, 241); doc.rect(x, yy, metricWidth - 1, 9, "F");
+        const yy = y + Math.floor(index / 4) * 9;
+        const n = teamStat(key);
+        doc.setFillColor(249, 245, 241); doc.rect(x, yy, metricWidth - 1, 8, "F");
         doc.setTextColor(...muted); doc.setFontSize(6.5); doc.text(label, x + 2, yy + 3);
-        doc.setTextColor(...black); doc.setFontSize(9); doc.text(n == null ? "—" : formatScoutingStat(n), x + 2, yy + 7.3);
+        doc.setTextColor(...black); doc.setFontSize(9); doc.text(n == null ? "—" : formatScoutingStat(n), x + 2, yy + 7);
       });
-      y += Math.ceil(teamMetrics.length / 4) * 10 + 5;
-      const depth = gp.scouting.depthChart || {};
-      doc.setFillColor(15,15,18); doc.rect(M,y,W-M*2,7,"F"); doc.setTextColor(255,255,255); doc.setFontSize(9); doc.text("DEPTH CHART",M+3,y+5); y+=8;
-      const cw=(W-M*2)/5; for(let i=0;i<5;i++){const x=M+i*cw;doc.setFillColor(242,242,242);doc.rect(x,y,cw,6,"F");doc.setTextColor(...black);doc.setFontSize(7);doc.text(String(i+1),x+cw/2,y+4,{align:"center"}); const ids=(depth[String(i+1)]||[]).slice(0,3);ids.filter(id=>!selected||selected.has(id)).forEach((id:string,j:number)=>{const p=scoutPlayers.find((q:any)=>q.id===id);if(p)doc.text(playerLabel(p),x+cw/2,y+10+j*5,{align:"center",maxWidth:cw-2})})} y+=27;
-      doc.setFillColor(15,15,18);doc.rect(M,y,W-M*2,7,"F");doc.setTextColor(255,255,255);doc.text("TEAM INFORMATION",W/2,y+5,{align:"center"});y+=9;
-      const half=(W-M*2-3)/2; const infoH=56; doc.setDrawColor(170,170,170);doc.rect(M,y,half,infoH);doc.rect(M+half+3,y,half,infoH);
-      const infoCol=(x:number,label:string,txt:string)=>{doc.setTextColor(...burgundy);doc.setFont("helvetica","bold");doc.setFontSize(8);doc.text(label,x+3,y+6);doc.setTextColor(...black);doc.setFont("helvetica","normal");doc.setFontSize(7.2);doc.text(doc.splitTextToSize(txt||"",half-6).slice(0,13),x+3,y+12)};
-      infoCol(M,"ATTAQUE",gp.scouting.offense || gp.scouting.style || ""); infoCol(M+half+3,"DÉFENSE",gp.scouting.defense || gp.scouting.defensivePlan || ""); y+=infoH+3;
-      if(gp.scouting.offensiveKeys) { ensure(infoH+3); infoCol(M,"NOS CLÉS OFFENSIVES",gp.scouting.offensiveKeys); y+=infoH+3; }
-      if(gp.scouting.defensiveKeys) { ensure(infoH+3); infoCol(M,"NOS CLÉS DÉFENSIVES",gp.scouting.defensiveKeys); y+=infoH+3; }
-      if ((gp.scouting.importantStats||[]).length){doc.setFillColor(15,15,18);doc.rect(M,y,W-M*2,7,"F");doc.setTextColor(255,255,255);doc.text("STATS IMPORTANTES",W/2,y+5,{align:"center"});y+=10;doc.setTextColor(...black);doc.setFontSize(7);doc.text("Les tableaux sélectionnés dans MyBasket sont calculés automatiquement depuis les matchs codés.",M,y);y+=7;}
-      const scoutSystems=gp.librarySystems.filter((system)=>sysSection(system)==="scout");
-      if(scoutSystems.length){doc.addPage();y=10;doc.setFillColor(15,15,18);doc.rect(M,y,W-M*2,9,"F");doc.setTextColor(255,255,255);doc.setFontSize(11);doc.text("TOP PLAYS",W/2,y+6,{align:"center"});y+=14;for(const system of scoutSystems){ensure(58);doc.setTextColor(...black);doc.setFont("helvetica","bold");doc.setFontSize(9);doc.text(system.title,W/2,y,{align:"center"});y+=4;const imgs=(system.schemaImages?.length?system.schemaImages:[system.schemaImage]).filter(Boolean).slice(0,3);for(let i=0;i<imgs.length;i++){const im=await imageToDataUrl(String(imgs[i]));if(im)doc.addImage(im,"PNG",M+i*58,y,52,39)}y+=44;}}
+      y += Math.ceil(teamMetrics.length / 4) * 9 + 4;
+      if (shotSplit(teamStat("p2a"), teamStat("p3a"))) {
+        pie(M + 8, y + 8, 8, teamStat("p2a"), teamStat("p3a"));
+        y += 20;
+      }
+
+      const side = gp.scouting.highlightSide ?? "attaque";
+      const highlights = scoutingHighlights(actions, side, gp.scouting.highlightMatchIds);
+      if (highlights.length) {
+        ensure(62);
+        title(`Temps forts · ${side === "attaque" ? "attaque" : "défense"}`);
+        const colors = [palette.primary, palette.secondary, ...highlightColors.slice(2)];
+        let offset = 0;
+        highlights.forEach((row, index) => {
+          sector(M + 14, y + 16, 13, offset, row.share, colors[index % colors.length]);
+          offset += row.share;
+        });
+        const headings = () => {
+          doc.setFont("helvetica", "bold"); doc.setFontSize(7); doc.setTextColor(...burgundy);
+          doc.text("Temps fort", M + 37, y);
+          doc.text("Poss.", M + 118, y);
+          doc.text("Part", M + 135, y);
+          doc.text(side === "attaque" ? "Pts" : "Pts encaissés", M + 151, y);
+          doc.text("Pts / poss.", M + 170, y);
+          y += 5;
+        };
+        const startY = y;
+        const chartPage = doc.getNumberOfPages();
+        headings();
+        highlights.forEach((row, index) => {
+          if (y + 6 > H - M) { ensure(6); headings(); }
+          const color = colors[index % colors.length];
+          doc.setFillColor(color); doc.circle(M + 34, y - 1, 1, "F");
+          doc.setFont("helvetica", "normal"); doc.setFontSize(7); doc.setTextColor(...black);
+          doc.text(row.label, M + 37, y, { maxWidth: 78 });
+          doc.text(String(row.possessions), M + 118, y);
+          doc.text(`${formatScoutingStat(row.share * 100)} %`, M + 135, y);
+          doc.text(String(row.points), M + 151, y);
+          doc.text(row.ppp.toLocaleString("fr-FR", { maximumFractionDigits: 2 }), M + 170, y);
+          y += 6;
+        });
+        if (doc.getNumberOfPages() === chartPage && y < startY + 32) y = startY + 32;
+        y += 4;
+      }
+      box("Ce qu’on retient des temps forts", gp.scouting.highlightNotes || "");
+
+      const depthIds = Array.from({ length: 5 }, (_, i) => [...new Set(gp.scouting.depthChart?.[String(i + 1)] || [])]
+        .map(id => scoutPlayers.find(player => player.id === id)).filter(Boolean).slice(0, 3));
+      const depthRows = Math.max(...depthIds.map(column => column.length));
+      if (depthRows) {
+        ensure(18 + depthRows * 10);
+        title("Répartition par poste");
+        const width = (W - M * 2) / 5;
+        for (const [index, column] of depthIds.entries()) {
+          const x = M + index * width;
+          doc.setFillColor(245, 235, 233); doc.rect(x, y, width - 1, 5, "F");
+          doc.setTextColor(...burgundy); doc.setFontSize(7);
+          doc.text(String(index + 1), x + 2, y + 3.5);
+          for (const [r, player] of column.entries()) {
+            if (!player) continue;
+            const rowY = y + 6 + r * 10;
+            const photo = cards.get(player.id)?.photo || player.photo || officialPlayers.get(player.id)?.person?.photo?.md;
+            const avatar = photo && await circularScoutingPhoto(photo);
+            if (avatar) doc.addImage(avatar, "PNG", x + 1, rowY, 7, 7);
+            doc.setTextColor(...black); doc.setFont("helvetica", "normal"); doc.setFontSize(7);
+            doc.text(doc.splitTextToSize(playerLabel(player), width - (avatar ? 11 : 4)).slice(0, 2), x + (avatar ? 9 : 2), rowY + 3);
+          }
+        }
+        y += 8 + depthRows * 10;
+      }
+
+      const pair = (offLabel: string, off: string, defLabel: string, def: string, accent: boolean) => {
+        if (!hasText(off) && !hasText(def)) return;
+        const width = (W - 2 * M - 3) / 2;
+        doc.setFont("helvetica", "normal"); doc.setFontSize(8.5);
+        const columns = [[offLabel, off], [defLabel, def]].map(([label, txt]) => ({
+          label, lines: hasText(txt) ? doc.splitTextToSize(txt, width - 8) as string[] : [],
+        }));
+        const count = Math.max(...columns.map(column => column.lines.length));
+        for (let start = 0; start < count; start += 45) {
+          const height = 9 + Math.min(45, count - start) * 3.6;
+          ensure(height + 4);
+          columns.forEach(({ label, lines }, index) => {
+            if (lines.length <= start) return;
+            const x = M + index * (width + 3);
+            doc.setFillColor(249, 245, 241); doc.roundedRect(x, y, width, height, 2, 2, "F");
+            doc.setFillColor(...(accent ? burgundy : gold)); doc.rect(x, y + 2, 1, height - 4, "F");
+            doc.setFont("helvetica", "bold"); doc.setFontSize(9); doc.setTextColor(...burgundy);
+            doc.text(label, x + 4, y + 5);
+            doc.setFont("helvetica", "normal"); doc.setFontSize(8.5); doc.setTextColor(...black);
+            doc.text(lines.slice(start, start + 45), x + 4, y + 9);
+          });
+          y += height + 4;
+        }
+      };
+      pair("Tendances offensives", gp.scouting.offense || gp.scouting.style, "Tendances défensives", gp.scouting.defense || gp.scouting.defensivePlan, false);
+      pair("Nos clés offensives", gp.scouting.offensiveKeys || "", "Nos clés défensives", gp.scouting.defensiveKeys || "", true);
+
+      const scoutSystems = [...new Map(gp.librarySystems.filter(system => sysSection(system) === "scout").map(system => [system.id, system])).values()];
+      if (scoutSystems.length) {
+        ensure(60);
+        title("Top plays");
+        for (const system of scoutSystems) {
+          const images = [...new Set((system.schemaImages?.length ? system.schemaImages : [system.schemaImage]).filter(Boolean))].slice(0, 3);
+          ensure(images.length ? 51 : 12);
+          doc.setTextColor(...burgundy); doc.setFont("helvetica", "bold"); doc.setFontSize(10);
+          doc.text(system.title, M, y);
+          y += 5;
+          for (const [index, src] of images.entries()) {
+            const image = await imageToDataUrl(String(src));
+            if (image) doc.addImage(image, "PNG", M + index * 61, y, 57, 40);
+          }
+          if (images.length) y += 43;
+          box("Notre réponse", gp.scouting.playNotes?.[system.id] || "");
+          y += 3;
+        }
+      }
       const selectedPlayers = scoutPlayers.filter(player => !selected || selected.has(player.id));
       if (selectedPlayers.length) {
         let playersOnPage = 0;
@@ -2136,8 +2289,8 @@ async function exportGamePlanPdf(team: Team, gp: GamePlan, rotation: Rotation | 
         };
         startPage();
         for (const player of selectedPlayers) {
-          const card = gp.scouting.playerCards?.find(item => item.playerId === player.id);
-          const row = official?.players?.find((item: { playerId?: string }) => item.playerId === player.id);
+          const card = cards.get(player.id);
+          const row = officialPlayers.get(player.id);
           const p = row ? fillLnbIdentity(player, row) : player;
           const stats = card?.liveStats ?? officialPlayerStats(row) ?? localPlayers.get(p.id);
           const x = M + 30;
@@ -2149,25 +2302,28 @@ async function exportGamePlanPdf(team: Team, gp: GamePlan, rotation: Rotation | 
           if (playersOnPage >= 6 || y + height > H - M) startPage();
           doc.setDrawColor(215, 200, 199); doc.setFillColor(252, 249, 246);
           doc.roundedRect(M, y, W - 2 * M, height, 2, 2, "FD");
-          const photo = p.photo ? await imageToDataUrl(p.photo) : null;
+          const photoUrl = card?.photo || p.photo;
+          const photo = photoUrl ? await imageToDataUrl(photoUrl) : null;
           if (photo) doc.addImage(photo, "JPEG", M + 3, y + 4, 23, 28);
           doc.setTextColor(...burgundy); doc.setFont("helvetica", "bold"); doc.setFontSize(11);
           doc.text(playerLabel(p), x, y + 6, { maxWidth: width });
-          const details = [p.poste || p.postePrincipal, p.taille ? `${p.taille} cm` : "", p.age ? `${p.age} ans` : "", row?.person?.nationality, p.mainDominante].filter(Boolean).join(" · ");
+          const details = [p.poste || p.postePrincipal, (card?.taille || p.taille) ? `${card?.taille || p.taille} cm` : "", p.age ? `${p.age} ans` : "", row?.person?.nationality, card?.mainDominante || p.mainDominante].filter(Boolean).join(" · ");
           const profile = [card?.profile, card?.profile2].filter(Boolean).join(" · ");
           doc.setTextColor(...black); doc.setFont("helvetica", "normal"); doc.setFontSize(8);
           doc.text(details, x, y + 10, { maxWidth: width });
           if (profile) doc.text(`Profil · ${profile}`, x, y + 14, { maxWidth: width });
-          const values = Object.entries(stats || {});
-          const cellWidth = width / 8;
-          values.forEach(([key, value], index) => {
-            const dx = x + (index % 8) * cellWidth;
-            const dy = y + 16 + Math.floor(index / 8) * 6;
-            doc.setFillColor(241, 232, 228); doc.rect(dx, dy, cellWidth - 1, 5.5, "F");
+          const cellWidth = width / compactPlayerMetrics.length;
+          compactPlayerMetrics.forEach((key, index) => {
+            const value = stats?.[key];
+            const dx = x + index * cellWidth;
+            const dy = y + 16;
+            const color = card?.statColors?.[key];
+            doc.setFillColor(...(color === "green" ? [222, 241, 228] : color === "red" ? [250, 224, 227] : [241, 232, 228]));
+            doc.rect(dx, dy, cellWidth - 1, 6, "F");
             doc.setTextColor(...muted); doc.setFontSize(6.4); doc.text(key, dx + 1.2, dy + 2.2);
-            doc.setTextColor(...black); doc.setFontSize(8); doc.text(value == null ? "—" : formatScoutingStat(value), dx + 1.2, dy + 4.9);
+            doc.setTextColor(...black); doc.setFontSize(8); doc.text(value == null ? "—" : formatScoutingStat(value), dx + 1.2, dy + 5.3);
           });
-          if (!values.length) doc.text("Statistiques indisponibles", x, y + 24);
+          pie(x + 6, y + 29, 6, stats?.["2T"], stats?.["3T"]);
           doc.setTextColor(...black); doc.setFontSize(8);
           if (lines.length) doc.text(lines, x, y + 39);
           y += height + 4;

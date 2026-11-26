@@ -1,6 +1,6 @@
 import { after, NextResponse } from 'next/server';
 import { GROUP_SUBJECT, messageGroups, registerMessageGroup } from '@/lib/messaging/groups';
-import { sendMessagePush } from '@/lib/messaging/push-server';
+import { notifyMessageRecipients } from '@/lib/messaging/notify-server';
 import { createClient } from '@/lib/supabase/server';
 import { createAdminClient } from '@/lib/supabase/admin-server';
 import { teamMessagingContacts, MessagingAccessError } from '@/lib/messaging/team-contacts';
@@ -52,7 +52,7 @@ export async function POST(request: Request) {
       try{await registerMessageGroup(db,team.id,{id:rows[0].id,name,memberIds:[user.id,...ids as string[]],createdBy:user.id,createdAt:now})}
       catch(error){await db.from('platform_conversations').delete().eq('id',rows[0].id);throw error}
     }
-    after(async()=>{if(isGroup)await sendMessagePush(db,ids as string[],{title:name,conversationId:rows[0].id});else await Promise.all(rows.map(row=>sendMessagePush(db,[row.recipient_user_id!],{title:profile?.display_name||'MyBasket',conversationId:row.id}))) });
+    after(async()=>{if(isGroup)await notifyMessageRecipients(db,ids as string[],{title:name,conversationId:rows[0].id});else await Promise.all(rows.map(row=>notifyMessageRecipients(db,[row.recipient_user_id!],{title:profile?.display_name||'MyBasket',conversationId:row.id}))) });
     return NextResponse.json({ id: rows[0].id, ids:rows.map(row=>row.id), count:rows.length, group:isGroup });
   } catch (error) { return failure(error); }
 }

@@ -2,7 +2,7 @@ import { after, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { createAdminClient } from '@/lib/supabase/admin-server';
 import { GROUP_SUBJECT, groupsForUser, groupForConversation } from '@/lib/messaging/groups';
-import { sendMessagePush } from '@/lib/messaging/push-server';
+import { notifyMessageRecipients } from '@/lib/messaging/notify-server';
 import { MessagingAccessError } from '@/lib/messaging/team-contacts';
 export const runtime='nodejs';
 export const maxDuration=60;
@@ -37,7 +37,7 @@ export async function POST(request:Request){
   if(error)throw new MessagingAccessError('Le message n’a pas été enregistré.',503);
   await db.from('platform_conversations').update({updated_at:new Date().toISOString()}).eq('id',conversation.id);
   const recipients=(group?.memberIds||[conversation.sender_user_id,conversation.recipient_user_id]).filter((id):id is string=>Boolean(id&&id!==user.id));
-  after(()=>sendMessagePush(db,recipients,{title:group?.name||'MyBasket',conversationId:conversation.id}));
+  after(()=>notifyMessageRecipients(db,recipients,{title:group?.name||'MyBasket',conversationId:conversation.id}));
   return NextResponse.json({ok:true});
  }catch(error){return NextResponse.json({error:error instanceof MessagingAccessError?error.message:'Message non envoyé.'},{status:error instanceof MessagingAccessError?error.status:503})}
 }

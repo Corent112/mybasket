@@ -7,12 +7,14 @@ import {
 } from "@/lib/analytics/load-matches";
 import {
   numeric,
-  ratio,
   type DataRow,
 } from "@/lib/analytics/matches";
 import { fillLnbIdentity } from "@/lib/lnb-statistics-model";
 import { useLnbTeamStatistics } from "@/lib/lnb-statistics-client";
-import { score, codedPlayerStats, officialPlayerStats, scoutingTeamStats, teamMetrics } from "@/lib/scouting-report-stats";
+import { compactPlayerMetrics, shotSplit, codedPlayerStats, officialPlayerStats, scoutingTeamStats, teamMetrics } from "@/lib/scouting-report-stats";
+import { scoutingColors } from "@/lib/scouting-colors";
+import type { CSSProperties } from "react";
+import { scoutingHighlights, highlightColors, type ScoutingSide } from "@/lib/scouting-highlights";
 import styles from "./GamePlanScoutingBoard.module.css";
 
 type P = {
@@ -33,6 +35,7 @@ type T = {
   logo?: string;
   players?: P[];
   competitionSource?: string;
+  couleurs?: string[];
 };
 export type ScoutCard = {
   playerId: string;
@@ -40,6 +43,10 @@ export type ScoutCard = {
   profile2?: string;
   notes: string;
   defend?: string;
+  photo?: string;
+  taille?: string;
+  mainDominante?: string;
+  statColors?: Record<string, "green" | "red" | undefined>;
   liveStats?: Record<string, number | null>;
 };
 export type ScoutStat = { id: string; metric: string; limit: number };
@@ -55,7 +62,40 @@ export type ScoutBoardValue = {
   importantStats?: ScoutStat[];
   playerCards?: ScoutCard[];
   printPlayerIds?: string[];
+  playNotes?: Record<string, string>;
+  highlightSide?: ScoutingSide;
+  highlightMatchIds?: string[];
+  highlightNotes?: string;
 };
+function ShotPie({ two, three }: { two: unknown; three: unknown }) {
+  const split = shotSplit(two, three);
+  if (!split) return null;
+  return <div className={styles.shotPie}>
+    <div aria-hidden="true" style={{ background: `conic-gradient(var(--scout-primary) ${split.share2 * 100}%, var(--scout-secondary) 0)` }} />
+    <p><strong>Tirs tentés</strong><br />2 pts · {fmt(split.p2)} · {fmt(split.share2 * 100)} %<br />3 pts · {fmt(split.p3)} · {fmt((1 - split.share2) * 100)} %</p>
+  </div>;
+}
+
+async function scoutingPhoto(file: File) {
+  if (file.size > 15 * 1024 * 1024) throw new Error("Image trop volumineuse");
+  const url = URL.createObjectURL(file);
+  try {
+    const image = new Image();
+    image.src = url;
+    await image.decode();
+    const scale = Math.min(1, 360 / Math.max(image.naturalWidth, image.naturalHeight));
+    const canvas = document.createElement("canvas");
+    canvas.width = Math.max(1, Math.round(image.naturalWidth * scale));
+    canvas.height = Math.max(1, Math.round(image.naturalHeight * scale));
+    const context = canvas.getContext("2d");
+    if (!context) throw new Error("Image inaccessible");
+    context.drawImage(image, 0, 0, canvas.width, canvas.height);
+    return canvas.toDataURL("image/jpeg", 0.82);
+  } finally {
+    URL.revokeObjectURL(url);
+  }
+}
+
 const PROFILES = [
   "Shooteur",
   "Driver",
@@ -96,11 +136,13 @@ function ScoutingContent({
   onAddSystem,
 }: ScoutingProps) {
   const team = scoutTeams.find((t) => t.id === value.scoutTeamId);
+  const [photoError, setPhotoError] = useState("");
   const [importedCount, setImportedCount] = useState(0);
   const [tab, setTab] = useState<"team" | "players" | "plays">("team");
-  const [data, setData] = useState<{ matches: DataRow[]; rows: DataRow[] }>({
+  const [data, setData] = useState<{ matches: DataRow[]; rows: DataRow[]; actions: DataRow[] }>({
     matches: [],
     rows: [],
+    actions: [],
   });
   const { data: official, loading: officialLoading, error: officialError } =
     useLnbTeamStatistics(team?.id || "", team?.competitionSource === "lnb");
@@ -143,7 +185,7 @@ function ScoutingContent({
       live = false;
     };
   }, [team]);
-  const { uniqueMatches, officialRows, autoStats } = scoutingTeamStats(data, fixtures, official);
+  const { officialRows, autoStats } = scoutingTeamStats(data, fixtures, official);
   const liveStats = useMemo(() => codedPlayerStats(data), [data]);
   const importCount = players.filter(player => liveStats.has(player.id)).length;
 
@@ -166,6 +208,8 @@ function ScoutingContent({
         : [...cards, { playerId: id, profile: "", notes: "", ...patch }],
     });
   }
+  const teamStat = (key: string) => Object.prototype.hasOwnProperty.call(value.teamStats || {}, key)
+    ? value.teamStats?.[key] : autoStats[key];
   const statField = (key: string, title: string) => (
     <label key={key}>
       {title}
@@ -190,8 +234,23 @@ function ScoutingContent({
       />
     </label>
   );
+  const palette = scoutingColors(myTeam?.couleurs);
+  const highlightSide = value.highlightSide ?? "attaque";
+  const codedMatchIds = new Set(data.actions.map(action => String(action.match_id)));
+  const highlightMatches = data.matches.filter(match => codedMatchIds.has(String(match.id)));
+  const highlights = scoutingHighlights(data.actions, highlightSide, value.highlightMatchIds);
+  const colors = [palette.primary, palette.secondary, ...highlightColors.slice(2)];
+  let offset = 0;
+  const slices = highlights.map((row, index) => {
+    const start = offset;
+    offset += row.share * 100;
+    return `${colors[index % colors.length]} ${start}% ${Math.min(100, offset)}%`;
+  });
   return (
-    <div className={styles.root}>
+    <div className={styles.root} style={{
+      "--scout-primary": palette.primary, "--scout-secondary": palette.secondary,
+      "--scout-on-primary": palette.onPrimary, "--scout-ink": palette.ink,
+    } as CSSProperties}>
       <header className={styles.header}>
         <div>
           {team?.logo && <img src={team.logo} alt="" />}
@@ -211,6 +270,10 @@ function ScoutingContent({
               depthChart: {},
               playerCards: [],
               printPlayerIds: undefined,
+              playNotes: {},
+              highlightSide: undefined,
+              highlightMatchIds: undefined,
+              highlightNotes: "",
               teamStats: {},
             })
           }
@@ -255,60 +318,11 @@ function ScoutingContent({
         <>
           {tab === "team" && (
             <>
-              <div className={styles.grid}>
-                <section className={styles.card}>
-                  <h3>Bilan de l’équipe</h3>
-                  <table>
-                    <thead>
-                      <tr>
-                        <th></th>
-                        <th>V</th>
-                        <th>D</th>
-                        <th>% V</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {[
-                        [
-                          "Domicile",
-                          uniqueMatches.filter(
-                            (m) => m.home === true || m.is_home === true,
-                          ),
-                        ],
-                        [
-                          "Extérieur",
-                          uniqueMatches.filter(
-                            (m) => m.home === false || m.is_home === false,
-                          ),
-                        ],
-                        ["Cumulé", uniqueMatches],
-                      ].map(([name, matches]) => {
-                        const rows = matches as DataRow[];
-                        const wins = rows.filter(
-                          (m) => score(m, "us")! > score(m, "them")!,
-                        ).length;
-                        const losses = rows.filter(
-                          (m) => score(m, "us")! < score(m, "them")!,
-                        ).length;
-                        return (
-                          <tr key={String(name)}>
-                            <th>{String(name)}</th>
-                            <td>{rows.length ? wins : "—"}</td>
-                            <td>{rows.length ? losses : "—"}</td>
-                            <td>{fmt(ratio(wins, rows.length, 100))}</td>
-                          </tr>
-                        );
-                      })}
-                    </tbody>
-                  </table>
-                  <p className={styles.note}>
-                    Résultats officiels liés, sinon matchs codés. Les matchs non
-                    joués sont exclus.
-                  </p>
-                </section>
+              <div>
                 <section className={styles.card}>
                   <h3>Statistiques de l’équipe</h3>
                   {official?.ranking && <p><strong>{official.ranking}e</strong> · {official.competition}</p>}
+                  <ShotPie two={teamStat("p2a")} three={teamStat("p3a")} />
                   <div className={styles.stats}>
                     {teamMetrics.map(([key, title]) => statField(key, title))}
                   </div>
@@ -321,13 +335,50 @@ function ScoutingContent({
                 </section>
               </div>
               <section className={styles.card}>
+                <h3>Temps forts des matchs scoutés</h3>
+                <div className={styles.tabs}>
+                  <button type="button" aria-pressed={highlightSide === "attaque"} onClick={() => onChange({ highlightSide: "attaque" })}>Attaque</button>
+                  <button type="button" aria-pressed={highlightSide === "defense"} onClick={() => onChange({ highlightSide: "defense" })}>Défense</button>
+                </div>
+                {!!highlightMatches.length && <details>
+                  <summary>Matchs à analyser</summary>
+                  <button type="button" onClick={() => onChange({ highlightMatchIds: undefined })}>Tous les matchs</button>
+                  {highlightMatches.map(match => {
+                    const id = String(match.id);
+                    const ids = value.highlightMatchIds ?? highlightMatches.map(item => String(item.id));
+                    return <label key={id}><span>
+                      <input type="checkbox" checked={ids.includes(id)} onChange={event => onChange({
+                        highlightMatchIds: event.target.checked ? [...ids, id] : ids.filter(item => item !== id),
+                      })} /> {match.match_date} · {match.opponent || match.opponent_name || "Match scouté"}
+                    </span></label>;
+                  })}
+                </details>}
+                {highlights.length ? <>
+                  <div className={styles.shotPie}>
+                    <div role="img" aria-label="Répartition des possessions par temps fort" style={{ background: `conic-gradient(${slices.length === 1 ? `${colors[0]} 0% 100%` : slices.join(",")})` }} />
+                    <p>Part des possessions codées avec un temps fort.</p>
+                  </div>
+                  <div className={styles.scroll}><table>
+                    <thead><tr><th>Temps fort</th><th>Poss.</th><th>Part</th><th>{highlightSide === "attaque" ? "Pts" : "Pts encaissés"}</th><th>Pts / poss.</th></tr></thead>
+                    <tbody>{highlights.map((row, index) => <tr key={row.label}>
+                      <th><span aria-hidden="true" style={{ color: colors[index % colors.length] }}>● </span>{row.label}</th>
+                      <td>{row.possessions}</td><td>{fmt(row.share * 100)} %</td><td>{row.points}</td>
+                      <td>{row.ppp.toLocaleString("fr-FR", { maximumFractionDigits: 2 })}</td>
+                    </tr>)}</tbody>
+                  </table></div>
+                </> : <p>Aucune possession avec un temps fort pour cette sélection.</p>}
+                <label>Ce qu’on retient
+                  <textarea value={value.highlightNotes || ""} onChange={event => onChange({ highlightNotes: event.target.value })} />
+                </label>
+              </section>
+              <section className={styles.card}>
                 <h3>Répartition par poste</h3>
                 <div className={styles.stats}>
                   {["1", "2", "3", "4", "5"].map((pos) => (
                     <label key={pos}>
                       Poste {pos}
-                      {(value.depthChart?.[pos] || []).map((id) => (
-                        <button
+                      {[...new Set(value.depthChart?.[pos] || [])].map((id) => (
+                        <button className={styles.depthPlayer}
                           key={id}
                           type="button"
                           onClick={() =>
@@ -341,6 +392,10 @@ function ScoutingContent({
                             })
                           }
                         >
+                          {(() => {
+                            const photo = cards.find(card => card.playerId === id)?.photo || players.find(player => player.id === id)?.photo;
+                            return photo ? <img src={photo} alt="" /> : null;
+                          })()}
                           {players.find((p) => p.id === id)
                             ? label(players.find((p) => p.id === id)!)
                             : "Joueur"}{" "}
@@ -444,8 +499,7 @@ function ScoutingContent({
                 const card = cards.find((c) => c.playerId === p.id);
                 const officialStats = officialPlayerStats(published);
                 const stats = card?.liveStats ?? officialStats ?? liveStats.get(p.id);
-                const columns = ["MJ", "5D", "MIN", "PTS", "2R", "2T", "2 %", "3R", "3T", "3 %", "LFR", "LFT", "LF %", "RO", "RD", "PD", "BP", "REB", "INT", "CTR", "F", "FP", "ÉVAL", "+/−"]
-                  .map(title => [title, stats?.[title as keyof typeof stats] ?? null] as const);
+                const columns = compactPlayerMetrics.map(title => [title, stats?.[title] ?? null] as const);
                 return (
                   <article className={styles.card} key={p.id}>
                     <label>
@@ -454,8 +508,8 @@ function ScoutingContent({
                       })} /> Inclure {label(p)} dans le PDF
                     </label>
                     <div className={styles.identity}>
-                      {p.photo ? (
-                        <img src={p.photo} alt="" />
+                      {(card?.photo || p.photo) ? (
+                        <img src={card?.photo || p.photo} alt="" />
                       ) : (
                         <span>#{p.num || "—"}</span>
                       )}
@@ -464,14 +518,41 @@ function ScoutingContent({
                           #{p.num || "—"} {label(p)}
                         </h3>
                         <p>
-                          {p.taille ? `${p.taille} cm · ` : ""}
+                          {(card?.taille || p.taille) ? `${card?.taille || p.taille} cm · ` : ""}
                           {p.poste ||
                             p.postePrincipal ||
                             "Poste à renseigner"}{" "}
-                          · {p.mainDominante || "Main forte à renseigner"}
+                          · {card?.mainDominante || p.mainDominante || "Main forte à renseigner"}
                         </p>
                       </div>
                     </div>
+                    <div className={styles.stats}>
+                      <label>Photo dans le scouting
+                        <input type="file" accept="image/*" onChange={async event => {
+                          const input = event.currentTarget;
+                          const file = input.files?.[0];
+                          input.value = "";
+                          if (!file) return;
+                          try {
+                            const photo = await scoutingPhoto(file);
+                            patchCard(p.id, { photo });
+                          } catch {
+                            setPhotoError(p.id);
+                          }
+                        }} />
+                        {photoError === p.id && <small role="alert">Impossible de lire cette image.</small>}
+                        {card?.photo && <button type="button" onClick={() => patchCard(p.id, { photo: undefined })}>Retirer la photo ajoutée</button>}
+                      </label>
+                      <label>Taille (cm)
+                        <input type="number" min={90} max={260} value={card?.taille ?? p.taille ?? ""} onChange={event => patchCard(p.id, { taille: event.target.value })} />
+                      </label>
+                      <label>Main forte
+                        <select value={card?.mainDominante ?? p.mainDominante ?? ""} onChange={event => patchCard(p.id, { mainDominante: event.target.value })}>
+                          <option value="">À renseigner</option><option>Droite</option><option>Gauche</option><option>Ambidextre</option>
+                        </select>
+                      </label>
+                    </div>
+                    <ShotPie two={stats?.["2T"]} three={stats?.["3T"]} />
                     {stats && <p className={styles.note}>{card?.liveStats ? "LiveStats · stats importées" : officialStats ? "LNB · saison" : "LiveStats · matchs scoutés"}</p>}
                     <div className={styles.scroll}>
                       <table>
@@ -485,7 +566,14 @@ function ScoutingContent({
                         <tbody>
                           <tr>
                             {columns.map(([title, n]) => (
-                              <td key={String(title)}>{fmt(n)}</td>
+                              <td key={title}>
+                                <button type="button" className={styles.statMark} data-color={card?.statColors?.[title]}
+                                  aria-label={`${title} ${fmt(n)} · couleur ${card?.statColors?.[title] === "green" ? "verte" : card?.statColors?.[title] === "red" ? "rouge" : "neutre"}`}
+                                  title="Cliquer pour passer de neutre à vert, puis rouge"
+                                  onClick={() => patchCard(p.id, { statColors: { ...card?.statColors,
+                                    [title]: !card?.statColors?.[title] ? "green" : card.statColors[title] === "green" ? "red" : undefined,
+                                  } })}>{fmt(n)}</button>
+                              </td>
                             ))}
                           </tr>
                         </tbody>
@@ -559,6 +647,11 @@ function ScoutingContent({
                 {systems.map((s) => (
                   <article key={s.id}>
                     <h4>{s.title}</h4>
+                    <label>Notre réponse à ce système
+                      <textarea value={value.playNotes?.[s.id] || ""} onChange={event => onChange({
+                        playNotes: { ...value.playNotes, [s.id]: event.target.value },
+                      })} />
+                    </label>
                     {(s.schemaImages?.length ? s.schemaImages : [s.schemaImage])
                       .filter(Boolean)
                       .map((src: string, i: number) => (
