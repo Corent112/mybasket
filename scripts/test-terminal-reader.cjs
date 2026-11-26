@@ -97,6 +97,14 @@ const verifiedCut=readTerminalRoutes(duplicateFixture.mask,w,h,unit,duplicateFix
 const full={action:"cut",from:at(60,250),to:at(470,250),fromPlayer:"1",points:[at(60,250),at(270,250),at(470,250)]};
 const partial={...full,to:at(320,250),points:[at(60,250),at(190,250),at(320,250)]};
 assert.equal(mergeTerminalRoutes([full,partial],verifiedCut,unit,p=>p,p=>p).length,1,"Incomplete duplicate is removed only with verified longer path");
+const curvedNearArrival={...full,to:at(470,258),geometry:"traced",
+  points:[at(60,250),at(190,300),at(355,295),at(450,283),at(470,258)]};
+for(const local of [[curvedNearArrival],[curvedNearArrival,full],[full,curvedNearArrival]]){
+  const result=mergeTerminalRoutes(local,verifiedCut,unit,p=>p,p=>p);
+  assert.equal(result.length,2,"Different paths from the same player survive close arrowheads");
+  assert.deepEqual(result.find(action=>action.to.y===258)?.points,curvedNearArrival.points);
+  assert.ok(result.some(action=>Math.abs(action.to.y-250)<4&&action.geometry==="traced"));
+}
 const interrupted=raster();
 interrupted.line(at(83,250),at(245,250));
 interrupted.line(at(252,250),at(470,250));

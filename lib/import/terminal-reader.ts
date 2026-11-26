@@ -362,6 +362,8 @@ export function mergeTerminalRoutes(
       if(confirmed.has(action)||action.action==="freedraw"||action.action==="giveball")return false;
       if(distance(toImage(action.to),endpoint)>unit*.027)return false;
       const points=(action.points?.length?action.points:action.from?[action.from,action.to]:[]).map(toImage);
+      if(action.geometry==="traced"&&points.length>=3&&
+         points.slice(1,-1).some(point=>pathDistance(point,route.points)>unit*.04))return false;
       const last=points.at(-1);
       const tail=last&&points.findLast(p=>distance(p,last)>unit*.018);
       const aligned=!!last&&!!tail&&dot(vector(last,tail),endpoint.inward)>.70;
@@ -371,8 +373,18 @@ export function mergeTerminalRoutes(
     // player, keep the two actions independent.
     const competitors=routes.filter(other=>other!==route&&distance(other.terminal,endpoint)<unit*.027);
     const available=candidates.filter(action=>!competitors.some(other=>other.fromPlayer===action.fromPlayer&&other.fromPlayer!==route.fromPlayer));
-    const exact=available.find(action=>action.fromPlayer===route.fromPlayer&&action.action===route.action);
-    const match=exact??(available.length===1?available[0]:undefined);
+    const ranked = available.map(action => {
+      const start = action.from ? toImage(action.from) : undefined;
+      const samples = (action.points?.length ? action.points : action.from ? [action.from, action.to] : []).map(toImage);
+      const meanDeviation = samples.length ? samples.reduce((sum, point) => sum + pathDistance(point, route.points), 0) / samples.length : unit * .04;
+      const cost = distance(toImage(action.to), endpoint) + Math.min(meanDeviation, unit * .08) +
+        (start ? Math.min(distance(start, from), unit * .10) * .5 : unit * .015) +
+        (action.fromPlayer && action.fromPlayer !== route.fromPlayer ? unit * .04 : 0) +
+        (action.action !== route.action ? unit * .01 : 0);
+      return { action, cost };
+    }).sort((a, b) => a.cost - b.cost);
+    const match = ranked.length === 1 || ranked.length > 1 && ranked[1].cost - ranked[0].cost > unit * .008
+      ? ranked[0].action : undefined;
     const stride=Math.max(1,Math.ceil(route.points.length/72));
     const points=route.points.filter((_,i)=>i===0||i===route.points.length-1||i%stride===0).map(canonical);
     const evidence:AiDiagramAction={
@@ -396,6 +408,12 @@ export function mergeTerminalRoutes(
       merged[merged.indexOf(match)]=replacement;confirmed.set(replacement,route);
     }else if(!available.length){
       merged.push(evidence);confirmed.set(evidence,route);
+    }else{
+      for(const {action,cost} of ranked){
+        if(cost-ranked[0].cost>unit*.008)break;
+        action.confidence=Math.min(action.confidence??1,.45);
+        action.source=`${action.source??"Détection"} · plusieurs tracés possibles près de cette terminaison`;
+      }
     }
   }
   const result=merged.filter(action=>{
@@ -405,7 +423,12 @@ export function mergeTerminalRoutes(
       const path=(action.points?.length?action.points:action.from?[action.from,action.to]:[]).map(toImage);
       const duplicate=routes.some(route=>{
         if(route.fromPlayer!==action.fromPlayer||!start||distance(route.points[0],start)>unit*.065)return false;
-        if(distance(route.terminal,end)<unit*.027)return true;
+        if(distance(route.terminal,end)<unit*.027){
+          if(action.action!==route.action&&!(action.action==="shoot"&&route.action==="cut"))return false;
+          const tail=path.findLast(point=>distance(point,end)>unit*.018);
+          return !!tail&&dot(vector(end,tail),route.terminal.inward)>.78&&
+            path.every(point=>pathDistance(point,route.points)<unit*.018);
+        }
         if(action.action==="screen"||action.action==="pass"||route.action==="pass"||route.action==="screen")return false;
         if(distance(route.terminal,end)<unit*.035||distance(route.points[0],end)<unit*.07)return false;
         // Only discard an incomplete trace if its entire visible path lies on
