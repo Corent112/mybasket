@@ -28,6 +28,8 @@ export async function GET(request: Request) {
       .order("last_message_at", { ascending: false })
       .limit(limit);
 
+    const module = str(url.searchParams.get("module"), 60);
+    if (module) query = query.eq("module", module);
     if (!includeArchived) query = query.eq("is_archived", false);
 
     const { data, error } = await query;

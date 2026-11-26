@@ -47,6 +47,7 @@ type ChatBody = {
   conversationId?: string | null;
   module?: string;
   includeReferences?: boolean;
+  workspace?: boolean;
 };
 
 function sse(event: string, payload: unknown): string {
@@ -74,8 +75,8 @@ export async function POST(request: Request) {
   if (!message) return apiError("Le message est vide.");
 
   // The documentary assistant works without a model or embedding API.
-  const client = process.env.MYBASKET_COACH_MODE === "generative" ? getOpenAI() : null;
-  const model = client ? AI_CHAT_MODEL : "mybasket-documents";
+  const client = body.workspace === true || process.env.MYBASKET_COACH_MODE === "generative" ? getOpenAI() : null;
+  const model = client ? (body.workspace === true ? WEB_RESEARCH_MODEL : AI_CHAT_MODEL) : "mybasket-documents";
 
   const moduleKey = str(body.module, 60) || "coach-chat";
   const writer = getWriterClient(actor.supabase);
@@ -269,6 +270,7 @@ export async function POST(request: Request) {
         let answer = "";
         let answerModel = model;
         let usedResearchCache = false;
+        let usedWebAnswer = false;
         let promptTokens = 0;
         let completionTokens = 0;
         let failure: string | null = null;
@@ -315,6 +317,7 @@ export async function POST(request: Request) {
             }
           }
           if (answer) {
+            usedWebAnswer = true;
             push("context", { conversationId: finalConversationId, citations, degraded: false, notes: [] });
             push("delta", { text: answer });
           } else if (!client) {
@@ -329,11 +332,12 @@ export async function POST(request: Request) {
           } else {
             const openaiStream = await client.responses.create({
               model,
-              instructions: context.systemPrompt + "\nRéponds exclusivement aux questions liées au basketball. Demande le contexte basket s’il manque. Donne une réponse détaillée. Réunis tous les éléments pertinents disponibles, en présentant directement toutes les options, leurs conditions, les consignes et les exemples. N’affiche aucun nom de source, fichier, numéro de page ni citation. Évite les répétitions et signale les éléments que les sources ne permettent pas de préciser.",
+              instructions: context.systemPrompt + "\nRéponds exclusivement aux questions liées au basketball. Demande le contexte basket s’il manque. Propose une réponse directement exploitable par un coach. Pour un problème terrain, recommande une solution, explique sa mise en place et donne une variante si utile. Pour une séance, adapte le volume, la durée et les consignes au groupe décrit. Garde les contraintes des tours précédents. Pose une question uniquement si une information manquante change réellement la solution. Réunis tous les éléments pertinents disponibles, en présentant directement toutes les options, leurs conditions, les consignes et les exemples. N’affiche aucun nom de source, fichier, numéro de page ni citation. Évite les répétitions et signale les éléments que les sources ne permettent pas de préciser.",
               input: [
                 ...previous.map((m) => ({ role: m.role, content: m.content })),
                 { role: "user" as const, content: message },
               ],
+              store: false,
               stream: true,
             });
 
@@ -384,7 +388,7 @@ export async function POST(request: Request) {
             .select("id")
             .single();
 
-          if (saved?.id && !failure && answerModel === model && passages.length && sharedWriter) {
+          if (saved?.id && !failure && !usedWebAnswer && passages.length && sharedWriter) {
             const { error } = await sharedWriter.rpc("ai_record_shared_passages", {
               p_chunk_ids: [...new Set(passages.map(({ chunk }) => chunk.id))],
             });
