@@ -147,3 +147,28 @@
 .sources ol{padding-left:18px;margin:5px 0 0}
 .sources li+li{margin-top:4px}
 .sources a{color:#6b1a2c;overflow-wrap:anywhere}
+
+.workspace{display:grid;grid-template-columns:minmax(190px,250px) minmax(0,1fr);gap:22px;max-width:1220px;margin:auto;padding:24px 18px 40px;color:#24171d}
+.history,.workspacePanel{border:1px solid #eadce0;border-radius:18px;background:#fff;min-width:0}
+.history{padding:14px;background:#faf8f4}
+.history summary{margin:15px 0 8px;font-weight:700;cursor:pointer}
+.history button,.starters button{display:block;width:100%;padding:10px;text-align:left;background:#fff;color:#6b1a2c;border:1px solid #eadce0;border-radius:10px;cursor:pointer;overflow-wrap:anywhere}
+.history details button{margin:6px 0;font-size:13px}
+.history button[aria-current=true]{background:#f1e0e5;font-weight:700}
+.workspacePanel{display:flex;flex-direction:column;height:min(800px,calc(100dvh - 125px));min-height:480px;overflow:hidden}
+.workspacePanel header{padding:16px 20px;background:#6b1a2c;color:white}
+.workspacePanel header small{display:block;color:#f3dfe6;margin-top:4px}
+.workspacePanel form{display:flex;gap:8px;padding:14px;border-top:1px solid #eadce0}
+.workspacePanel input{flex:1;min-width:0;border:1px solid #eadce0;border-radius:11px;padding:11px;font:inherit}
+.workspacePanel form button{background:#6b1a2c;color:#fff;border:0;border-radius:10px;min-width:44px}
+.workspacePanel button:disabled,.history button:disabled{opacity:.55}
+.workspacePanel .messages article{max-width:720px;margin-inline:auto;overflow-wrap:anywhere}
+.workspacePanel .messages .user{margin-left:auto!important}
+.welcome,.signedOut{max-width:680px;margin:32px auto;padding:10px 16px}
+.starters{display:grid;gap:8px}
+.launchActions{display:flex;align-items:center;gap:8px}
+.launchActions a{color:white;font-size:12px}
+@media(max-width:660px){.workspace{grid-template-columns:1fr;gap:10px;padding:12px}.history details{max-height:140px;overflow:auto}.workspacePanel{height:70dvh;min-height:380px}.welcome{margin:14px auto}}
+.fileList{display:flex;flex-wrap:wrap;gap:6px;padding:6px 14px}
+.fileList button{max-width:100%;overflow-wrap:anywhere;background:#faf8f4;border:1px solid #eadce0;border-radius:8px;padding:5px 8px;color:#6b1a2c}
+.messages .resourceNames{font-size:12px;color:#6b1a2c;margin-bottom:5px;font-weight:700}

@@ -1,2 +1,5 @@
-import {redirect} from 'next/navigation';
-export default function AssistantPage(){redirect('/mon-compte?tab=management')}
+import KnowledgeChat from "@/components/assistant/KnowledgeChat";
+
+export default function AssistantPage() {
+  return <main><KnowledgeChat workspace /></main>;
+}

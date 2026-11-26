@@ -4,27 +4,31 @@ const path = require('node:path');
 const Module = require('node:module');
 const ts = require('typescript');
 require.extensions['.ts'] = (mod, file) => mod._compile(ts.transpileModule(fs.readFileSync(file, 'utf8'), {compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2020,esModuleInterop:true}}).outputText, file);
-let authenticated = true, missing = true, broken = false, modelFails = false, calls = 0, cachedResearch = null;
+let authenticated = true, missing = true, broken = false, modelFails = false, calls = 0, cachedResearch = null, savedFiles = [], modelInput = [];
 const db = {from(table) {
-  let key;
+  let key, columns;
   const q = {
-    select(){return q}, insert(){return q}, update(){return q}, eq(field,value){if(field==='query_key')key=value;return q}, gte(){return q},
-    async upsert(value){if(table==='ai_basketball_web_research')cachedResearch=value;return {error:null}}, in(){return q}, not(){return q}, order(){return q}, limit(){return q},
+    select(fields){columns=fields;return q}, insert(row){if(row.attachments)savedFiles.push({attachments:row.attachments});return q}, update(){return q}, eq(field,value){if(field==='query_key')key=value;return q}, gte(){return q},
+    async upsert(value){if(table==='ai_basketball_web_research')cachedResearch=value;return {error:null}}, neq(){return q}, in(){return q}, not(){return q}, order(){return q}, limit(){return q},
     async single(){return missing ? {data:null,error:{code:'PGRST205',message:'public.ai_conversations missing'}} : broken ? {data:null,error:{code:'42501',message:'private database policy detail'}} : {data:{id:table==='ai_conversations'?'conversation':'message'},error:null}},
     async maybeSingle(){return {data:table==='ai_basketball_web_research'&&cachedResearch?.query_key===key?cachedResearch:null,error:null}},
-    then(resolve,reject){return Promise.resolve({data:[],count:0,error:missing ? {code:'PGRST205',message:`${table} absent`} : null}).then(resolve,reject)},
+    then(resolve,reject){return Promise.resolve({data:columns?.startsWith("attachments,")?savedFiles:[],count:0,error:missing ? {code:'PGRST205',message:`${table} absent`} : null}).then(resolve,reject)},
   };return q;
 }};
 const original = Module._load;
 Module._load = function(name,parent,main) {
+  if(name==='@/lib/ai/knowledge/extract')return {
+    resolveSourceType:()=> 'txt', isIndexableType:()=>true,
+    extractDocumentText:async buffer=>({pages:[{text:new TextDecoder().decode(buffer)}]})
+  };
   if(name==='@/lib/ai/knowledge/search')return {searchKnowledge:async()=>({chunks:[]})};
   if(name==='@/lib/ai/config')return {AI_CHAT_MODEL:'configured-model',AI_CHAT_RATE_LIMIT:10,AI_CHAT_RATE_WINDOW_MS:60000,AI_HISTORY_LIMIT:20,isOpenAiConfigured:()=>true};
   if(name==='@/lib/ai/knowledge')return {
     resolveActor:async()=>authenticated?{ok:true,actor:{supabase:db,userId:'owner',clubIds:[]}}:{ok:false,error:'Non connecté',status:401},
     getWriterClient:()=>db,buildScopeContext:()=>({}),logAIUsage:async()=>{},
-    buildAIContext:async(_db, options)=>({systemPrompt:'Basket',citations:[],degraded:false,notes:[], terms: options.lexicalOnly ? [{id:'term',term:'Possession',definition:'Contrôle du ballon.'}] : []}),
+    buildAIContext:async(_db, options)=>({systemPrompt:'Basket',citations:[],degraded:false,notes:[], terms: (options.lexicalOnly || options.query === 'Propose une séance basket U18') ? [{id:'term',term:'Possession',definition:'Contrôle du ballon.'}] : []}),
   };
-  if(name==='@/lib/ai/openai')return {getOpenAI:()=>({responses:{create:async options=>{calls++;if(modelFails)throw Error('private provider detail');
+  if(name==='@/lib/ai/openai')return {getOpenAI:()=>({responses:{create:async options=>{calls++;modelInput=options.input;if(modelFails)throw Error('private provider detail');
     if(options.tools)return {status:'completed',output:[{type:'web_search_call'},{type:'message',content:[{
       type:'output_text',text:'Une possession dure au plus 24 secondes en FIBA.',annotations:[
         {type:'url_citation',title:'Règlement FIBA',url:'https://www.fiba.basketball/rules',end_index:47},
@@ -39,7 +43,7 @@ Module._load = function(name,parent,main) {
 };
 const chat = require('../app/api/ai/chat/route.ts');
 const {getKnowledgeOverview} = require('../lib/ai/knowledge/overview.ts');
-const req=(message='Définis une possession')=>new Request('https://mybasket.test/api/ai/chat',{method:'POST',body:JSON.stringify({message})});
+const req=(message='Définis une possession', workspace=false)=>new Request('https://mybasket.test/api/ai/chat',{method:'POST',body:JSON.stringify({message,workspace})});
 const errorLog=console.error;console.error=()=>{};
 (async()=>{
   authenticated=false;assert.equal((await chat.POST(req())).status,401);authenticated=true;
@@ -61,6 +65,20 @@ const errorLog=console.error;console.error=()=>{};
   const repeat = await chat.POST(req('  cherche les sources de la règle basket des 24 secondes ?'));
   assert((await repeat.text()).includes('Règlement FIBA'));
   assert.equal(calls,1, 'Repeat uses the private research cache');
+  const workspace = await chat.POST(req('Propose une séance basket U18', true));
+  const workspaceStream = await workspace.text();
+  assert(workspaceStream.includes('Une possession est une séquence'), 'The workspace generates answers in documentary mode');
+  assert(workspaceStream.includes('event: done'));
+  const data = new FormData();
+  data.set('chat', JSON.stringify({message:'Analyse mon playbook basket',workspace:true}));
+  data.append('resources', new Blob(['La défense Blitz impose une prise à deux.'], {type:'text/plain'}), 'Défense Blitz.txt');
+  const upload = await chat.POST(new Request('https://mybasket.test/api/ai/chat',{method:'POST',body:data}));
+  assert((await upload.text()).includes('event: done'));
+  assert.equal(savedFiles[0].attachments[0].name,'Défense Blitz.txt');
+  assert(modelInput.at(-1).content.includes('prise à deux'));
+  const reused = await chat.POST(req('Propose un exercice pour travailler la défense Blitz',true));
+  assert((await reused.text()).includes('event: done'));
+  assert(modelInput.at(-1).content.includes('Défense Blitz.txt'), 'A new conversation reuses a relevant private resource');
   process.env.MYBASKET_COACH_MODE = 'generative';
   modelFails=true;r=await chat.POST(req());stream=await r.text();assert(stream.includes('event: error'));assert(!stream.includes('private provider detail'));
   console.error=errorLog;Module._load=original;

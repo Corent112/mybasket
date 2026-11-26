@@ -29,12 +29,13 @@ export async function GET(request: Request, context: Ctx) {
       .from("ai_conversations")
       .select("*")
       .eq("id", id)
+      .eq("user_id", result.actor.userId)
       .maybeSingle();
 
     if (error) return apiError(error.message, 500);
     if (!conversation) return apiError("Conversation introuvable.", 404);
 
-    const { data: messages } = await result.actor.supabase
+    const { data: messages, error: messageError } = await result.actor.supabase
       .from("ai_messages")
       .select("*")
       .eq("conversation_id", id)
@@ -42,6 +43,7 @@ export async function GET(request: Request, context: Ctx) {
       .order("created_at", { ascending: true })
       .limit(limit);
 
+    if (messageError) return apiError("Impossible de charger les messages.", 500);
     return apiOk({ conversation, messages: messages || [] });
   } catch (error) {
     return apiServerError("conversations.detail", error);
@@ -73,6 +75,7 @@ export async function PATCH(request: Request, context: Ctx) {
       .from("ai_conversations")
       .update(patch)
       .eq("id", id)
+      .eq("user_id", result.actor.userId)
       .select("*")
       .single();
 
@@ -94,7 +97,8 @@ export async function DELETE(_request: Request, context: Ctx) {
     const { error } = await result.actor.supabase
       .from("ai_conversations")
       .delete()
-      .eq("id", id);
+      .eq("id", id)
+      .eq("user_id", result.actor.userId);
 
     if (error) return apiError(error.message, 500);
     return apiOk({ deleted: id });
