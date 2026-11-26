@@ -4,7 +4,7 @@ const path = require('node:path');
 const Module = require('node:module');
 const ts = require('typescript');
 require.extensions['.ts'] = (mod, file) => mod._compile(ts.transpileModule(fs.readFileSync(file, 'utf8'), {compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2020,esModuleInterop:true}}).outputText, file);
-let authenticated = true, missing = true, broken = false, modelFails = false, calls = 0, cachedResearch = null, savedFiles = [], modelInput = [], publicQueries = [], prior = [], coachInstructions = "";
+let authenticated = true, missing = true, broken = false, modelFails = false, quotaFails = false, calls = 0, cachedResearch = null, savedFiles = [], modelInput = [], publicQueries = [], prior = [], coachInstructions = "";
 const db = {from(table) {
   let key, columns;
   const q = {
@@ -28,7 +28,7 @@ Module._load = function(name,parent,main) {
     getWriterClient:()=>db,buildScopeContext:()=>({}),logAIUsage:async()=>{},
     buildAIContext:async(_db, options)=>({systemPrompt:'Basket',citations:[],degraded:false,notes:[], terms: (options.lexicalOnly || options.query === 'Propose une séance basket U18') ? [{id:'term',term:'Possession',definition:'Contrôle du ballon.'}] : []}),
   };
-  if(name==='@/lib/ai/openai')return {getOpenAI:()=>({responses:{create:async options=>{calls++;modelInput=options.input;if(modelFails)throw Error('private provider detail');
+  if(name==='@/lib/ai/openai')return {getOpenAI:()=>({responses:{create:async options=>{calls++;modelInput=options.input;if(quotaFails)throw Object.assign(Error("You have no credits remaining."),{code:"credit_balance_exhausted"});if(modelFails)throw Error('private provider detail');
     if(options.tools){publicQueries.push(options.input);return {status:'completed',output:[{type:'web_search_call'},{type:'message',content:[{
       type:'output_text',text:'Une possession dure au plus 24 secondes en FIBA.',annotations:[
         {type:'url_citation',title:'Règlement FIBA',url:'https://www.fiba.basketball/rules',end_index:47},
@@ -104,7 +104,12 @@ const errorLog=console.error;console.error=()=>{};
   assert(adapted.includes('event: answer') && adapted.includes('https://www.fiba.basketball/rules'));
   prior = [];
   process.env.MYBASKET_COACH_MODE = 'generative';
-  modelFails=true;r=await chat.POST(req());stream=await r.text();assert(stream.includes('event: error'));assert(!stream.includes('private provider detail'));
+  modelFails=true;r=await chat.POST(req());stream=await r.text();
+  assert(stream.includes('event: done') && stream.includes('Contrôle du ballon.'));
+  assert(!stream.includes('private provider detail'));
+  quotaFails=true;r=await chat.POST(req('Définis une possession',true));stream=await r.text();
+  assert(stream.includes('event: done') && stream.includes('Contrôle du ballon.') && stream.includes('crédits épuisés'));
+  assert(!stream.includes('You have no credits remaining'));
   console.error=errorLog;Module._load=original;
   console.log('Chat initialization passed: missing schema versus empty knowledge base, no provider call before readiness, clear errors without database/provider leakage, authenticated SSE success. No real AI call.');
 })().catch(e=>{console.error=errorLog;Module._load=original;console.error(e);process.exitCode=1});

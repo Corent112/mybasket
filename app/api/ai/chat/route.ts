@@ -58,6 +58,13 @@ function resourceContext(resources: ChatResource[]) {
     JSON.stringify(resources.map(resource => ({ ...resource, text: resource.text.slice(0, 8000) })));
 }
 
+function quotaExhausted(error: unknown) {
+  if (!error || typeof error !== "object") return false;
+  const details = error as { code?: string; type?: string; message?: string; error?: { code?: string } };
+  return [details.code, details.type, details.error?.code].some(code => code === "insufficient_quota" || code === "credit_balance_exhausted")
+    || /no credits remaining|credit balance exhausted/i.test(details.message ?? "");
+}
+
 function sse(event: string, payload: unknown): string {
   return `event: ${event}\ndata: ${JSON.stringify(payload)}\n\n`;
 }
@@ -181,6 +188,8 @@ export async function POST(request: Request) {
       content: string;
       attachments?: ChatResource[];
     }>;
+    const lastTurn = previous.filter(entry => entry.content.trim()).at(-1);
+    const repeatedPending = lastTurn?.role === "user" && lastTurn.content === message && !resources.length;
     const resourceHistory = previous.filter(entry => entry.role === "user").flatMap(entry =>
       Array.isArray(entry.attachments) ? entry.attachments.filter(item => typeof item?.text === "string" && typeof item?.name === "string") : []
     );
@@ -281,7 +290,7 @@ export async function POST(request: Request) {
     }
 
     /* --- 4. Message utilisateur ----------------------------------- */
-    await actor.supabase.from("ai_messages").insert({
+    if (!repeatedPending) await actor.supabase.from("ai_messages").insert({
       conversation_id: conversationId,
       role: "user",
       content: message,
@@ -344,6 +353,7 @@ export async function POST(request: Request) {
         let promptTokens = 0;
         let completionTokens = 0;
         let failure: string | null = null;
+        let quotaUnavailable = false;
 
         push("context", {
           conversationId: finalConversationId,
@@ -384,10 +394,11 @@ export async function POST(request: Request) {
                 }
               }
             } catch (error) {
-              console.warn("[AI][chat] recherche web indisponible", error instanceof Error ? error.name : "Erreur");
+              quotaUnavailable = quotaExhausted(error);
+              console.warn("[AI][chat] recherche web indisponible", quotaUnavailable ? "quota" : error instanceof Error ? error.name : "Erreur");
             }
           }
-          if (webBrief && !workspace) {
+          if (webBrief && (!workspace || quotaUnavailable)) {
             answer = webBrief.answer;
             citations = webBrief.citations;
             answerModel = WEB_RESEARCH_MODEL;
@@ -406,6 +417,7 @@ export async function POST(request: Request) {
             }
             push("delta", { text: answer });
           } else {
+            if (quotaUnavailable) throw Object.assign(new Error("Crédits IA épuisés"), { code: "insufficient_quota" });
             const webSources = webBrief ? [...new Map(webBrief.citations
               .filter(source => source.kind === "web" && /^https?:\/\//i.test(source.url ?? ""))
               .map(source => [source.url, source])).values()].slice(0, 12) : [];
@@ -431,7 +443,7 @@ export async function POST(request: Request) {
               model,
               instructions: context.systemPrompt + "\n" + coachingInstructions,
               input: [
-                ...previous.map((m) => ({ role: m.role, content: m.content })),
+                ...previous.filter(m => m.content.trim() && (!repeatedPending || m !== lastTurn)).map((m) => ({ role: m.role, content: m.content })),
                 { role: "user" as const, content: message + resourceContext(attachedResources) + webContext },
               ],
               max_output_tokens: 4500,
@@ -452,7 +464,10 @@ export async function POST(request: Request) {
                 ).response?.usage;
                 promptTokens += usage?.input_tokens ?? 0;
                 completionTokens += usage?.output_tokens ?? 0;
+              } else if (event.type === "response.failed") {
+                throw event.response.error ?? new Error("Erreur du modèle.");
               } else if (event.type === "error") {
+                if (quotaExhausted(event)) throw event;
                 failure = String(
                   (event as { message?: string }).message || "Erreur du modèle.",
                 );
@@ -466,13 +481,47 @@ export async function POST(request: Request) {
             }
           }
         } catch (error) {
-          failure =
-            error instanceof Error
-              ? error.message
-              : "Erreur pendant la génération.";
-          console.error("[AI][chat] stream", error);
+          quotaUnavailable = quotaExhausted(error);
+          failure = quotaUnavailable ? "insufficient_quota" : "generation_failed";
+          console.warn("[AI][chat] stream", failure);
+          if (!answer && webBrief?.answer) {
+            answer = webBrief.answer;
+            citations = webBrief.citations;
+            answerModel = WEB_RESEARCH_MODEL;
+            usedWebAnswer = true;
+          }
+          if (!answer) {
+            try {
+              const lookup = documentaryQuery(searchQuestion);
+              const fallback = await buildAIContext(actor.supabase, {
+                query: lookup, module: moduleKey, scope, includeDocuments: true, includeTerms: true, lexicalOnly: true,
+              });
+              const definition = fallback.terms?.[0];
+              const excerpts = documentaryPassages(fallback.chunks ?? [], lookup).slice(0, 3);
+              if (definition) {
+                answer = `${definition.term}
+
+${definition.definition}`;
+                const diagram = diagramImageUrl(definition.schema_url);
+                citations = diagram ? [{ kind: "term", id: definition.id, label: definition.term, diagramUrl: diagram }] : [];
+              } else if (excerpts.length) {
+                answer = excerpts.map(({ excerpt }) => excerpt.text).join("\n\n");
+                citations = [];
+              }
+              if (answer) answerModel = "mybasket-documents";
+            } catch {
+              console.warn("[AI][chat] secours documentaire indisponible");
+            }
+          }
+          if (answer && (answerModel === "mybasket-documents" || usedWebAnswer)) {
+            failure = null;
+            const note = quotaUnavailable ? "Réponse de secours · génération IA indisponible (crédits épuisés)." : "Réponse de secours · génération IA temporairement indisponible.";
+            answer += "\n\n" + note;
+            push("answer", { text: answer, citations });
+          }
         }
 
+        if (!answer.trim() && !failure) failure = "empty_answer";
         const latency = Date.now() - started;
 
         try {
@@ -528,7 +577,7 @@ export async function POST(request: Request) {
           if (failure) {
             push("error", {
               message:
-                "L’assistant n’a pas pu terminer sa réponse. Réessaie dans un instant.",
+                quotaUnavailable ? "La génération IA est suspendue : le compte API MyBasket n’a plus de crédits. Aucune ressource MyBasket pertinente n’a été trouvée pour répondre à cette question." : "L’assistant n’a pas pu terminer sa réponse. Réessaie dans un instant.",
             });
           } else {
             push("done", {

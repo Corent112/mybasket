@@ -94,13 +94,15 @@ export async function DELETE(_request: Request, context: Ctx) {
   if (!isUuid(id)) return apiError("Identifiant invalide.");
 
   try {
-    const { error } = await result.actor.supabase
+    const { data, error } = await result.actor.supabase
       .from("ai_conversations")
       .delete()
       .eq("id", id)
-      .eq("user_id", result.actor.userId);
+      .eq("user_id", result.actor.userId)
+      .select("id").maybeSingle();
 
-    if (error) return apiError(error.message, 500);
+    if (error) return apiError("Impossible de supprimer la conversation.", 500);
+    if (!data) return apiError("Conversation introuvable.", 404);
     return apiOk({ deleted: id });
   } catch (error) {
     return apiServerError("conversations.delete", error);

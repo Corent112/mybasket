@@ -1,5 +1,6 @@
 "use client";
 import Link from "next/link";
+import { Trash2 } from "lucide-react";
 import KnowledgeDiagram from "@/components/assistant/KnowledgeDiagram";
 import type { AuthChangeEvent, Session, User } from "@supabase/supabase-js";
 
@@ -51,6 +52,7 @@ export default function KnowledgeChat({ workspace = false }: { workspace?: boole
   const [accountId, setAccountId] = useState("");
   const [history, setHistory] = useState<Conversation[]>([]);
   const [historyError, setHistoryError] = useState("");
+  const [deleting, setDeleting] = useState<string | null>(null);
   const [opening, setOpening] = useState(false);
   const [loadingHistory, setLoadingHistory] = useState(false);
   const [open, setOpen] = useState(false);
@@ -161,13 +163,32 @@ export default function KnowledgeChat({ workspace = false }: { workspace?: boole
     }
   }
 
+  async function deleteConversation(item: Conversation) {
+    if (busy || opening || deleting || !window.confirm(`Supprimer définitivement « ${item.title} » et ses messages ?`)) return;
+    const account = owner.current;
+    setDeleting(item.id);
+    setHistoryError("");
+    try {
+      const response = await fetch(`/api/ai/conversations/${encodeURIComponent(item.id)}`, { method: "DELETE" });
+      if (!response.ok) throw new Error();
+      if (owner.current !== account) return;
+      setHistory(old => old.filter(entry => entry.id !== item.id));
+      if (conversation.current === item.id) newConversation();
+    } catch {
+      if (owner.current === account) setHistoryError("Impossible de supprimer cette conversation.");
+    } finally {
+      setDeleting(null);
+    }
+  }
+
   async function send(text: string) {
     const question = text.trim();
-    if (!question || busy || opening) return;
+    if (!question || busy || opening || deleting || abort.current) return;
     const selectedFiles = files;
     setBusy(true);
     setError("");
     setInput("");
+    const originalMessages = messages;
     setMessages((old) => [
       ...old,
       { role: "user", text: question, resources: selectedFiles.map(file => file.name) },
@@ -218,6 +239,9 @@ export default function KnowledgeChat({ workspace = false }: { workspace?: boole
           const data = JSON.parse(raw);
           if (event === "context") {
             conversation.current = data.conversationId;
+            const id = data.conversationId;
+            if (workspace && id) setHistory(old => old.some(item => item.id === id)
+              ? old : [{ id, title: question.slice(0, 80), module: "coach-chat" }, ...old]);
             setMessages((old) =>
               old.map((m, i) =>
                 i === old.length - 1 ? { ...m, citations: data.citations } : m,
@@ -254,12 +278,7 @@ export default function KnowledgeChat({ workspace = false }: { workspace?: boole
       if ((e as Error).name !== "AbortError") {
         setError((e as Error).message);
         setInput(question);
-        setMessages((old) =>
-          old.filter(
-            (m, i) =>
-              i !== old.length - 1 || m.role !== "assistant" || !!m.text,
-          ),
-        );
+        setMessages(old => old.at(-1)?.text ? old : originalMessages);
       }
     } finally {
       setBusy(false);
@@ -294,14 +313,20 @@ export default function KnowledgeChat({ workspace = false }: { workspace?: boole
   return (
     <aside className={workspace ? styles.workspace : styles.root} aria-label="Assistant MyBasket">
       {workspace && <nav className={styles.history} aria-label="Conversations">
-        <button type="button" onClick={newConversation} disabled={busy || opening}>＋ Nouvelle conversation</button>
+        <button type="button" onClick={newConversation} disabled={busy || opening || !!deleting}>＋ Nouvelle conversation</button>
         <details open>
           <summary>Historique</summary>
           {loadingHistory && <p role="status">Chargement…</p>}
           {historyError && <p role="status">{historyError}</p>}
-          {history.map(item => <button type="button" key={item.id} disabled={busy || opening}
-            aria-current={conversation.current === item.id ? "true" : undefined}
-            onClick={() => void openConversation(item.id)}>{item.title}</button>)}
+          {!history.length && !loadingHistory && !historyError && <p>Aucune conversation</p>}
+          {history.map(item => <div key={item.id} className={styles.historyRow}>
+            <button type="button" disabled={busy || opening || !!deleting}
+              aria-current={conversation.current === item.id ? "true" : undefined}
+              onClick={() => void openConversation(item.id)}>{item.title}</button>
+            <button type="button" className={styles.deleteChat} disabled={busy || opening || !!deleting}
+              aria-label={`Supprimer la conversation ${item.title}`} title="Supprimer la conversation"
+              onClick={() => void deleteConversation(item)}><Trash2 size={16} aria-hidden="true" /></button>
+          </div>)}
         </details>
       </nav>}
       {(open || workspace) && (
@@ -395,7 +420,7 @@ export default function KnowledgeChat({ workspace = false }: { workspace?: boole
               onChange={(e) => setInput(e.target.value)}
             />
             <button
-              disabled={busy || opening || !input.trim()}
+              disabled={busy || opening || !!deleting || !input.trim()}
               aria-label="Envoyer la question"
             >
               ↑

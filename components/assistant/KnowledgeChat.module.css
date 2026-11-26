@@ -172,3 +172,8 @@
 .fileList{display:flex;flex-wrap:wrap;gap:6px;padding:6px 14px}
 .fileList button{max-width:100%;overflow-wrap:anywhere;background:#faf8f4;border:1px solid #eadce0;border-radius:8px;padding:5px 8px;color:#6b1a2c}
 .messages .resourceNames{font-size:12px;color:#6b1a2c;margin-bottom:5px;font-weight:700}
+
+.historyRow{display:grid;grid-template-columns:minmax(0,1fr) 40px;gap:6px;align-items:stretch}
+.historyRow .deleteChat{display:grid;place-items:center;padding:4px;text-align:center}
+.historyRow .deleteChat:hover{background:#f8e5e8;color:#a02b42}
+.historyRow button:focus-visible{outline:2px solid #6b1a2c;outline-offset:2px}
