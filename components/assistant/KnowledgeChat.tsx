@@ -232,6 +232,10 @@ export default function KnowledgeChat({ workspace = false }: { workspace?: boole
                   : m,
               ),
             );
+          if (event === "answer") {
+            setMessages(old => old.map((m, i) => i === old.length - 1
+              ? { ...m, text: data.text, citations: data.citations } : m));
+          }
           if (event === "done") {
             complete = true;
             const id = conversation.current;

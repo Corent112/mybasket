@@ -11,6 +11,31 @@ export function asksForWebResearch(question: string) {
     /\b(google|internet|vid[ée]os?|youtube|vimeo|sources?|articles?|sites?|en ligne|web|actualise|rev[ée]rifie|rafra[îi]chis|d[ée]finitions?)\b/iu.test(question);
 }
 
+export function shouldResearchCoachingQuestion(question: string) {
+  return /\b(exercices?|s[ée]ances?|situations?|variantes?|tactique|entra[îi]nement|d[ée]fendre|attaquer|pick|short roll|syst[èe]mes?|r[èe]glements?)\b/iu.test(question);
+}
+
+export function publicBasketballQuestion(question: string) {
+  return question.replace(/https?:\/\/\S+/giu, " ").replace(/\b[^\s@]+@[^\s@]+\.[^\s@]+/gu, " ").trim();
+}
+
+export function publicSourceLinks(answer: string, sources: AiCitation[]) {
+  const citations: AiCitation[] = [];
+  let text = "";
+  let offset = 0;
+  for (const match of answer.matchAll(/\[W(\d+)\]/g)) {
+    const index = match.index;
+    const source = sources[Number(match[1]) - 1];
+    text += answer.slice(offset, index);
+    if (source && !citations.some(citation => citation.url === source.url && citation.endIndex === text.length)) {
+      citations.push({ ...source, endIndex: text.length });
+    }
+    offset = index + match[0].length;
+  }
+  text += answer.slice(offset);
+  return { text, citations };
+}
+
 export function researchCachePolicy(question: string) {
   const normalized = question.normalize("NFC").trim().toLocaleLowerCase("fr").replace(/\s+/gu, " ").replace(/[?!.]+$/u, "").trim();
   const queryKey = createHash("sha256").update(WEB_RESEARCH_MODEL + "\n" + normalized).digest("hex");
