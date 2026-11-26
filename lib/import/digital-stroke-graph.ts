@@ -181,8 +181,9 @@ export function readDigitalStrokeGraph(mask:Uint8Array,w:number,h:number,unit:nu
 export function reconcileDigitalRoutes(actions:AiDiagramAction[],routes:TerminalRoute[],unit:number,
   toImage:(p:AiPoint)=>AiPoint,canonical:(p:AiPoint)=>AiPoint):AiDiagramAction[]{
   const result=[...actions];
+  const reconstructed=new Set<AiDiagramAction>();
   for(const route of routes){
-    const near=result.filter(action=>action.action!=="pass"&&action.action!=="freedraw"&&
+    const near=result.filter(action=>!reconstructed.has(action)&&action.action!=="pass"&&action.action!=="freedraw"&&
       distance(toImage(action.to),route.terminal)<unit*.027);
     const verifiedBar=near.find(action=>action.action==="screen"&&action.fromPlayer===route.fromPlayer&&
       action.source?.startsWith("Pointe ou barre vérifiée"));
@@ -194,6 +195,7 @@ export function reconcileDigitalRoutes(actions:AiDiagramAction[],routes:Terminal
     const index=matching.length?Math.min(...matching.map(action=>result.indexOf(action))):result.length;
     for(const action of matching)result.splice(result.indexOf(action),1);
     result.splice(index,0,replacement);
+    reconstructed.add(replacement);
   }
   // A legacy screen placed in the middle of its owner's complete graph
   // route is not a second action. Require independent bar evidence to keep it.
@@ -212,7 +214,7 @@ export function orderDigitalActions(actions:AiDiagramAction[],unit:number,toImag
   const movement=(action:AiDiagramAction)=>["cut","screen","dribble"].includes(action.action);
   const close=(a:AiPoint|undefined,b:AiPoint|undefined)=>!!a&&!!b&&distance(toImage(a),toImage(b))<unit*.045;
   const before=(a:AiDiagramAction,b:AiDiagramAction)=>{
-    if(a===b)return false;
+    if(a===b||!a.fromPlayer||!b.fromPlayer)return false;
     if(movement(a)&&a.fromPlayer===b.fromPlayer&&close(a.to,b.from)&&!close(a.from,b.from))return true;
     if(a.action==="pass"&&b.action==="dribble"&&a.toPlayer===b.fromPlayer&&b.from&&distance(toImage(a.to),toImage(b.from))<unit*.065)return true;
     if(a.action==="pass"&&movement(b)&&a.fromPlayer===b.fromPlayer&&close(a.from,b.from))return true;

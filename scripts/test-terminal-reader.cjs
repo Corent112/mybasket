@@ -158,3 +158,17 @@ const auditDiagram={scanAudit:{terminals:[{id:"p",kind:"arrow",strokeStyle:"dash
 assert.deepEqual(unresolvedScanTerminals(auditDiagram).map(t=>t.id),["p"]);
 auditDiagram.actions.push({action:"pass",to:{x:.6,y:.2}});
 assert.equal(unresolvedScanTerminals(auditDiagram).length,0);
+
+const {reconcileDigitalRoutes,orderDigitalActions}=require("../lib/import/digital-stroke-graph.ts");
+const sharedTip=at(300,240);
+const sharedRoutes=[{key:"a",from:at(150,240),inward:at(-1,0)},{key:"b",from:at(300,100),inward:at(0,-1)}].map(({key,from,inward})=>({
+  action:"cut",fromPlayer:key,points:[from,sharedTip],terminal:{...sharedTip,kind:"arrow",inward,size:7,score:.95},confidence:.9,
+}));
+const separate=reconcileDigitalRoutes([],sharedRoutes,unit,p=>p,p=>p);
+assert.deepEqual(separate.map(a=>a.fromPlayer),["a","b"],"Two observed paths sharing one tip remain distinct");
+const chain=[
+  {action:"pass",fromPlayer:"a",toPlayer:"b",from:at(300,300),to:at(500,280)},
+  {action:"dribble",fromPlayer:"a",from:at(200,200),to:at(300,300)},
+  {action:"cut",fromPlayer:"a",from:at(100,100),to:at(200,200)},
+];
+assert.deepEqual(orderDigitalActions(chain,unit,p=>p).map(a=>a.action),["cut","dribble","pass"]);

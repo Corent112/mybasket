@@ -297,27 +297,41 @@ export function readTerminalRoutes(mask:Uint8Array,width:number,height:number,un
   if(inkCount>unit*unit*.15)return [];
   const ink=makeSampler(mask,width,height);
   const terminals=inventory??detectInkTerminals(mask,width,height,unit);
-  const routeFrom=(terminal:InkTerminal,starts:InkMarker[])=>{
-    const continuous=continuousRoute(ink,terminal,starts,unit);
-    return continuous?.action==="dribble"?continuous:dashedRoute(ink,terminal,starts,unit)??continuous;
+  const routes:TerminalRoute[]=[];
+  const claimed=new Set<InkTerminal>();
+  // Classify the ink before assigning a fallback movement type. A dotted
+  // route cannot become a cut merely because its final dash is continuous.
+  const collect=(starts:InkMarker[])=>{
+    const pending=terminals.filter(terminal=>!claimed.has(terminal));
+    const candidates=pending.flatMap(terminal=>{
+      const origins=starts.filter(marker=>marker.center!==terminal);
+      const pass=dashedRoute(ink,terminal,origins,unit);
+      const continuous=pass?null:continuousRoute(ink,terminal,origins,unit);
+      const route=pass??continuous;
+      return route?[route]:[];
+    });
+    for(const kind of ["pass","dribble","screen","cut"] as const){
+      for(const route of candidates.filter(candidate=>candidate.action===kind)){
+        claimed.add(route.terminal);
+        routes.push(route);
+      }
+    }
   };
-  const routes=terminals.flatMap(terminal=>{
-    const route=routeFrom(terminal,markers);
-    return route?[route]:[];
-  });
-  // A player can start another action from the end of a verified movement.
-  // Keep the original markers as well and require a unique spatial attachment.
-  const arrivals=routes.filter(route=>route.action!=="pass").map(route=>({
+  collect(markers);
+  // Resolve further departures in waves: the end of a screen or a cut can
+  // be the start of another movement by the same player.
+  const arrivals=()=>routes.filter(route=>route.action!=="pass").map(route=>({
     key:route.fromPlayer,center:route.terminal,radius:Math.max(3,route.terminal.size*.45),
   }));
-  for(const terminal of terminals){
-    if(routes.some(route=>route.terminal===terminal))continue;
-    const route=routeFrom(terminal,[...markers,...arrivals.filter(arrival=>distance(arrival.center,terminal)>unit*.045)]);
-    if(route)routes.push(route);
+  while(claimed.size<terminals.length){
+    const previous=claimed.size;
+    collect([...markers,...arrivals()]);
+    if(claimed.size===previous)break;
   }
+  const receptionPoints=arrivals();
   for(const route of routes){
     if(route.action==="pass"&&!route.toPlayer){
-      route.toPlayer=passReceiver(arrivals,route.terminal,route.fromPlayer,unit)?.key;
+      route.toPlayer=passReceiver(receptionPoints,route.terminal,route.fromPlayer,unit)?.key;
     }
   }
   return routes;
