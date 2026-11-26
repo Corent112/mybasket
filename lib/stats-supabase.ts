@@ -1580,7 +1580,7 @@ function mergeActionValues(
   return merged as LiveMatchAction;
 }
 
-function mergeProjectAndSqlActions(
+export function mergeProjectAndSqlActions(
   projectActions: Record<string, any>[],
   sqlActions: LiveMatchAction[]
 ): LiveMatchAction[] {

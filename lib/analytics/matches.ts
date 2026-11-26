@@ -1,3 +1,6 @@
+import { highlightBaseKey, highlightLabel } from "@/lib/livestat-labels";
+import { ptsOf } from "@/lib/player-match-stats";
+
 /** Missing measurements stay null. Percentages are ratios of sums, never means of percentages. */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Legacy database projections use different field names; measurements are checked by numeric().
 export type DataRow = Record<string, any>;
@@ -114,7 +117,10 @@ export function indicators(box: Box, opponent?: Box) {
     ftr: ratio(box.fta, fga),
     assists: ratio(box.ast, fgm, 100),
     astTo: ratio(box.ast, box.turnovers),
-    pointsPerShot: ratio(box.pts, fga),
+    pointsPerShot: ratio(
+      box.p2m == null || box.p3m == null ? null : 2 * box.p2m + 3 * box.p3m,
+      fga,
+    ),
     threeRate: ratio(box.p3a, fga, 100),
   };
 }
@@ -272,4 +278,40 @@ export function matchMinutes(match: DataRow) {
     .map(Number)
     .filter(Number.isFinite);
   return 40 + Math.max(0, (periods.length ? Math.max(...periods) : 4) - 4) * 5;
+}
+
+
+export function fastBreakPoints(
+  actions: DataRow[],
+  tags: ReadonlyMap<string, string>,
+  side: "attaque" | "defense" = "attaque",
+): number | null {
+  const isFastBreak = (value: string) => {
+    const term = value.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().trim();
+    return /^(jr|jeu[ _-]+rapide|fast[ _-]*break|contre[ _-]*attaque)$/.test(term);
+  };
+  const tagged = actions.filter((action) => {
+    if (action.context !== side || action.action_type === "marqueur") return false;
+    const key = String(action.temps_fort || "");
+    return isFastBreak(highlightBaseKey(key)) || isFastBreak(tags.get(key) ?? highlightLabel(key));
+  });
+  if (!tagged.length) return null;
+  if (side === "defense") return tagged.reduce((total, action) => {
+    const type = action.action_type;
+    const basket = type === "tir" && action.shot_result === "made"
+      ? action.shot_type === "3PTS" ? 3 : action.shot_type === "2PTS" ? 2 : 0
+      : type === "faute-commise"
+        ? /3pts\+1lf/.test(action.special_case || "") ? 3 : /2pts\+1lf/.test(action.special_case || "") ? 2 : 0
+        : 0;
+    return total + basket + (["tir", "faute-commise"].includes(type) ? numeric(action.ft_made) ?? 0 : 0);
+  }, 0);
+  return tagged.reduce((total, action) => total + ptsOf({
+    context: action.context,
+    actionType: action.action_type,
+    shotType: action.shot_type,
+    shotResult: action.shot_result,
+    specialCase: action.special_case,
+    foulOutcome: action.foul_outcome,
+    ftMade: numeric(action.ft_made) ?? 0,
+  }), 0);
 }
