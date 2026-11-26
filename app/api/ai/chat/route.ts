@@ -1,3 +1,4 @@
+import OpenAI from "openai";
 import { diagramImageUrl, documentaryPassages, documentaryQuery, documentaryTopics, learnedDocumentQuery, relaxedDocumentQuery } from "@/lib/ai/knowledge/document-answer";
 import { searchKnowledge } from "@/lib/ai/knowledge/search";
 import {
@@ -39,7 +40,7 @@ export const maxDuration = 120;
  *   done     → { messageId, usage }
  *   error    → { message }
  *
- * La clé OpenAI ne quitte jamais le serveur.
+ * Les identifiants des moteurs de génération restent côté serveur.
  */
 
 type ChatBody = {
@@ -84,6 +85,13 @@ export async function POST(request: Request) {
   );
   if (limited) return limited;
 
+  const hostedModel = process.env.MYBASKET_CHAT_MODEL?.trim();
+  const hostedBaseURL = process.env.MYBASKET_CHAT_BASE_URL?.trim();
+  const hostedApiKey = process.env.MYBASKET_CHAT_API_KEY?.trim();
+  const hostedClient = hostedModel && hostedBaseURL && hostedApiKey
+    ? new OpenAI({ baseURL: hostedBaseURL, apiKey: hostedApiKey })
+    : null;
+
   let body: ChatBody;
   let resources: ChatResource[] = [];
   if (request.headers.get("content-type")?.startsWith("multipart/form-data")) {
@@ -97,7 +105,7 @@ export async function POST(request: Request) {
         return apiError("Ajoute au maximum 3 fichiers, pour un total de 4 Mo.", 413);
       }
       if (files.length) {
-        if (!getOpenAI()) return apiError("L’analyse de ressources est momentanément indisponible.", 503);
+        if (!hostedClient && !getOpenAI()) return apiError("L’analyse de ressources est momentanément indisponible.", 503);
         const { extractDocumentText, isIndexableType, resolveSourceType } = await import("@/lib/ai/knowledge/extract");
         resources = await Promise.all((files as File[]).map(async file => {
           const type = resolveSourceType(file.type, file.name);
@@ -119,8 +127,13 @@ export async function POST(request: Request) {
   if (!message) return apiError("Le message est vide.");
 
   // The documentary assistant works without a model or embedding API.
-  const client = body.workspace === true || process.env.MYBASKET_COACH_MODE === "generative" ? getOpenAI() : null;
-  const model = client ? (body.workspace === true ? WEB_RESEARCH_MODEL : AI_CHAT_MODEL) : "mybasket-documents";
+  const openAIClient = !hostedClient && (body.workspace === true || process.env.MYBASKET_COACH_MODE === "generative")
+    ? getOpenAI()
+    : null;
+  const client = hostedClient || openAIClient;
+  const model = hostedClient && hostedModel
+    ? hostedModel
+    : openAIClient ? (body.workspace === true ? WEB_RESEARCH_MODEL : AI_CHAT_MODEL) : "mybasket-documents";
 
   const moduleKey = str(body.module, 60) || "coach-chat";
   const writer = getWriterClient(actor.supabase);
@@ -235,7 +248,7 @@ export async function POST(request: Request) {
       scope,
       includeDocuments: true,
       includeTerms: true,
-      lexicalOnly: !client,
+      lexicalOnly: !openAIClient,
       includeCorrections: !!client,
       includeReferences: !!client && boolOr(body.includeReferences, false),
     }), relaxedQuery
@@ -270,6 +283,7 @@ export async function POST(request: Request) {
             scope,
             includeDocuments: true,
             includeTerms: true,
+            lexicalOnly: !openAIClient,
             includeCorrections: true,
             includeReferences: boolOr(body.includeReferences, false),
           });
@@ -369,7 +383,7 @@ export async function POST(request: Request) {
           const webQuestion = publicBasketballQuestion(searchQuestion);
           const greeting = /^(?:bonjour|salut|hello|merci|ok)[.! ]*$/iu.test(message);
           const requiresWeb = !greeting && (explicitWeb || !evidenceAvailable || (workspace && shouldResearchCoachingQuestion(searchQuestion)));
-          const researchClient = webQuestion && requiresWeb ? getOpenAI() : null;
+          const researchClient = webQuestion && requiresWeb && !hostedClient ? getOpenAI() : null;
           if (researchClient) {
             try {
               const { queryKey, refresh, cutoff } = researchCachePolicy(webQuestion);
@@ -439,38 +453,61 @@ export async function POST(request: Request) {
               "Quand tu reprends un résultat de recherche publique, cite-le au point où tu l’utilises avec son marqueur [W1], [W2], etc. Utilise uniquement les marqueurs fournis, sans inventer de lien ni citer de recherche absente. Une proposition originale de coaching n’a pas besoin d’être attribuée à une source.",
               explicitWeb && !webSources.length ? "La recherche publique n’a fourni aucune source vérifiable pour cette réponse. Dis-le brièvement." : "",
             ].filter(Boolean).join("\n");
-            const openaiStream = await client.responses.create({
-              model,
-              instructions: context.systemPrompt + "\n" + coachingInstructions,
-              input: [
-                ...previous.filter(m => m.content.trim() && (!repeatedPending || m !== lastTurn)).map((m) => ({ role: m.role, content: m.content })),
-                { role: "user" as const, content: message + resourceContext(attachedResources) + webContext },
-              ],
-              max_output_tokens: 4500,
-              store: false,
-              stream: true,
-            }, { timeout: 55_000, maxRetries: 0 });
+            const instructions = context.systemPrompt + "\n" + coachingInstructions;
+            const input = [
+              ...previous.filter(m => m.content.trim() && (!repeatedPending || m !== lastTurn)).map(m => ({ role: m.role, content: m.content })),
+              { role: "user" as const, content: message + resourceContext(attachedResources) + webContext },
+            ];
+            const options = { timeout: 55_000, maxRetries: 0, signal: request.signal };
 
-            for await (const event of openaiStream) {
-              if (event.type === "response.output_text.delta") {
-                const delta = (event as { delta?: string }).delta || "";
+            if (hostedClient) {
+              const hostedStream = await hostedClient.chat.completions.create({
+                model,
+                messages: [{ role: "system", content: instructions }, ...input],
+                max_tokens: 2000,
+                stream: true,
+              }, options);
+
+              for await (const chunk of hostedStream) {
+                const delta = chunk.choices[0]?.delta?.content;
                 if (delta) {
                   answer += delta;
                   push("delta", { text: delta });
                 }
-              } else if (event.type === "response.completed") {
-                const usage = (
-                  event as { response?: { usage?: Record<string, number> } }
-                ).response?.usage;
-                promptTokens += usage?.input_tokens ?? 0;
-                completionTokens += usage?.output_tokens ?? 0;
-              } else if (event.type === "response.failed") {
-                throw event.response.error ?? new Error("Erreur du modèle.");
-              } else if (event.type === "error") {
-                if (quotaExhausted(event)) throw event;
-                failure = String(
-                  (event as { message?: string }).message || "Erreur du modèle.",
-                );
+                promptTokens = chunk.usage?.prompt_tokens ?? promptTokens;
+                completionTokens = chunk.usage?.completion_tokens ?? completionTokens;
+              }
+            } else if (openAIClient) {
+              const openaiStream = await openAIClient.responses.create({
+                model,
+                instructions,
+                input,
+                max_output_tokens: 4500,
+                store: false,
+                stream: true,
+              }, options);
+
+              for await (const event of openaiStream) {
+                if (event.type === "response.output_text.delta") {
+                  const delta = (event as { delta?: string }).delta || "";
+                  if (delta) {
+                    answer += delta;
+                    push("delta", { text: delta });
+                  }
+                } else if (event.type === "response.completed") {
+                  const usage = (
+                    event as { response?: { usage?: Record<string, number> } }
+                  ).response?.usage;
+                  promptTokens += usage?.input_tokens ?? 0;
+                  completionTokens += usage?.output_tokens ?? 0;
+                } else if (event.type === "response.failed") {
+                  throw event.response.error ?? new Error("Erreur du modèle.");
+                } else if (event.type === "error") {
+                  if (quotaExhausted(event)) throw event;
+                  failure = String(
+                    (event as { message?: string }).message || "Erreur du modèle.",
+                  );
+                }
               }
             }
             if (webSources.length && answer) {
@@ -577,7 +614,7 @@ ${definition.definition}`;
           if (failure) {
             push("error", {
               message:
-                quotaUnavailable ? "La génération IA est suspendue : le compte API MyBasket n’a plus de crédits. Aucune ressource MyBasket pertinente n’a été trouvée pour répondre à cette question." : "L’assistant n’a pas pu terminer sa réponse. Réessaie dans un instant.",
+                quotaUnavailable && hostedClient ? "Le moteur IA MyBasket a atteint sa limite d’utilisation. Réessaie plus tard." : quotaUnavailable ? "La génération IA est suspendue : le compte API MyBasket n’a plus de crédits. Aucune ressource MyBasket pertinente n’a été trouvée pour répondre à cette question." : "L’assistant n’a pas pu terminer sa réponse. Réessaie dans un instant.",
             });
           } else {
             push("done", {

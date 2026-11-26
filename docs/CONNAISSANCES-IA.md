@@ -333,3 +333,28 @@ npm run build                                 # ✅ build complet
 | Documents indexés mais 0 passage trouvé              | Embeddings non générés             | Vérifier la clé, puis **Réindexer** depuis l'onglet Documents.           |
 | Upload : « Envoi du fichier impossible »             | `SUPABASE_SERVICE_ROLE_KEY` absente | L'ajouter : elle est requise pour écrire dans le bucket privé.           |
 | `permission denied for table ai_knowledge_chunks`    | Écriture sans service role         | Idem — l'indexation utilise `createAdminClient()`.                        |
+
+## Moteur génératif hébergé pour MyBasket
+
+Le chat et la page Assistant peuvent utiliser un moteur d’inférence administré
+par MyBasket via une API compatible Chat Completions, avec réponses en flux.
+Configure les trois variables côté serveur sur l’environnement de prévisualisation.
+
+- `MYBASKET_CHAT_BASE_URL` : URL de l’API d’inférence, préfixe `/v1` compris si le serveur l’exige.
+- `MYBASKET_CHAT_MODEL` : identifiant exact du modèle sur ce serveur.
+- `MYBASKET_CHAT_API_KEY` : clé d’accès à cette API.
+
+Utilise un serveur joignable depuis Vercel, protégé par HTTPS et authentification.
+Ce moteur reçoit les messages de la conversation et les extraits des ressources
+que le compte est autorisé à consulter. Choisis et administre l’hébergement en
+conséquence. Les ressources textuelles sont recherchées sans appels d’embedding
+OpenAI. La recherche web et la reconnaissance d'images ne sont pas fournies par
+ce moteur textuel. La reconnaissance d'images existante nécessite sa propre
+configuration OpenAI.
+
+Pour valider la prévisualisation, ouvre l’Assistant avec un compte de test,
+demande un exercice de défense du pick and roll pour 12 joueurs, puis demande
+une variante à 8 joueurs. Vérifie que les réponses s’affichent progressivement
+et que l’historique réapparaît après rechargement. Teste également un compte
+déconnecté et une panne du moteur. La réponse documentaire de secours est
+disponible lorsqu’un passage pertinent existe.
