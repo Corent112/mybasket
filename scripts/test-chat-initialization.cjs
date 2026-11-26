@@ -17,6 +17,14 @@ const db = {from(table) {
 }};
 const original = Module._load;
 Module._load = function(name,parent,main) {
+  if(name==='@/lib/ai/coach-groq')return {GROQ_COACH_MODEL:'openai/gpt-oss-120b',getGroqCoach:()=>({chat:{completions:{create:async options=>{
+    modelInput=options.messages;
+    return (async function*(){yield {choices:[{delta:{content:'Réponse Groq [W1]'}}]}})();
+  }}}})};
+  if(name==='@/lib/ai/coach-brave')return {searchCoachWeb:async question=>{
+    publicQueries.push(question);
+    return {answer:'Règlement public',citations:[{kind:'web',id:'fiba',url:'https://www.fiba.basketball/rules',label:'FIBA',endIndex:17}]};
+  }};
   if(name==='@/lib/ai/knowledge/extract')return {
     resolveSourceType:()=> 'txt', isIndexableType:()=>true,
     extractDocumentText:async buffer=>({pages:[{text:new TextDecoder().decode(buffer)}]})
@@ -110,6 +118,15 @@ const errorLog=console.error;console.error=()=>{};
   quotaFails=true;r=await chat.POST(req('Définis une possession',true));stream=await r.text();
   assert(stream.includes('event: done') && stream.includes('Contrôle du ballon.') && stream.includes('crédits épuisés'));
   assert(!stream.includes('You have no credits remaining'));
+  process.env.MYBASKET_COACH_PROVIDER='groq';
+  process.env.BRAVE_SEARCH_API_KEY='test-only';
+  const beforeFree=calls;
+  const free=await chat.POST(req('Propose un exercice pour travailler la défense Blitz',true));
+  const freeStream=await free.text();
+  assert(freeStream.includes('Réponse Groq') && freeStream.includes('event: done') && freeStream.includes('https://www.fiba.basketball/rules'));
+  assert(modelInput.at(-1).content.includes('Défense Blitz.txt'));
+  assert(!publicQueries.at(-1).includes('prise à deux'));
+  assert.equal(calls,beforeFree,'Free mode never calls the paid OpenAI provider');
   console.error=errorLog;Module._load=original;
   console.log('Chat initialization passed: missing schema versus empty knowledge base, no provider call before readiness, clear errors without database/provider leakage, authenticated SSE success. No real AI call.');
 })().catch(e=>{console.error=errorLog;Module._load=original;console.error(e);process.exitCode=1});
