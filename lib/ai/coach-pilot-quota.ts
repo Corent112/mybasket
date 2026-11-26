@@ -6,8 +6,8 @@ function dailyLimit(value: string | undefined, fallback: number) {
 }
 
 export async function getCoachPilotRestriction(userId: string): Promise<string | null> {
-  const userLimit = dailyLimit(process.env.MYBASKET_COACH_DAILY_USER_LIMIT, 5);
-  const siteLimit = dailyLimit(process.env.MYBASKET_COACH_DAILY_SITE_LIMIT, 25);
+  const userLimit = dailyLimit(process.env.MYBASKET_COACH_DAILY_USER_LIMIT, 10);
+  const siteLimit = dailyLimit(process.env.MYBASKET_COACH_DAILY_SITE_LIMIT, 50);
   const unavailable = "Le mode IA est temporairement indisponible. La limite se renouvelle à minuit, heure de Paris.";
   try {
     const db = createAdminClient();

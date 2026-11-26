@@ -5,6 +5,7 @@ const Module = require('node:module');
 const ts = require('typescript');
 require.extensions['.ts'] = (mod, file) => mod._compile(ts.transpileModule(fs.readFileSync(file, 'utf8'), {compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2020,esModuleInterop:true}}).outputText, file);
 let authenticated = true, missing = true, broken = false, modelFails = false, quotaFails = false, calls = 0, cachedResearch = null, savedFiles = [], modelInput = [], publicQueries = [], prior = [], coachInstructions = "";
+let subscriptionActive = true;
 const db = {from(table) {
   let key, columns;
   const q = {
@@ -17,6 +18,7 @@ const db = {from(table) {
 }};
 const original = Module._load;
 Module._load = function(name,parent,main) {
+  if(name==='@/lib/effective-subscription')return {getEffectiveSubscriptionForUser:async()=>({active:subscriptionActive})};
   if(name==='@/lib/ai/coach-groq')return {GROQ_COACH_MODEL:'openai/gpt-oss-120b',getGroqCoach:()=>({chat:{completions:{create:async options=>{
     modelInput=options.messages;
     return (async function*(){yield {choices:[{delta:{content:'Réponse Groq [W1]'}}]}})();
@@ -41,7 +43,7 @@ Module._load = function(name,parent,main) {
   if(name==='@/lib/ai/knowledge')return {
     resolveActor:async()=>authenticated?{ok:true,actor:{supabase:db,userId:'owner',clubIds:[]}}:{ok:false,error:'Non connecté',status:401},
     getWriterClient:()=>db,buildScopeContext:()=>({}),logAIUsage:async()=>{},
-    buildAIContext:async(_db, options)=>({systemPrompt:'Basket',citations:[],degraded:false,notes:[], terms: (options.lexicalOnly || options.query === 'Propose une séance basket U18') ? [{id:'term',term:'Possession',definition:'Contrôle du ballon.'}] : []}),
+    buildAIContext:async(_db, options)=>({systemPrompt:'Basket',citations:[],chunks:options.query.includes('défense Blitz') ? [{source_id:'kb',heading:'Défense U18',content:'L’aide côté faible doit fermer la ligne de passe.'}] : [],degraded:false,notes:[], terms: (options.lexicalOnly || options.query === 'Propose une séance basket U18') ? [{id:'term',term:'Possession',definition:'Contrôle du ballon.'}] : []}),
   };
   if(name==='@/lib/ai/openai')return {getOpenAI:()=>({responses:{create:async options=>{calls++;modelInput=options.input;if(quotaFails)throw Object.assign(Error("You have no credits remaining."),{code:"credit_balance_exhausted"});if(modelFails)throw Error('private provider detail');
     if(options.tools){publicQueries.push(options.input);return {status:'completed',output:[{type:'web_search_call'},{type:'message',content:[{
@@ -64,6 +66,10 @@ const req=(message='Définis une possession', workspace=false)=>new Request('htt
 const errorLog=console.error;console.error=()=>{};
 (async()=>{
   authenticated=false;assert.equal((await chat.POST(req())).status,401);authenticated=true;
+  subscriptionActive=false;
+  assert.equal((await chat.POST(req())).status,403);
+  assert.equal(calls,0);
+  subscriptionActive=true;
   let r=await chat.POST(req());assert.equal(r.status,503);let b=await r.json();assert.equal(b.code,'AI_SETUP_REQUIRED');assert(!JSON.stringify(b).includes('ai_conversations'));assert.equal(calls,0);
   let status=await getKnowledgeOverview(db);assert.equal(status.databaseReady,false);assert.equal(status.indexation.status,'error');assert(status.unavailableTables.includes('ai_conversations'));
   missing=false;status=await getKnowledgeOverview(db);assert.equal(status.databaseReady,true);assert.equal(status.documents,0);assert.equal(status.indexation.status,'idle');
@@ -130,6 +136,7 @@ const errorLog=console.error;console.error=()=>{};
   const beforeFree=calls;
   const free=await chat.POST(req('Propose un exercice pour travailler la défense Blitz',true));
   const freeStream=await free.text();
+  assert(modelInput.at(-1).content.includes('L’aide côté faible'), 'Indexed MyBasket documents reach the free model');
   assert(freeStream.includes('Réponse Groq') && freeStream.includes('event: done') && freeStream.includes('https://www.fiba.basketball/rules'));
   assert(modelInput.at(-1).content.includes('Défense Blitz.txt'));
   assert(!publicQueries.at(-1).includes('prise à deux'));

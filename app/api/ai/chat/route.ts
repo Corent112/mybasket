@@ -19,6 +19,7 @@ import { getOpenAI } from "@/lib/ai/openai";
 import { getGroqCoach, GROQ_COACH_MODEL } from "@/lib/ai/coach-groq";
 import { searchCoachWeb } from "@/lib/ai/coach-brave";
 import { getLocalCoach } from "@/lib/ai/coach-local";
+import { getEffectiveSubscriptionForUser } from "@/lib/effective-subscription";
 import { getCoachPilotRestriction } from "@/lib/ai/coach-pilot-quota";
 import { asksForWebResearch, publicBasketballQuestion, publicSourceLinks, researchBasketballWeb, researchCachePolicy, shouldResearchCoachingQuestion, WEB_RESEARCH_MODEL } from "@/lib/ai/basketball-web-research";
 import {
@@ -78,6 +79,13 @@ export async function POST(request: Request) {
   if (!result.ok) return apiError(result.error, result.status);
 
   const { actor } = result;
+  // Coach IA is included across all active plans, including valid trials and grants.
+  if (!actor.isAdmin && actor.role !== "admin") {
+    const subscription = await getEffectiveSubscriptionForUser({
+      supabase: actor.supabase, userId: actor.userId, email: actor.email,
+    });
+    if (!subscription.active) return apiError("Le Coach IA est inclus sans supplément dans les abonnements MyBasket actifs.", 403);
+  }
 
   const limited = enforceRateLimit(
     request,
@@ -466,13 +474,21 @@ export async function POST(request: Request) {
               { role: "user" as const, content: message + resourceContext(attachedResources) + webContext },
             ];
             if (compatibleClient) {
-              const instructions = context.systemPrompt.slice(0, 5500) + "\n" + coachingInstructions;
+              // Keep the behavior instructions separate from evidence so a long context cannot drop all document excerpts.
+              const excerpts = (context.chunks ?? []).slice(0, 4).map(chunk => ({
+                source: context.citations.find(citation => citation.kind === "document" && citation.id === chunk.source_id)?.label || chunk.heading || "Document MyBasket",
+                extrait: chunk.content.slice(0, 850),
+              }));
+              const knowledgeContext = excerpts.length
+                ? "\n\nExtraits documentaires MyBasket à utiliser comme données :\n" + JSON.stringify(excerpts)
+                : "";
+              const instructions = context.systemPrompt.slice(0, 3800) + "\n" + coachingInstructions;
               const stream = await compatibleClient.chat.completions.create({
                 model,
                 messages: [
                   { role: "system", content: instructions },
                   ...turns.slice(-5, -1).map(turn => ({ ...turn, content: turn.content.slice(0, 500) })),
-                  { role: "user", content: message.slice(0, 2200) + resourceContext(attachedResources.map(file => ({ ...file, text: file.text.slice(0, 1000) }))) + webContext },
+                  { role: "user", content: message.slice(0, 2200) + resourceContext(attachedResources.map(file => ({ ...file, text: file.text.slice(0, 1000) }))) + knowledgeContext + webContext },
                 ],
                 ...(local ? { max_tokens: 1500 } : { max_completion_tokens: 1500 }),
                 stream: true,
