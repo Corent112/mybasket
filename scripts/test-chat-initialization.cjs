@@ -21,6 +21,12 @@ Module._load = function(name,parent,main) {
     modelInput=options.messages;
     return (async function*(){yield {choices:[{delta:{content:'Réponse Groq [W1]'}}]}})();
   }}}})};
+  if(name==='@/lib/ai/coach-local')return {getLocalCoach:()=>({model:'gpt-oss:20b',client:{chat:{completions:{create:async options=>{
+    assert.equal(options.model,'gpt-oss:20b');
+    assert.equal(options.max_tokens,1500);
+    modelInput=options.messages;
+    return (async function*(){yield {choices:[{delta:{content:'Réponse MyBasket locale [W1]'}}]}})();
+  }}}}})};
   if(name==='@/lib/ai/coach-brave')return {searchCoachWeb:async question=>{
     publicQueries.push(question);
     return {answer:'Règlement public',citations:[{kind:'web',id:'fiba',url:'https://www.fiba.basketball/rules',label:'FIBA',endIndex:17}]};
@@ -127,6 +133,12 @@ const errorLog=console.error;console.error=()=>{};
   assert(modelInput.at(-1).content.includes('Défense Blitz.txt'));
   assert(!publicQueries.at(-1).includes('prise à deux'));
   assert.equal(calls,beforeFree,'Free mode never calls the paid OpenAI provider');
+  process.env.MYBASKET_COACH_PROVIDER='local';
+  const local=await chat.POST(req('Propose un exercice pour travailler la défense Blitz',true));
+  const localStream=await local.text();
+  assert(localStream.includes('Réponse MyBasket locale') && localStream.includes('event: done'));
+  assert(modelInput.at(-1).content.includes('Défense Blitz.txt'));
+  assert.equal(calls,beforeFree,'Self-hosted mode does not call OpenAI');
   console.error=errorLog;Module._load=original;
   console.log('Chat initialization passed: missing schema versus empty knowledge base, no provider call before readiness, clear errors without database/provider leakage, authenticated SSE success. No real AI call.');
 })().catch(e=>{console.error=errorLog;Module._load=original;console.error(e);process.exitCode=1});
