@@ -2368,10 +2368,29 @@ async function exportGamePlanPdf(team: Team, gp: GamePlan, rotation: Rotation | 
           const stats = card?.liveStats ?? officialPlayerStats(row) ?? localPlayers.get(p.id);
           const x = M + 30;
           const width = W - M - x - 4;
+          const profiles = [card?.profile, card?.profile2].flatMap(profile => {
+            const label = scoutingProfileLabel(profile);
+            return label ? [{ label, src: scoutingProfileIcon(profile) }] : [];
+          });
+          const profileWidth = 24;
+          const identityWidth = width - profiles.length * profileWidth - (profiles.length ? 3 : 0);
+          doc.setFont("helvetica", "bold"); doc.setFontSize(11);
+          const nameLines: string[] = doc.splitTextToSize(playerLabel(p), identityWidth);
+          const details = [p.poste || p.postePrincipal, (card?.taille || p.taille) ? `${card?.taille || p.taille} cm` : "", p.age ? `${p.age} ans` : "", row?.person?.nationality, card?.mainDominante || p.mainDominante].filter(Boolean).join(" · ");
           doc.setFont("helvetica", "normal"); doc.setFontSize(8);
-          const notes = [card?.notes, card?.defend && `Comment le défendre · ${card.defend}`].filter(Boolean).join("\n");
-          const lines = notes ? doc.splitTextToSize(notes, width).slice(0, 18) : [];
-          const height = 36 + (lines.length ? 4 + lines.length * 3.6 : 0);
+          const detailLines: string[] = details ? doc.splitTextToSize(details, identityWidth) : [];
+          const detailsY = 6 + nameLines.length * 4.5;
+          doc.setFontSize(7);
+          const profileLabels: string[][] = profiles.map(({ label }) => doc.splitTextToSize(label, profileWidth - 2));
+          const statsY = Math.max(16, detailsY + detailLines.length * 3.4, ...profileLabels.map(lines => 15.5 + lines.length * 3));
+          doc.setFontSize(8);
+          const defendLines: string[] = card?.defend?.trim() ? doc.splitTextToSize(card.defend.trim(), width) : [];
+          const notes: string[] = card?.notes?.trim() ? doc.splitTextToSize(card.notes.trim(), width) : [];
+          const lines = notes.slice(0, defendLines.length ? 16 : 18);
+          const defense = defendLines.slice(0, 17 - lines.length);
+          const notesY = statsY + 23;
+          const lineCount = lines.length + (defense.length ? defense.length + 1 : 0);
+          const height = lineCount ? notesY + (lineCount - 1) * 3.6 + 4 : statsY + 20;
           if (playersOnPage >= 6 || y + height > H - M) startPage();
           doc.setDrawColor(215, 200, 199); doc.setFillColor(252, 249, 246);
           doc.roundedRect(M, y, W - 2 * M, height, 2, 2, "FD");
@@ -2379,34 +2398,37 @@ async function exportGamePlanPdf(team: Team, gp: GamePlan, rotation: Rotation | 
           const photo = photoUrl ? await imageToDataUrl(photoUrl) : null;
           if (photo) doc.addImage(photo, "JPEG", M + 3, y + 4, 23, 28);
           doc.setTextColor(...burgundy); doc.setFont("helvetica", "bold"); doc.setFontSize(11);
-          doc.text(playerLabel(p), x, y + 6, { maxWidth: width });
-          const details = [p.poste || p.postePrincipal, (card?.taille || p.taille) ? `${card?.taille || p.taille} cm` : "", p.age ? `${p.age} ans` : "", row?.person?.nationality, card?.mainDominante || p.mainDominante].filter(Boolean).join(" · ");
-          const profile = [card?.profile, card?.profile2].map(scoutingProfileLabel).filter(Boolean).join(" · ");
+          nameLines.forEach((line, index) => doc.text(line, x, y + 6 + index * 4.5));
           doc.setTextColor(...black); doc.setFont("helvetica", "normal"); doc.setFontSize(8);
-          doc.text(details, x, y + 10, { maxWidth: width });
-          if (profile) {
-            let iconX = x;
-            for (const label of [card?.profile, card?.profile2]) {
-              const src = scoutingProfileIcon(label);
-              const icon = src && await imageToDataUrl(src);
-              if (icon) { doc.addImage(icon, "PNG", iconX, y + 10.5, 5, 5); iconX += 6; }
-            }
-            doc.text(`Profil · ${profile}`, iconX, y + 14.5, { maxWidth: width - (iconX - x) });
+          detailLines.forEach((line, index) => doc.text(line, x, y + detailsY + index * 3.4));
+          for (const [index, { src }] of profiles.entries()) {
+            const center = x + width - (profiles.length - index - 0.5) * profileWidth;
+            const icon = src && await imageToDataUrl(src);
+            if (icon) doc.addImage(icon, "PNG", center - 5, y + 3, 10, 10);
+            doc.setFontSize(7);
+            profileLabels[index].forEach((line, row) => doc.text(line, center, y + 15.5 + row * 3, { align: "center" }));
           }
           const cellWidth = width / compactPlayerMetrics.length;
           compactPlayerMetrics.forEach((key, index) => {
             const value = stats?.[key];
             const dx = x + index * cellWidth;
-            const dy = y + 16;
+            const dy = y + statsY;
             const color = card?.statColors?.[key];
             doc.setFillColor(...(color === "green" ? [222, 241, 228] : color === "red" ? [250, 224, 227] : [241, 232, 228]));
             doc.rect(dx, dy, cellWidth - 1, 6, "F");
             doc.setTextColor(...muted); doc.setFontSize(6.4); doc.text(key, dx + 1.2, dy + 2.2);
             doc.setTextColor(...black); doc.setFontSize(8); doc.text(value == null ? "—" : formatScoutingStat(value), dx + 1.2, dy + 5.3);
           });
-          pie(x + 6, y + 29, 6, stats?.["2T"], stats?.["3T"]);
-          doc.setTextColor(...black); doc.setFontSize(8);
-          if (lines.length) doc.text(lines, x, y + 39);
+          pie(x + 6, y + statsY + 13, 6, stats?.["2T"], stats?.["3T"]);
+          doc.setTextColor(...black); doc.setFont("helvetica", "normal"); doc.setFontSize(8);
+          lines.forEach((line, index) => doc.text(line, x, y + notesY + index * 3.6));
+          if (defense.length) {
+            const headingY = y + notesY + lines.length * 3.6;
+            doc.setFont("helvetica", "bold");
+            doc.text("Comment le défendre :", x, headingY);
+            doc.setFont("helvetica", "normal");
+            defense.forEach((line, index) => doc.text(line, x, headingY + (index + 1) * 3.6));
+          }
           y += height + 4;
           playersOnPage++;
         }
