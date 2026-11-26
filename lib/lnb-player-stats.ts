@@ -1,3 +1,5 @@
+import { lnbCompetitionRankings } from "@/lib/lnb-competition-rankings";
+
 // Fields and requests verified against the public API used by lnb.fr.
 const divisions: Record<string, number> = { PROA: 1, PROB: 2, ESPA: 3, ESPB: 4 };
 const cache = new Map<string, { expires: number; value: any }>();
@@ -73,10 +75,10 @@ export async function readLnbPlayerStats(sourceUrl: string, personId?: number, r
   if (Array.isArray(roster)) for (const player of roster) {
     if (Number.isSafeInteger(player.person?.external_id) && !players.some((p: any) => p.person.external_id === player.person.external_id)) players.push({ person: player.person, player_role: player.player_role, team: { external_id: teamId, team_name: players[0]?.team?.team_name || "" } });
   }
-  const standing = Array.isArray(standings)
+  const leagueStandings = Array.isArray(standings)
     ? standings.flatMap(group => Array.isArray(group.data) ? group.data : [])
-      .find(row => Number(row.team?.external_id) === teamId)
-    : null;
+    : [];
+  const standing = leagueStandings.find(row => Number(row.team?.external_id) === teamId);
   const rawRank = Number(standing?.rank);
   const ranking = Number.isSafeInteger(rawRank) && rawRank > 0 ? rawRank : null;
   const standingGames = Number(standing?.s_games);
@@ -91,7 +93,8 @@ export async function readLnbPlayerStats(sourceUrl: string, personId?: number, r
     detail = await request("person/getPersonSeasonAll", token, { competition_external_id: competition.external_id, team_external_id: teamId, person_external_id: personId, format: "average" });
     if (detail?.general?.competition?.competition_abbrev !== abbrev || !Array.isArray(detail.general_game_log)) throw new Error("Détail LNB incompatible avec le championnat choisi.");
   }
-  const value = { sourceUrl, year, competitionExternalId:competition.external_id, competition: competition.competition_name, ranking, gamesPlayed, players, detail, updatedAt: new Date().toISOString() };
+  const rankings = lnbCompetitionRankings(teamId, leagueStandings, totals, rows);
+  const value = { ...rankings, sourceUrl, year, competitionExternalId:competition.external_id, competition: competition.competition_name, ranking, gamesPlayed, players, detail, updatedAt: new Date().toISOString() };
   if (cache.size > 100) cache.clear();
   cache.set(key, { value, expires: Date.now() + 300000 });
   return value;

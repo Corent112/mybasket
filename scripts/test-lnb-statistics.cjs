@@ -19,8 +19,30 @@ const fetch = async (url, init = {}) => {
   const data = url.includes('/api/token') ? { token: 'test-only' } : { status: true, data: url.includes('getDivisionCompetitionByYear') ? [{ external_id: 319, competition_abbrev: 'ESPA', year: '2026', competition_name: 'Espoirs ÉLITE' }] : url.includes('getRoster') ? [roster] : url.includes('getPersonCriterion') ? [body.format === 'total' ? total : average, { ...average, team: { external_id: 999 } }] : { general: { competition: { competition_abbrev: 'ESPA' } }, general_game_log: [{ external_id: 30690 }, { external_id: 30698 }, { external_id: 30708 }] } };
   return { ok: true, json: async () => data };
 };
-const service = moduleOf('lib/lnb-player-stats.ts', { fetch });
+const analytics = moduleOf('lib/analytics/matches.ts');
+const scouting = moduleOf('lib/scouting-report-stats.ts', {
+  require: id => id === '@/lib/analytics/matches' ? analytics : model,
+});
+const rankings = moduleOf('lib/lnb-competition-rankings.ts', {
+  require: id => id === '@/lib/analytics/matches' ? analytics : scouting,
+});
+const service = moduleOf('lib/lnb-player-stats.ts', { fetch, require: () => rankings });
 (async () => {
+  const standing = (club, points, against) => ({ team: { external_id: club }, s_games: 2, s_points: points, s_points_against: against });
+  const player = (id, club, rebounds) => ({
+    person: { external_id: id, first_name: 'Xavier', family_name: 'Dupont' },
+    team: { external_id: club }, s_games: 2, s_rebounds_total_average: rebounds,
+  });
+  const clubs = [standing(1, 160, 140), standing(2, 160, 170), standing(3, 180, 150)];
+  const players = [player(1, 1, 12.6), player(2, 2, 16), player(3, 3, 13), player(4, 3, 10)];
+  const ranked = rankings.lnbCompetitionRankings(1, clubs, [], players);
+  assert.equal(ranked.teamRanks.pointsFor, 2, 'Tied teams share a rank');
+  assert.equal(ranked.teamRanks.pointsAgainst, 1, 'Fewer points conceded ranks higher');
+  assert.equal(ranked.teamRanks.reb, undefined, 'Missing team totals do not produce a rank');
+  assert.equal(ranked.playerRankingsAvailable, true);
+  assert.equal(ranked.playerTopFive[0].rank, 3);
+  assert.equal(ranked.playerTopFive[0].value, 12.6);
+  assert.equal(rankings.lnbCompetitionRankings(1, clubs, [], players.slice(0, 2)).playerRankingsAvailable, false);
   const data = await service.readLnbPlayerStats('https://lnb.fr/fr/calendar?abbrev=ESPA&yid=2026&tid=1906');
   assert.equal(data.players.length, 1, 'Never include another club');
   const row = data.players[0];

@@ -127,6 +127,7 @@ type Scouting = {
   defensiveKeys?: string;
   teamStats?: Record<string,number|null>;
   teamStatColors?: ScoutBoardValue["teamStatColors"];
+  printCompetitionRanks?: boolean;
   offense?: string;
   defense?: string;
   depthChart?: Record<string, string[]>;
@@ -2167,6 +2168,19 @@ async function exportGamePlanPdf(team: Team, gp: GamePlan, rotation: Rotation | 
         doc.rect(x, yy, metricWidth - 1, 8, "F");
         doc.setTextColor(...muted); doc.setFontSize(6.5); doc.text(label, x + 2, yy + 3);
         doc.setTextColor(...black); doc.setFontSize(9); doc.text(n == null ? "—" : formatScoutingStat(n), x + 2, yy + 7);
+        const rank = gp.scouting.printCompetitionRanks ? official?.teamRanks?.[key] : undefined;
+        if (rank) {
+          const rankLabel = rank === 1 ? "1er" : `${rank}e`;
+          const right = x + metricWidth - 3;
+          doc.setFontSize(7);
+          doc.setTextColor(103, 73, 19);
+          doc.text(rankLabel, right, yy + 7, { align: "right" });
+          if (rank === 1) {
+            const crownX = right - doc.getTextWidth(rankLabel) - 5;
+            doc.setFillColor(181, 129, 34);
+            doc.lines([[0.5, 2.5], [3, 0], [0.5, -2.5], [-1.1, 0.9], [-0.9, -1.4], [-0.9, 1.4], [-1.1, -0.9]], crownX, yy + 4.5, [1, 1], "F", true);
+          }
+        }
       });
       y += Math.ceil(teamMetrics.length / 4) * 9 + 4;
       if (shotSplit(teamStat("p2a"), teamStat("p3a"))) {

@@ -1,5 +1,7 @@
 "use client";
 import { useEffect, useMemo, useState } from "react";
+import { Crown } from "lucide-react";
+import type { PlayerCompetitionRank } from "@/lib/lnb-competition-rankings";
 import { createClient } from "@/lib/supabase/client";
 import {
   loadMatchAnalysis,
@@ -61,6 +63,7 @@ export type ScoutBoardValue = {
   defensiveKeys?: string;
   teamStats?: Record<string, number | null>;
   teamStatColors?: ScoutCard["statColors"];
+  printCompetitionRanks?: boolean;
   depthChart?: Record<string, string[]>;
   importantStats?: ScoutStat[];
   playerCards?: ScoutCard[];
@@ -204,9 +207,16 @@ function ScoutingContent({
   }
   const teamStat = (key: string) => Object.prototype.hasOwnProperty.call(value.teamStats || {}, key)
     ? value.teamStats?.[key] : autoStats[key];
+  const playerTopFive: PlayerCompetitionRank[] = official?.playerTopFive ?? [];
   const statField = (key: string, title: string) => (
     <div className={styles.teamStatField} key={key}>
-      <label htmlFor={`scout-stat-${key}`}>{title}</label>
+      <div className={styles.rankedStatLabel}>
+        <label htmlFor={`scout-stat-${key}`}>{title}</label>
+        {official?.teamRanks?.[key] && <span className={styles.rankBadge} title="Rang sur les statistiques officielles LNB">
+          {official.teamRanks[key] === 1 && <Crown size={12} aria-hidden="true" />}
+          {official.teamRanks[key]}{official.teamRanks[key] === 1 ? "er" : "e"}
+        </span>}
+      </div>
       <span className={styles.teamStatControl}>
       <input
         id={`scout-stat-${key}`}
@@ -325,7 +335,16 @@ function ScoutingContent({
             <>
               <div>
                 <section className={styles.card}>
-                  <h3>Statistiques de l’équipe</h3>
+                  <div className={styles.header}>
+                    <h3>Statistiques de l’équipe</h3>
+                    {official?.teamRanks && Object.keys(official.teamRanks).length > 0 && (
+                      <label className={styles.rankExport}>
+                        <input type="checkbox" checked={value.printCompetitionRanks ?? false}
+                          onChange={event => onChange({ printCompetitionRanks: event.target.checked })} />
+                        Inclure les rangs du championnat dans le PDF
+                      </label>
+                    )}
+                  </div>
                   {official?.ranking && <p><strong>{official.ranking}e</strong> · {official.competition}</p>}
                   <ShotPie two={teamStat("p2a")} three={teamStat("p3a")} />
                   <div className={styles.stats}>
@@ -502,6 +521,19 @@ function ScoutingContent({
           )}
           {tab === "players" && (
             <div className={styles.players}>
+              {official?.playerRankingsAvailable && <section className={styles.card}>
+                <h3>Joueurs dans le Top 5 du championnat</h3>
+                {playerTopFive.length ? (
+                  <ul className={styles.playerRankList}>
+                    {playerTopFive.map(entry => (
+                      <li key={`${entry.id}-${entry.metric}`}>
+                        <strong>{entry.name}</strong>
+                        <span>{entry.rank}{entry.rank === 1 ? "er" : "e"} · {entry.metric} · {fmt(entry.value)} {entry.unit}</span>
+                      </li>
+                    ))}
+                  </ul>
+                ) : <p>Aucun joueur de l’équipe dans le Top 5 des statistiques suivies.</p>}
+              </section>}
               <section className={styles.card}>
                 <p>{printIds.length} joueur(s) sélectionné(s) pour le PDF</p>
                 <button type="button" onClick={() => onChange({ printPlayerIds: players.map(player => player.id) })}>Tout sélectionner</button>{" "}
