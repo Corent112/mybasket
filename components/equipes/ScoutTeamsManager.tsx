@@ -111,6 +111,8 @@ export default function ScoutTeamsManager({ teams, onReload, initialCreate = fal
           players: [],
           teamType: "scout",
           competitionSource: official ? "lnb" : undefined,
+          ...(official?.colors?.length ? { couleurs: official.colors } : {}),
+          ...(official?.jersey ? { lnbJerseyImage: official.jersey } : {}),
           isScoutTeam: true,
           scout: true,
         } as Team);
@@ -222,7 +224,7 @@ export default function ScoutTeamsManager({ teams, onReload, initialCreate = fal
             <div className="stm-modal-head"><div><small>NOUVEL ADVERSAIRE</small><h3>Créer une équipe scoutée</h3></div><button type="button" onClick={closeCreate}>×</button></div>
             {!createdTeamId && <OfficialScoutingImport disabled={busy} onSelect={calendar => {
               setOfficial(calendar);
-              setDraft(current => ({ ...current, name: calendar.team, level: calendar.competition }));
+              setDraft(current => ({ ...current, name: calendar.team, level: calendar.competition, logo: calendar.logo || current.logo }));
             }} />}
             {official && <p>Source LNB · {official.team} · {official.competition} {!createdTeamId && <button type="button" disabled={busy} onClick={() => setOfficial(null)}>Retirer la source</button>}</p>}
             <fieldset className="stm-grid" disabled={busy || !!createdTeamId}>

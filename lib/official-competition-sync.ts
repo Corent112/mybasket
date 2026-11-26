@@ -23,5 +23,5 @@ export async function refreshOfficialConnection(db:any,teamId:string,connection:
  if(write.error)throw Error('Résultats reçus, mais enregistrement impossible. Réessaie.');
  const mark=await db.from('ffbb_team_connections').update({last_synced_at:timestamp}).eq('id',connection.id).eq('team_id',teamId);
  if(mark.error)throw Error('Scores enregistrés, mais date de synchronisation indisponible.');
- return {count:normalized.length,updatedAt:timestamp};
+ return {count:normalized.length,updatedAt:timestamp,logo:typeof parsed.logo==="string"?parsed.logo:null,colors:Array.isArray(parsed.colors)?parsed.colors as string[]:[],jersey:typeof parsed.jersey==="string"?parsed.jersey:null};
 }

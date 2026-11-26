@@ -343,6 +343,7 @@ export interface Team {
   assistant: string; // "Noah Bernard"
   sallePrincipale: string; // "Gymnase Carpentier"
   dateCreation: string; // "01/07/2025"
+  lnbJerseyImage?: string;
   couleurs: string[]; // ["#7a1228","#e0a82e"]
 
   // --- Effectif & encadrement ---

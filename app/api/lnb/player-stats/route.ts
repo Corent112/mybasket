@@ -10,17 +10,24 @@ function lnbProfileId(userId: string, personId: number) {
   const hex = bytes.toString("hex");
   return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
 }
+const profileFields = [
+  ["birth_date", "dob"], ["height", "taille"], ["photo_url", "photo"],
+  ["number", "num"], ["position_primary", "postePrincipal"], ["age", "age"],
+] as const;
+
 export async function POST(request: Request) {
   try {
     const sb = await createClient();
     const { data: { user } } = await sb.auth.getUser();
     if (!user) return Response.json({ error: "Connexion requise." }, { status: 401 });
-    const { teamId, action } = await request.json();
+    const { teamId, action, connectionId } = await request.json();
     if (typeof teamId !== "string") return Response.json({ error: "Équipe invalide." }, { status: 400 });
     const team = await sb.from("teams").select("id,user_id,metadata,team_type,name").eq("id", teamId).eq("user_id", user.id).single();
     if (team.error || !team.data) return Response.json({ error: "Modification réservée au propriétaire." }, { status: 403 });
-    if (action !== "complete" && !(team.data.team_type === "scout" || team.data.metadata?.isScoutTeam === true || team.data.metadata?.scout === true)) return Response.json({ error: "Création réservée aux équipes scoutées." }, { status: 400 });
-    const connections = await sb.from("ffbb_team_connections").select("source_url,last_synced_at").eq("team_id", teamId).order("last_synced_at", { ascending: false });
+    if (action !== "complete" && action !== "sync-official" && !(team.data.team_type === "scout" || team.data.metadata?.isScoutTeam === true || team.data.metadata?.scout === true)) return Response.json({ error: "Création réservée aux équipes scoutées." }, { status: 400 });
+    const lookup = sb.from("ffbb_team_connections").select("source_url,last_synced_at").eq("team_id", teamId);
+    if (typeof connectionId === "string") lookup.eq("id", connectionId);
+    const connections = await lookup.order("last_synced_at", { ascending: false });
     if (connections.error) throw connections.error;
     const sourceUrl = connections.data?.find(row => /^https:\/\/(www\.)?lnb\.fr\//i.test(row.source_url))?.source_url;
     if (!sourceUrl) throw new Error("Connecte d’abord cette équipe à la LNB.");
@@ -36,8 +43,7 @@ export async function POST(request: Request) {
         const existing = members.find(p => p.id === id);
         if (!existing) continue;
         const identity = lnbIdentity(row), fields: Record<string, unknown> = {}, metadata: Record<string, unknown> = { ...existing.metadata, lnbExternalId: row.person.external_id };
-        const mapping = [["birth_date", "dob"], ["height", "taille"], ["photo_url", "photo"], ["number", "num"], ["position_primary", "postePrincipal"], ["age", "age"]] as const;
-        for (const [column, key] of mapping) {
+        for (const [column, key] of profileFields) {
           const saved = existing[column] != null && existing[column] !== "" ? existing[column] : existing.metadata?.[key];
           const value = identity[key];
           if ((saved == null || saved === "") && value != null && value !== "") { fields[column] = value; metadata[key] = value; }
@@ -55,7 +61,7 @@ export async function POST(request: Request) {
       const id = String(row.person.external_id);
       if (Object.prototype.hasOwnProperty.call(links, id) && links[id] === null) return null;
       const explicit = (owned.data || []).find(p => p.id === links[id]);
-      const identity = (owned.data || []).filter(p => Number(p.metadata?.lnbExternalId) === row.person.external_id);
+      const identity = (owned.data || []).filter(p => Number(p.metadata?.lnbExternalId) === Number(row.person.external_id));
       const names = (owned.data || []).filter(p => normalizeLnbName(`${p.first_name || p.metadata?.firstName || ""} ${p.last_name || p.metadata?.lastName || ""}`) === normalizeLnbName(`${row.person.first_name} ${row.person.family_name}`));
       const existing = explicit || (identity.length === 1 ? identity[0] : names.length === 1 ? names[0] : undefined);
       if (!explicit && (identity.length > 1 || (!identity.length && names.length > 1) || (!identity.length && existing?.birth_date && row.person.dob && String(existing.birth_date).slice(0, 10) !== row.person.dob.slice(0, 10)) || (existing?.metadata?.lnbExternalId && Number(existing.metadata.lnbExternalId) !== row.person.external_id))) throw new Error(`Association à vérifier pour ${row.person.first_name} ${row.person.family_name}. Choisis sa fiche dans le tableau avant de créer les autres.`);
@@ -72,10 +78,21 @@ export async function POST(request: Request) {
         if (insert.error) throw insert.error;
         created++;
       } else reused++;
-      const current = await sb.from("players").select("team_id,metadata").eq("id", id).eq("user_id", user.id).single();
+      const current = await sb.from("players").select("team_id,metadata,birth_date,height,photo_url,number,position_primary,age").eq("id", id).eq("user_id", user.id).single();
       if (current.error || !current.data) throw new Error("Fiche joueur non enregistrée.");
       const additional = Array.from(new Set([...(current.data.metadata?.additionalTeamIds || []), ...(current.data.team_id === teamId ? [] : [teamId])]));
-      const update = await sb.from("players").update({ metadata: { ...current.data.metadata, lnbExternalId: row.person.external_id, primaryTeamId: current.data.team_id, additionalTeamIds: additional } }).eq("id", id).eq("user_id", user.id);
+      const metadata = { ...current.data.metadata, lnbExternalId: row.person.external_id, primaryTeamId: current.data.team_id, additionalTeamIds: additional };
+      const fields: Record<string, unknown> = {};
+      const officialIdentity = lnbIdentity(row);
+      for (const [column, key] of profileFields) {
+        const saved = current.data[column] ?? metadata[key];
+        const value = officialIdentity[key];
+        if ((saved == null || saved === "") && value != null && value !== "") {
+          fields[column] = value;
+          metadata[key] = value;
+        }
+      }
+      const update = await sb.from("players").update({ ...fields, metadata }).eq("id", id).eq("user_id", user.id);
       if (update.error) throw update.error;
       savedLinks[String(row.person.external_id)] = id;
     }

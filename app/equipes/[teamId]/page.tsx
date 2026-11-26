@@ -1659,6 +1659,12 @@ export default function EquipeDetailPage({
                     ))}
                   </span>
                 </div>
+                {team.competitionSource === "lnb" && team.lnbJerseyImage && (
+                  <div className="tl-info-row">
+                    <span className="lbl">Maillot officiel</span>
+                    <img src={team.lnbJerseyImage} alt="Maillot de l’équipe" loading="lazy" width={52} height={52} style={{ objectFit: "contain" }} />
+                  </div>
+                )}
               </div>
             </section>
 

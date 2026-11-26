@@ -1,5 +1,5 @@
 // Public calendar API used by lnb.fr. Tokens remain server-side.
-type LnbTeam = { external_id: number; team_name: string; score_string?: string };
+type LnbTeam = { external_id: number; team_name: string; score_string?: string; logo_black?: { md?: string }; logo_white?: { md?: string } };
 type LnbGame = { external_id: number; competition_abbrev: string; competition_name: string; match_date: string; match_time_utc?: string; match_status: string; display_round?: string; round_number?: number; teams: LnbTeam[]; is_next?: boolean };
 const ABBREVIATIONS = new Set(["ESPA", "ESPB", "PROA", "PROB"]);
 async function request(url: string, init?: RequestInit) {
@@ -39,6 +39,13 @@ export async function readLnbCalendar(sourceUrl: string) {
   }
   const own = rows.flatMap(game => game.teams).find(team => Number(team.external_id) === teamId);
   if (!own) throw new Error("Équipe absente de ce championnat LNB pour cette saison.");
+  const details = await request(`https://api-prod.lnb.fr/teams/${teamId}`, {
+    headers: { device_type: "web", language_code: "fr", Authorization: `Bearer ${credentials.token}` },
+  }).then(payload => payload.status === true && Number(payload.data?.external_id) === teamId ? payload.data : null)
+    .catch(() => null);
+  const colors = [details?.colour_primary, details?.colour_secondary]
+    .filter((color): color is string => typeof color === "string" && /^#?[0-9a-f]{6}$/i.test(color))
+    .map(color => `#${color.replace(/^#/, "").toLowerCase()}`);
   const matches = rows.filter(game => game.teams.some(team => Number(team.external_id) === teamId)).map(game => {
     const home = Number(game.teams[0].external_id) === teamId;
     const us = game.teams[home ? 0 : 1], them = game.teams[home ? 1 : 0];
@@ -48,5 +55,5 @@ export async function readLnbCalendar(sourceUrl: string) {
     const score = (team: LnbTeam) => played && /^\d+$/.test(team.score_string || "") ? Number(team.score_string) : null;
     return { sourceKey: `lnb:${abbrev}:${year}:${game.external_id}`, round: game.display_round || (game.round_number ? `J${game.round_number}` : ""), date: parts.length ? `${part("year")}-${part("month")}-${part("day")}` : game.match_date, time: parts.length ? `${part("hour")}:${part("minute")}` : "", homeAway: home ? "home" : "away", opponent: them.team_name, ourScore: score(us), opponentScore: score(them) };
   }).sort((a, b) => `${a.date} ${a.time}`.localeCompare(`${b.date} ${b.time}`));
-  return { mode: "team", team: own.team_name, competition: rows[0]?.competition_name || abbrev, pool: "", phase: "", sourceUrl: source.toString(), matches, classementText: "", ranking: null, updatedAt: new Date().toISOString(), transport: "lnb-api" };
+  return { mode: "team", team: own.team_name, logo: own.logo_black?.md || own.logo_white?.md || null, colors, jersey: details?.jersey?.md || null, competition: rows[0]?.competition_name || abbrev, pool: "", phase: "", sourceUrl: source.toString(), matches, classementText: "", ranking: null, updatedAt: new Date().toISOString(), transport: "lnb-api" };
 }

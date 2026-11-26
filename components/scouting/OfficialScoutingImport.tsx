@@ -2,6 +2,9 @@
 import { useEffect, useRef, useState } from "react";
 export type OfficialScoutCalendar = {
   team: string;
+  logo?: string | null;
+  colors?: string[];
+  jersey?: string | null;
   competition: string;
   sourceUrl: string;
   matches: { sourceKey: string; round?: string; date: string; time?: string; homeAway: string; opponent: string; ourScore?: number | null; opponentScore?: number | null }[];

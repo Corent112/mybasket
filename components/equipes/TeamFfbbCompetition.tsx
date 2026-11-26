@@ -5,7 +5,8 @@ import LnbPlayerStats from "@/components/equipes/LnbPlayerStats";
 import {refreshOfficialConnection} from "@/lib/official-competition-sync";
 import {calendarAgeGroup} from "@/lib/calendar-fixtures";
 import {syncCompetitionCalendar} from "@/lib/competition-calendar";
-type Choice={name:string;url:string};type Game={sourceKey:string;round:string;date:string;time:string;homeAway:string;opponent:string;ourScore:number|null;opponentScore:number|null};type Parsed={mode:"team";team:string;competition:string;pool:string;phase:string;sourceUrl:string;matches:Game[];classementText:string;updatedAt:string}|{mode:"choose-team";sourceUrl:string;teams:Choice[]};
+type OfficialIdentity = { logo?: string | null; colors?: string[]; jersey?: string | null };
+type Choice={name:string;url:string};type Game={sourceKey:string;round:string;date:string;time:string;homeAway:string;opponent:string;ourScore:number|null;opponentScore:number|null};type Parsed=({mode:"team";team:string;competition:string;pool:string;phase:string;sourceUrl:string;matches:Game[];classementText:string;updatedAt:string} & OfficialIdentity)|{mode:"choose-team";sourceUrl:string;teams:Choice[]};
 export default function TeamFfbbCompetition({teamId,source="ffbb",niveau,category,onSourceChange,onConnected}:{teamId:string;source?:"ffbb"|"lnb";niveau?:string;category?:string;onSourceChange?:(source:"ffbb"|"lnb")=>Promise<void>;onConnected?:()=>void}){const sb=useMemo(()=>createClient(),[]),[url,setUrl]=useState(""),[data,setData]=useState<Parsed|null>(null),[connections,setConnections]=useState<any[]>([]),[busy,setBusy]=useState(false),[error,setError]=useState(""),[success,setSuccess]=useState("");
  const [officialMatches,setOfficialMatches]=useState<Game[]>([]);
  const [calendarView,setCalendarView]=useState<"upcoming"|"results"|"all">("upcoming");
@@ -23,21 +24,78 @@ export default function TeamFfbbCompetition({teamId,source="ffbb",niveau,categor
   return()=>{active=false;window.clearInterval(timer);window.removeEventListener("focus",onFocus)};
  },[teamId,source]);
  async function read(target=url){if(!target)return;const matchesSource=source==="lnb"?/^https:\/\/(www\.)?lnb\.fr\//i.test(target):/^https:\/\/competitions\.ffbb\.com\//i.test(target);if(!matchesSource){setError(`Colle un lien ${source.toUpperCase()} correspondant à la source choisie.`);return;}setBusy(true);setError("");setData(null);setSuccess("");try{const r=await fetch(`/api/ffbb/competition?url=${encodeURIComponent(target)}`,{cache:"no-store"});const j=await r.json();if(!r.ok)throw new Error(j.error||"Erreur FFBB");setData(j)}catch(e){setError(e instanceof Error?e.message:"Erreur FFBB")}finally{setBusy(false)}}
+ async function syncLnbProfiles(connectionId: string) {
+   const response = await fetch("/api/lnb/player-stats", {
+     method: "POST",
+     headers: { "Content-Type": "application/json" },
+     body: JSON.stringify({ teamId, connectionId, action: "sync-official" }),
+   });
+   const result = await response.json();
+   if (!response.ok) throw new Error(result.error || "L’effectif LNB n’a pas pu être importé.");
+   return result as { created: number; reused: number };
+ }
  async function connect(p:Extract<Parsed,{mode:"team"}>){
  const teamAge=calendarAgeGroup(category);
  const competitionAge=calendarAgeGroup(p.competition);
  if(teamAge&&competitionAge&&teamAge!==competitionAge){
    throw new Error(`Cette compétition est en ${competitionAge}. Choisis une compétition ${teamAge} pour cette équipe.`);
  }
- const existing=connections.find(c=>c.source_url===p.sourceUrl);const payload={team_id:teamId,source_url:p.sourceUrl,ffbb_team_name:p.team,competition_name:p.competition,pool_name:p.pool||null,phase_id:p.phase||null,competition_kind:/coupe|trophée|supercoupe/i.test(p.competition)?"cup":"championship",logical_competition_key:p.competition.toLowerCase().replace(/[^a-z0-9]+/g,"-").replace(/^-|-$/g,"")+(source==="lnb"?`-${new URL(p.sourceUrl).searchParams.get("yid")}`:""),is_primary:existing?.is_primary??connections.length===0,last_synced_at:new Date().toISOString()};const q=existing?await sb.from("ffbb_team_connections").update(payload).eq("id",existing.id).select().single():await sb.from("ffbb_team_connections").insert(payload).select().single();if(q.error)throw q.error;const cid=q.data.id;if(p.matches.length){const synced=await sb.from("ffbb_synced_matches").upsert(p.matches.map(g=>({connection_id:cid,team_id:teamId,source_match_key:g.sourceKey,round_label:g.round||null,match_date:g.date,start_time:g.time||null,home_away:g.homeAway,opponent:g.opponent,our_score:g.ourScore,opponent_score:g.opponentScore,competition_kind:payload.competition_kind,source_url:p.sourceUrl,last_synced_at:new Date().toISOString()})),{onConflict:"connection_id,source_match_key"});if(synced.error)throw synced.error}await reload();await calendarSync(false, q.data)}
- async function syncAll(){setBusy(true);setError("");setSuccess("");try{for(const connection of connections)await refreshOfficialConnection(sb,teamId,connection);await reload();setSuccess("Résultats officiels actualisés.");onConnected?.()}catch(e){setError(e instanceof Error?e.message:"Actualisation impossible")}finally{setBusy(false)}}
+ const existing=connections.find(c=>c.source_url===p.sourceUrl);const payload={team_id:teamId,source_url:p.sourceUrl,ffbb_team_name:p.team,competition_name:p.competition,pool_name:p.pool||null,phase_id:p.phase||null,competition_kind:/coupe|trophée|supercoupe/i.test(p.competition)?"cup":"championship",logical_competition_key:p.competition.toLowerCase().replace(/[^a-z0-9]+/g,"-").replace(/^-|-$/g,"")+(source==="lnb"?`-${new URL(p.sourceUrl).searchParams.get("yid")}`:""),is_primary:existing?.is_primary??connections.length===0,last_synced_at:new Date().toISOString()};const q=existing?await sb.from("ffbb_team_connections").update(payload).eq("id",existing.id).select().single():await sb.from("ffbb_team_connections").insert(payload).select().single();if(q.error)throw q.error;const cid=q.data.id;if(p.matches.length){const synced=await sb.from("ffbb_synced_matches").upsert(p.matches.map(g=>({connection_id:cid,team_id:teamId,source_match_key:g.sourceKey,round_label:g.round||null,match_date:g.date,start_time:g.time||null,home_away:g.homeAway,opponent:g.opponent,our_score:g.ourScore,opponent_score:g.opponentScore,competition_kind:payload.competition_kind,source_url:p.sourceUrl,last_synced_at:new Date().toISOString()})),{onConflict:"connection_id,source_match_key"});if(synced.error)throw synced.error}await reload();
+ const tasks = [calendarSync(false, q.data)];
+ if (source === "lnb") {
+   tasks.push(syncLnbTeam(cid, p));
+ }
+ const results = await Promise.allSettled(tasks);
+ const failed = results.filter(result => result.status === "rejected");
+ if (failed.length) throw new Error(failed.map(result => result.reason?.message || "Synchronisation incomplète.").join(" "));
+ if (source === "lnb") setSuccess(message => `${message} Effectif et statistiques LNB synchronisés.`);
+ }
+ async function syncLnbTeam(connectionId: string, identity: OfficialIdentity) {
+   const { logo, colors, jersey } = identity;
+   const identitySync = async () => {
+     if (!logo && !colors?.length && !jersey) return;
+     const team = await sb.from("teams").select("metadata").eq("id", teamId).single();
+     if (team.error || !team.data) throw new Error("La fiche équipe est inaccessible.");
+     const result = await sb.from("teams").update({
+       ...(logo ? { club_logo_url: logo } : {}),
+       metadata: {
+         ...team.data.metadata,
+         ...(colors?.length ? { couleurs: colors } : {}),
+         ...(jersey ? { lnbJerseyImage: jersey } : {}),
+       },
+     }).eq("id", teamId).select("id");
+     if (result.error || !result.data?.length) throw new Error("L’identité officielle n’a pas pu être enregistrée.");
+   };
+   // Both writes touch team metadata. Finish the identity update before importing player links.
+   const identityError = await identitySync().then(() => null, error => error);
+   await syncLnbProfiles(connectionId);
+   if (identityError) throw identityError;
+ }
+ async function syncAll() {
+   setBusy(true); setError(""); setSuccess("");
+   try {
+     let latest: ({ id: string } & OfficialIdentity) | undefined;
+     for (const connection of connections) {
+       const updated = await refreshOfficialConnection(sb, teamId, connection);
+       latest = { id: connection.id, ...updated };
+     }
+     if (source === "lnb" && latest) await syncLnbTeam(latest.id, latest);
+     setSuccess(source === "lnb" ? "Résultats, effectif et statistiques LNB actualisés." : "Résultats officiels actualisés.");
+   } catch (e) {
+     setError(e instanceof Error ? e.message : "Actualisation impossible");
+   } finally {
+     await reload();
+     onConnected?.();
+     setBusy(false);
+   }
+ }
  async function calendarSync(manageBusy=true, newConnection?: { id:string; competition_name?:string }){if(manageBusy)setBusy(true);setError("");try{const {data:{user}}=await sb.auth.getUser();if(!user)throw new Error("Connexion requise");const q=await sb.from("ffbb_synced_matches").select("*").eq("team_id",teamId).order("match_date");if(q.error)throw q.error;const matches=(q.data||[]).filter((row:any)=>source==="lnb"?/^https:\/\/(www\.)?lnb\.fr\//i.test(row.source_url):/^https:\/\/competitions\.ffbb\.com\//i.test(row.source_url)).map((row:any)=>({sourceKey:String(row.source_match_key),date:String(row.match_date||""),time:String(row.start_time||""),homeAway:String(row.home_away||""),opponent:String(row.opponent||""),competition:(newConnection?.id===row.connection_id?newConnection:connections.find(connection=>connection.id===row.connection_id))?.competition_name,ourScore:row.our_score,opponentScore:row.opponent_score}));const count=await syncCompetitionCalendar(sb,teamId,user.id,source,matches,category);setSuccess(count?`${count} prochains matchs synchronisés dans cette équipe.`:"Connexion enregistrée, mais aucun match à venir pour cette saison.")}catch(e){setError(e instanceof Error?e.message:"Calendrier impossible");throw e}finally{if(manageBusy)setBusy(false)}}
  return <section style={card}><div style={{display:"flex",justifyContent:"space-between",gap:10,alignItems:"center",flexWrap:"wrap"}}><div><small style={eyebrow}>COMPÉTITIONS {source.toUpperCase()}</small><h2 style={h2}>Calendrier & résultats officiels</h2><p style={hint}>Plusieurs phases d’un même championnat restent une seule compétition MyBasket : les matchs sont cumulés. Les statistiques avancées MyBasket restent inchangées.</p></div>{connections.length>0&&<div style={{display:"flex",gap:7}}><button style={secondary} onClick={()=>calendarSync().then(()=>onConnected?.()).catch(()=>{})} disabled={busy}>📅 Alimenter le calendrier</button><button style={btn} onClick={syncAll} disabled={busy}>↻ Tout actualiser</button></div>}</div>
  <div style={{display:"flex",gap:10,alignItems:"center",flexWrap:"wrap",marginTop:14}}><label style={hint}>Source officielle <select aria-label="Source officielle du calendrier" value={source} disabled={busy||!onSourceChange} onChange={event=>changeSource(event.target.value as "ffbb"|"lnb")} style={{...input,marginLeft:8,flex:"none"}}><option value="ffbb">FFBB</option><option value="lnb">LNB</option></select></label></div>
  {source==="lnb"&&<div style={{display:"flex",gap:8,flexWrap:"wrap",alignItems:"end",marginTop:12}}><label style={hint}>Championnat<select aria-label="Championnat LNB" value={league} onChange={event=>{setLeague(event.target.value);setData(null)}} disabled={busy} style={{...input,display:"block",marginTop:5}}><option value="">Choisir le championnat</option>{leagues.map(item=><option key={item.code} value={item.code}>{item.label}</option>)}</select></label><label style={hint}>Saison<select aria-label="Saison LNB" value={season} onChange={event=>{setSeason(Number(event.target.value));setData(null)}} disabled={busy} style={{...input,display:"block",marginTop:5}}>{Array.from({length:6},(_,index)=>new Date().getFullYear()+1-index).map(year=><option key={year} value={year}>{year}/{year+1}</option>)}</select></label><button type="button" style={btn} onClick={loadLnbClubs} disabled={busy||!league}>{busy?"Chargement…":"Choisir mon club LNB"}</button></div>}
  <div style={{display:"flex",gap:7,marginTop:12,flexWrap:"wrap"}}><input value={url} onChange={e=>setUrl(e.target.value)} placeholder="Colle le lien du calendrier ou de l’équipe officielle" style={input}/><button style={btn} onClick={()=>read()} disabled={busy}>{busy?"Lecture…":"Analyser"}</button><a style={secondary} href={source==="lnb"?"https://lnb.fr/fr/calendar":"https://competitions.ffbb.com/"} target="_blank" rel="noreferrer">🔎 Rechercher sur {source.toUpperCase()} ↗</a></div><p style={hint}>{source==="lnb"?"Choisis le championnat et la saison, puis ton club. Tu peux aussi coller un lien LNB complet ci-dessus.":"Sur FFBB, recherche ton club et colle le lien de sa page équipe."}</p>{error&&<p role="alert" style={{color:"#a22",fontSize:12}}>{error}</p>}{success&&<p role="status" style={{color:"#286642",fontSize:13,fontWeight:700}}>{success}</p>}
  {data?.mode==="choose-team"&&<div style={box}><b>Quelle est ton équipe ?</b><div style={{display:"grid",gap:7,marginTop:8}}>{data.teams.length?data.teams.map(t=><button key={t.url} style={choice} onClick={()=>{setUrl(t.url);read(t.url)}}>{t.name}<span>Choisir →</span></button>):<p style={hint}>Aucune équipe exploitable détectée sur cette page. Ouvre ton club sur FFBB, clique sur l’équipe concernée puis colle son lien.</p>}</div></div>}
- {data?.mode==="team"&&<div style={box}><div style={{display:"flex",justifyContent:"space-between",gap:10,alignItems:"center"}}><div><b>{data.team}</b><div style={hint}>{data.competition}{data.pool?` · Poule ${data.pool}`:""}{data.phase?` · phase ${data.phase}`:""}</div></div><button style={btn} disabled={busy} onClick={async()=>{setBusy(true);setError("");try{await connect(data);onConnected?.()}catch(e){setError(e instanceof Error?e.message:"Connexion impossible")}finally{setBusy(false)}}}>✓ Connecter et afficher les prochains matchs</button></div><div style={{marginTop:9,fontSize:12}}>{data.matches.filter(g=>g.date>=new Date().toISOString().slice(0,10)&&g.ourScore===null).slice(0,5).map(g=><div key={g.sourceKey} style={{padding:"6px 0",borderBottom:"1px solid #eee4df"}}>🏀 {g.date} {g.time} · {g.homeAway==="home"?"vs":"@"} {g.opponent}</div>)}</div></div>}
+ {data?.mode==="team"&&<div style={box}><div style={{display:"flex",justifyContent:"space-between",gap:10,alignItems:"center"}}><div><b>{data.team}</b><div style={hint}>{data.competition}{data.pool?` · Poule ${data.pool}`:""}{data.phase?` · phase ${data.phase}`:""}</div></div><button style={btn} disabled={busy} onClick={async()=>{setBusy(true);setError("");try{await connect(data)}catch(e){setError(e instanceof Error?e.message:"Connexion impossible")}finally{onConnected?.();setBusy(false)}}}>✓ {source === "lnb" ? "Connecter et importer l’équipe" : "Connecter et afficher les prochains matchs"}</button></div><div style={{marginTop:9,fontSize:12}}>{data.matches.filter(g=>g.date>=new Date().toISOString().slice(0,10)&&g.ourScore===null).slice(0,5).map(g=><div key={g.sourceKey} style={{padding:"6px 0",borderBottom:"1px solid #eee4df"}}>🏀 {g.date} {g.time} · {g.homeAway==="home"?"vs":"@"} {g.opponent}</div>)}</div></div>}
  {connections.length>0&&<div style={{marginTop:20}}><h3 style={{margin:"0 0 10px",color:"#6b1a2c"}}>Calendrier de cette équipe</h3><div role="tablist" aria-label="Calendrier et résultats" style={{display:"flex",flexWrap:"wrap",gap:7,marginBottom:12}}>{([{id:"upcoming",label:"Prochains matchs"},{id:"results",label:"Résultats"},{id:"all",label:"Toute la saison"}] as const).map(view=><button type="button" role="tab" aria-selected={calendarView===view.id} key={view.id} style={calendarView===view.id?btn:secondary} onClick={()=>setCalendarView(view.id)}>{view.label}</button>)}</div>{visibleMatches.length?<div style={{overflowX:"auto"}}><table style={{width:"100%",borderCollapse:"collapse",fontSize:13,textAlign:"left"}}><thead><tr>{["Date","Journée","Rencontre","Lieu","Score"].map(label=><th key={label} scope="col" style={{padding:"10px 8px",background:"#f8f3f0",color:"#6b1a2c"}}>{label}</th>)}</tr></thead><tbody>{visibleMatches.map(game=><tr key={game.sourceKey} style={{borderBottom:"1px solid #eadfd8"}}><td style={{padding:"11px 8px",whiteSpace:"nowrap"}}>{game.date.split("-").reverse().join("/")}<small style={{display:"block",color:"#81776f"}}>{game.time}</small></td><td style={{padding:"11px 8px"}}>{game.round||"—"}</td><td style={{padding:"11px 8px",fontWeight:700}}>{game.homeAway==="away"?"@":"vs"} {game.opponent}</td><td style={{padding:"11px 8px"}}>{game.homeAway==="away"?"Extérieur":"Domicile"}</td><td style={{padding:"11px 8px",fontWeight:800,whiteSpace:"nowrap",color:game.ourScore!==null&&game.opponentScore!==null?(game.ourScore>game.opponentScore?"#286642":game.ourScore<game.opponentScore?"#a22":"#6b1a2c"):"#81776f"}}>{game.ourScore!==null&&game.opponentScore!==null?`${game.ourScore} – ${game.opponentScore}`:"À jouer"}</td></tr>)}</tbody></table></div>:<p style={hint}>{calendarView==="results"?"Aucun résultat officiel disponible pour cette sélection.":"Aucun prochain match disponible. Vérifie la saison choisie."}</p>}<p style={{...hint,marginTop:9}}>Source : {source.toUpperCase()} · Scores présentés dans l’ordre : notre équipe – adversaire.</p></div>}
  {connections.length>0&&<div style={{marginTop:14}}><b>Compétitions connectées</b><div style={{display:"grid",gap:8,marginTop:8}}>{Object.entries(connections.reduce((a:any,c:any)=>((a[c.logical_competition_key]??=[]).push(c),a),{})).map(([k,cs]:any)=><div key={k} style={box}><strong>{cs[0].competition_name}</strong><a href={cs[0].source_url} target="_blank" rel="noreferrer" style={{marginLeft:10,fontSize:11,color:"#6b1a2c"}}>Voir la source officielle ↗</a><span style={{marginLeft:8,fontSize:11,color:"#7b6d66"}}>• {cs.length} phase{cs.length>1?"s":""} cumulée{cs.length>1?"s":""}</span><div style={hint}>{cs.map((c:any)=>`${c.pool_name?`Poule ${c.pool_name}`:""}${c.phase_id?` · ${c.phase_id}`:""}`).join("  +  ")}</div></div>)}</div></div>}
  {source==="lnb"&&connections.length>0&&<LnbPlayerStats teamId={teamId} revision={officialMatches.length} onProfilesCreated={onConnected} />}
