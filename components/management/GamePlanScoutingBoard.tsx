@@ -13,6 +13,7 @@ import { fillLnbIdentity } from "@/lib/lnb-statistics-model";
 import { useLnbTeamStatistics } from "@/lib/lnb-statistics-client";
 import { compactPlayerMetrics, shotSplit, codedPlayerStats, officialPlayerStats, scoutingTeamStats, scoutingTeamForm, teamMetrics } from "@/lib/scouting-report-stats";
 import { scoutingColors } from "@/lib/scouting-colors";
+import { SCOUTING_COURTS_PER_ROW, scoutingCourtsPerRow, type ScoutingCourtsPerRow } from "@/lib/pdf-court-diagrams";
 import type { CSSProperties } from "react";
 import { scoutingHighlights, highlightColors, type ScoutingSide } from "@/lib/scouting-highlights";
 import { scoutingProfiles, scoutingProfileIcon, scoutingProfileLabel } from "@/lib/scouting-profiles";
@@ -65,6 +66,7 @@ export type ScoutBoardValue = {
   playerCards?: ScoutCard[];
   printPlayerIds?: string[];
   playNotes?: Record<string, string>;
+  topPlaysCourtsPerRow?: ScoutingCourtsPerRow;
   highlightSide?: ScoutingSide;
   highlightMatchIds?: string[];
   highlightNotes?: string;
@@ -679,6 +681,15 @@ function ScoutingContent({
                   ＋ Ajouter ou dessiner un système
                 </button>
               </div>
+              <label>
+                Terrains par ligne dans le PDF
+                <select
+                  value={scoutingCourtsPerRow(value.topPlaysCourtsPerRow)}
+                  onChange={event => onChange({ topPlaysCourtsPerRow: scoutingCourtsPerRow(Number(event.target.value)) })}
+                >
+                  {SCOUTING_COURTS_PER_ROW.map(count => <option key={count} value={count}>{count}</option>)}
+                </select>
+              </label>
               <div className={styles.plays}>
                 {systems.map((s) => (
                   <article key={s.id}>

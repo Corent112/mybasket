@@ -1,4 +1,5 @@
 import jsPDF from "jspdf";
+import { courtDiagramLayout, DEFAULT_COURTS_PER_ROW, drawCourtDiagram } from "@/lib/pdf-court-diagrams";
 import type { Playbook, PlaybookSystem } from "@/lib/playbook";
 
 export type PlaybookPdfExportOptions = {
@@ -141,14 +142,11 @@ async function addSystemImages(
   options: PlaybookPdfExportOptions
 ) {
   let currentPage = page;
-  const perRow = Math.max(1, Math.min(4, options.courtsPerRow ?? 2));
-  const gap = 5;
+  const perRow = Math.max(1, Math.min(4, options.courtsPerRow ?? DEFAULT_COURTS_PER_ROW));
+  const showPhaseNumbers = options.includePhaseNumbers !== false;
+  const layout = courtDiagramLayout(182, perRow, showPhaseNumbers);
+  const { width, gap, rowHeight } = layout;
   const left = 14;
-  const usable = 182;
-  const imageWidth = (usable - gap * (perRow - 1)) / perRow;
-  const imageHeight = imageWidth * 0.72;
-  const labelSpace = options.includePhaseNumbers === false ? 5 : 10;
-  const rowHeight = imageHeight + labelSpace + 8;
   const startY = 52;
   const maxY = 268;
   let y = startY;
@@ -165,18 +163,9 @@ async function addSystemImages(
       addFooter(pdf,currentPage); pdf.addPage(); currentPage++;
       addSystemTitle(pdf,playbookTitle,systemTitle,systemCategory); y=startY;
     }
-    const x = left + col * (imageWidth + gap);
-    const img = await imageToDataUrl(images[imageIndex]);
-    if (img) {
-      try { pdf.addImage(img,"PNG",x,y,imageWidth,imageHeight); }
-      catch { pdf.setFontSize(9); pdf.setTextColor(120); pdf.text("Schéma non exportable",x+imageWidth/2,y+imageHeight/2,{align:"center"}); }
-    } else {
-      pdf.setFontSize(9); pdf.setTextColor(120); pdf.text("Schéma non disponible",x+imageWidth/2,y+imageHeight/2,{align:"center"});
-    }
-    if (options.includePhaseNumbers !== false) {
-      pdf.setFont("helvetica","normal"); pdf.setFontSize(8); pdf.setTextColor(50);
-      pdf.text(`Phase ${imageIndex+1}`,x+imageWidth/2,y+imageHeight+5,{align:"center"});
-    }
+    const x = left + col * (width + gap);
+    const image = await imageToDataUrl(images[imageIndex]);
+    drawCourtDiagram(pdf, image, x, y, layout, showPhaseNumbers ? imageIndex + 1 : undefined);
     col++;
     if(col>=perRow){ col=0; y += rowHeight; }
   }

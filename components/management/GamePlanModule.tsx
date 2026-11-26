@@ -44,6 +44,7 @@ import { compactPlayerMetrics, shotSplit, codedPlayerStats, officialPlayerStats,
 import { scoutingHighlights, highlightColors } from "@/lib/scouting-highlights";
 import { scoutingProfileIcon, scoutingProfileLabel } from "@/lib/scouting-profiles";
 import { scoutingColors } from "@/lib/scouting-colors";
+import { courtDiagramLayout, drawCourtDiagram, scoutingCourtsPerRow } from "@/lib/pdf-court-diagrams";
 import GamePlanScoutingBoard, { type ScoutBoardValue } from "./GamePlanScoutingBoard";
 
 /* =============================== Stores ================================ */
@@ -133,6 +134,7 @@ type Scouting = {
   playerCards?: ScoutBoardValue["playerCards"];
   printPlayerIds?: string[];
   playNotes?: ScoutBoardValue["playNotes"];
+  topPlaysCourtsPerRow?: ScoutBoardValue["topPlaysCourtsPerRow"];
   highlightSide?: ScoutBoardValue["highlightSide"];
   highlightMatchIds?: string[];
   highlightNotes?: string;
@@ -2296,19 +2298,41 @@ async function exportGamePlanPdf(team: Team, gp: GamePlan, rotation: Rotation | 
 
       const scoutSystems = [...new Map(gp.librarySystems.filter(system => sysSection(system) === "scout").map(system => [system.id, system])).values()];
       if (scoutSystems.length) {
-        ensure(60);
-        title("Top plays");
-        for (const system of scoutSystems) {
-          const images = [...new Set((system.schemaImages?.length ? system.schemaImages : [system.schemaImage]).filter(Boolean))].slice(0, 3);
-          ensure(images.length ? 51 : 12);
-          doc.setTextColor(...burgundy); doc.setFont("helvetica", "bold"); doc.setFontSize(10);
-          doc.text(system.title, M, y);
+        const perRow = scoutingCourtsPerRow(gp.scouting.topPlaysCourtsPerRow);
+        const layout = courtDiagramLayout(W - 2 * M, perRow, true);
+        const { width, gap, rowHeight } = layout;
+        const systemHeading = (label: string) => {
+          doc.setTextColor(...burgundy);
+          doc.setFont("helvetica", "bold");
+          doc.setFontSize(10);
+          doc.text(label, M, y);
           y += 5;
-          for (const [index, src] of images.entries()) {
-            const image = await imageToDataUrl(String(src));
-            if (image) doc.addImage(image, "PNG", M + index * 61, y, 57, 40);
+        };
+
+        for (const [systemIndex, system] of scoutSystems.entries()) {
+          const phases = system.schemaImages?.filter(Boolean);
+          const images = phases?.length ? phases : [system.schemaImage].filter(Boolean);
+          const firstRowSpace = (images.length ? rowHeight : 0) + 9;
+          if (systemIndex === 0 || y + firstRowSpace > H - M) {
+            ensure(8 + firstRowSpace);
+            title("Top plays");
           }
-          if (images.length) y += 43;
+          systemHeading(system.title);
+
+          for (const [index, src] of images.entries()) {
+            if (index > 0 && index % perRow === 0) {
+              y += rowHeight;
+              if (y + rowHeight > H - M) {
+                ensure(13 + rowHeight);
+                title("Top plays");
+                systemHeading(`${system.title} (suite)`);
+              }
+            }
+            const image = src ? await imageToDataUrl(src) : null;
+            const x = M + (index % perRow) * (width + gap);
+            drawCourtDiagram(doc, image, x, y, layout, index + 1);
+          }
+          if (images.length) y += rowHeight;
           box("Notre réponse", gp.scouting.playNotes?.[system.id] || "");
           y += 3;
         }
