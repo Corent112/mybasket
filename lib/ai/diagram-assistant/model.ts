@@ -78,7 +78,9 @@ export function assembleDiagram(scene:Scene,raw:unknown,passes:number):AiExercis
   if(prior){
    const start=point(node.from),previousStart=point(prior.from);
    const end=point(node.to),previousEnd=point(prior.to);
-   const distinct=Boolean(start&&previousStart&&distance(start,previousStart)>.025)
+   const owner=text(node.fromPlayer,30),priorOwner=text(prior.fromPlayer,30);
+   const distinct=Boolean(owner&&priorOwner&&owner!==priorOwner&&byPlayer.has(owner)&&byPlayer.has(priorOwner))
+     ||Boolean(start&&previousStart&&distance(start,previousStart)>.025)
      ||Boolean(end&&previousEnd&&distance(end,previousEnd)>.025);
    if(!distinct)continue;
    warnings.push(`Repère ${id} partagé : le second tracé reste à vérifier.`);
@@ -97,24 +99,50 @@ export function assembleDiagram(scene:Scene,raw:unknown,passes:number):AiExercis
   if(!byTerminal.has(id))byTerminal.set(id,node);
  }
  const actions:AiDiagramAction[]=[],built=new Map<string,AiDiagramAction>(),visiting=new Set<string>();
+ const terminalsById=new Map(terminals.map(terminal=>[terminal.id,terminal]));
+ const possibleMovement=(id:string,node:Json)=>{
+  const terminal=terminalsById.get(id);
+  if(terminal?.kind==='bar')return true;
+  if((terminal?.styleConfidence??0)>=.8&&terminal?.strokeStyle==='dashed')return false;
+  return ['cut','screen','dribble'].includes(String(node.action));
+ };
+ const endpointOf=(id:string,node:Json)=>{
+  const raw=point(node.to);
+  const terminal=terminalsById.get(id);
+  const observed=raw?scene.map(raw):undefined;
+  return terminal&&(!observed||distance(observed,terminal)<.018)
+   ? {x:terminal.x,y:terminal.y} : observed;
+ };
+ const inferPredecessor=(id:string,owner:AiDiagramPlayer,start:AiPoint)=>{
+  const candidates=[...byTerminal].flatMap(([candidateId,node])=>{
+   if(candidateId===id||text(node.fromPlayer,30)!==owner.key||!possibleMovement(candidateId,node))return [];
+   const end=endpointOf(candidateId,node);
+   const gap=end?distance(end,start):Infinity;
+   return gap<.028?[{id:candidateId,gap}]:[];
+  }).sort((a,b)=>a.gap-b.gap);
+  return candidates.length===1||candidates.length>1&&candidates[1].gap-candidates[0].gap>.012
+   ? candidates[0].id : undefined;
+ };
  const visit=(id:string):AiDiagramAction|undefined=>{
   if(built.has(id))return built.get(id);
   if(visiting.has(id)){warnings.push('Enchaînement circulaire à vérifier.');return undefined}
-  const node=byTerminal.get(id),terminal=terminals.find(t=>t.id===id);if(!node||!terminal)return undefined;
+  const node=byTerminal.get(id),terminal=terminalsById.get(id);if(!node||!terminal)return undefined;
   visiting.add(id);
-  const previousId=text(node.previousTerminalId,40);
-  const previous=previousId?visit(previousId):undefined;
-  const ownerKey=text(node.fromPlayer,30)||previous?.fromPlayer;
-  const owner=byPlayer.get(ownerKey??'');
   const rawFrom=point(node.from),observedFrom=rawFrom?scene.map(rawFrom):undefined;
-  const connected=!previousId&&owner&&observedFrom?actions.filter(a=>a.fromPlayer===owner.key&&['cut','screen','dribble'].includes(a.action)&&distance(a.to,observedFrom)<.035):[];
-  const previousOwn=previous && previous.fromPlayer===owner?.key && ['cut','screen','dribble'].includes(previous.action)?previous:connected.length===1?connected[0]:undefined;
+  const declaredOwner=byPlayer.get(text(node.fromPlayer,30));
+  const previousId=text(node.previousTerminalId,40)||
+   (declaredOwner&&observedFrom&&distance(declaredOwner,observedFrom)>.035
+    ?inferPredecessor(id,declaredOwner,observedFrom):undefined);
+  const previous=previousId?visit(previousId):undefined;
+  const owner=declaredOwner??(previous?.fromPlayer?byPlayer.get(previous.fromPlayer):undefined);
+  const previousOwn=previous&&previous.fromPlayer===owner?.key&&['cut','screen','dribble'].includes(previous.action)
+   &&(!observedFrom||distance(previous.to,observedFrom)<.045)?previous:undefined;
   let confidence=Math.min(score(node.confidence),terminal.confidence<.5?.4:1);
   if(previousId&&!previousOwn){confidence=Math.min(confidence,.4);warnings.push(`Action ${id} : enchaînement à vérifier.`)}
-  const unexplained=!!owner&&!!observedFrom&&!previousOwn&&distance(owner,observedFrom)>.06;
+  const unexplained=!!owner&&!!observedFrom&&!previousOwn&&distance(owner,observedFrom)>.035;
   if(unexplained){confidence=Math.min(confidence,.4);warnings.push(`Action ${id} : départ éloigné du joueur, enchaînement à vérifier.`)}
   const from=previousOwn?.to??(unexplained?observedFrom:owner?{x:owner.x,y:owner.y}:observedFrom);
-  const endpoint=point(node.to),to=endpoint?scene.map(endpoint):{x:terminal.x,y:terminal.y};
+  const to=endpointOf(id,node)??{x:terminal.x,y:terminal.y};
   const allowed=['cut','dribble','pass','shoot','screen','giveball'];
   let kind=allowed.includes(String(node.action))?String(node.action) as AiDiagramAction['action']:'cut';
   if(terminal.kind==='bar')kind='screen';

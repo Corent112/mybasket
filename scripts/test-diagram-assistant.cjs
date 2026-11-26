@@ -33,6 +33,19 @@ let diagram=assembleDiagram(scene,{actions:[cut,screen]},2);assert.deepEqual(dia
 assert.equal(unresolvedScanTerminals({...diagram,actions:diagram.actions.slice(0,1)}).length,1,'Deleting a movement immediately restores the missing-trace warning');assert.equal(unresolvedScanTerminals({...diagram,actions:[],scanAudit:{...diagram.scanAudit,dismissed:['bar']}}).length,1);
 const extra=assembleDiagram(scene,{actions:[screen,{...cut,terminalId:'new-tip'}]},2);assert.equal(extra.actions.length,2,'An extra proposed action is retained even if it was absent from the first inventory');assert.ok(extra.actions[1].confidence<.5,'Uninventoried action must be manually verified');
 const inferred=assembleDiagram(scene,{actions:[screen,{...cut,previousTerminalId:null}]},2);assert.deepEqual(inferred.actions[1].from,inferred.actions[0].to,'A unique, spatially connected continuation is recognized even when its link is absent');
+const reverse=assembleDiagram(scene,{actions:[{...cut,previousTerminalId:null},screen]},2);
+assert.deepEqual(reverse.actions.map(action=>action.action),['screen','cut'],'Spatial inference is independent of the model response order');
+assert.deepEqual(reverse.actions[1].from,reverse.actions[0].to);
+const spaced=assembleDiagram(scene,{actions:[screen,{...cut,from:{x:.55,y:.35}}]},2);
+assert.deepEqual(spaced.actions[1].from,{x:.55,y:.175},'A contradicted dependency does not snap a visible start to the earlier action');
+assert.ok(spaced.actions[1].confidence<.5);
+const nearbyTip=assembleDiagram(scene,{actions:[{...screen,to:{x:.507,y:.6}}]},2);
+assert.equal(nearbyTip.actions[0].to.x,.5,'Use the independently detected termination when the readings agree');
+const sharedWithoutStarts=assembleDiagram(scene,{actions:[
+  {...cut,previousTerminalId:null,from:null},
+  {...cut,previousTerminalId:null,from:null,fromPlayer:'b'},
+]},2);
+assert.equal(sharedWithoutStarts.actions.length,2,'Two known players can run toward nearby tips even when starts were omitted');
 const bad=assembleDiagram(scene,{actions:[screen,{...cut,fromPlayer:'unknown',previousTerminalId:null}]},2);assert.equal(bad.actions[1].fromPlayer,undefined);assert.ok(bad.actions[1].confidence<.5,'Ambiguous ownership remains explicit');
 assert.equal(coverage(assembleDiagram(scene,{actions:[{...screen,to:{x:.1,y:.1}}]},2)).missing.length,2,'A claimed terminal with a mismatched arrival is not considered covered');
 assert.equal(readScene({...inventory,players:inventory.players.map(p=>({...p,label:'9'}))},true).players[1].label,'?','Duplicate numbers do not invent duplicate identities');
@@ -41,6 +54,11 @@ const perspective=readScene({...inventory,court:{type:'half',corners:[{x:.1,y:.2
 const hints=previousPhaseHints(diagram);assert.deepEqual({x:hints[0].x,y:hints[0].y},diagram.actions.at(-1).to);assert.equal(previousPhaseHints({players:[{key:'x',label:'?',x:.2,y:.2}]}).length,0);
 (async()=>{
  const calls=[];diagram=await analyzeMyBasketDiagram({calibrated:true,courtType:'half',read:async(_prompt,stage)=>{calls.push(stage);return JSON.stringify(stage==='inventory'?inventory:stage==='paths'?{actions:[screen]}:{actions:[cut]})}});assert.deepEqual(calls,['inventory','paths','repair']);assert.equal(coverage(diagram).missing.length,0);assert.equal(diagram.scanAudit.passes,3);
+ const regression=await analyzeMyBasketDiagram({calibrated:true,read:async(_prompt,stage)=>JSON.stringify(
+  stage==='inventory'?inventory:stage==='paths'?{actions:[screen]}:{actions:[{...cut,to:{x:.15,y:.15}}]}
+ )});
+ assert.equal(regression.actions.length,1,'A recovery which resolves no terminal is discarded');
+ assert.equal(regression.actions[0].terminalId,'bar');
  calls.length=0;const partial=await analyzeMyBasketDiagram({calibrated:true,read:async(_p,stage)=>{calls.push(stage);if(stage==='paths')throw Error('timeout');return JSON.stringify(inventory)}});assert.deepEqual(calls,['inventory','paths']);assert.equal(coverage(partial).missing.length,2,'Provider failure keeps all visual terminals for review');
  let time=0;calls.length=0;const budgeted=await analyzeMyBasketDiagram({calibrated:true,now:()=>time,read:async(_p,stage)=>{calls.push(stage);time+=50000;return JSON.stringify(stage==='inventory'?inventory:{actions:[screen]})}});assert.deepEqual(calls,['inventory','paths']);assert.equal(coverage(budgeted).missing.length,1,'No unbounded retry after budget');
  const photoCases=[['feutre.jpg',[[1160,520],[990,396],[750,250],[450,147],[120,138]]],['crayon.png',[[134,132],[136,178],[144,210],[159,235]]],['feutre.jpg',[[745,770],[825,710],[908,645],[986,577],[1074,532]]],['crayon.png',[[345,334],[374,312],[400,298],[430,280]]]];

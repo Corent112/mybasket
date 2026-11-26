@@ -66,7 +66,15 @@ Reprends UNIQUEMENT les repères manquants en suivant l'encre de la photo. Retou
     const id=record(a).terminalId;
     return !id||(!existingIds.has(id)&&!repairedIds.has(String(id)));
    });
-   diagram=assembleDiagram(scene,{actions:[...merged,...replacements.values(),...additions],additionalTerminals:[...(Array.isArray(original.additionalTerminals)?original.additionalTerminals:[]),...(Array.isArray(extra.additionalTerminals)?extra.additionalTerminals:[])],warnings:[...(Array.isArray(original.warnings)?original.warnings:[]),...(Array.isArray(extra.warnings)?extra.warnings:[])]},3);
+   const candidate=assembleDiagram(scene,{actions:[...merged,...replacements.values(),...additions],additionalTerminals:[...(Array.isArray(original.additionalTerminals)?original.additionalTerminals:[]),...(Array.isArray(extra.additionalTerminals)?extra.additionalTerminals:[])],warnings:[...(Array.isArray(original.warnings)?original.warnings:[]),...(Array.isArray(extra.warnings)?extra.warnings:[])]},3);
+   const unresolvedBefore=new Set(missing.map(terminal=>terminal.id));
+   const unresolvedAfter=coverage(candidate).missing;
+   if(unresolvedAfter.length<missing.length&&unresolvedAfter.every(terminal=>unresolvedBefore.has(terminal.id))){
+    diagram=candidate;
+   }else{
+    diagram.scanAudit!.passes=3;
+    diagram.scanAudit!.warnings.push('La seconde lecture n’a pas amélioré les liaisons vérifiées.');
+   }
   }catch(error){const failure=diagramDiagnostic(error,'repair');diagram.scanAudit!.failure=failure;diagram.scanAudit!.warnings.push(failure.message+' Les repères non reliés restent visibles.');}
  }
  return diagram;
