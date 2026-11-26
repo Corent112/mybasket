@@ -1,7 +1,7 @@
 'use client';
 import { ActionKindDialog } from '@/components/import/ActionKindDialog';
 import { linkImportedDrawingPhases } from '@/lib/import/link-drawing-phases';
-import { hasImportedTurnback, sampleImportedArc } from '@/lib/import/curve-handle';
+import { sampleImportedArc } from '@/lib/import/curve-handle';
 import { COURT_FLOOR_PATTERNS, courtFloorProjection, floorPatternShade, isInsideThreePointArc, type CourtFloorPattern } from '@/lib/court-floor-pattern';
 import { resolveSystemDrawingPreview } from "@/lib/system-drawing-preview";
 import {drawingSessionStorage} from '@/lib/drawing-session-storage';
@@ -3885,15 +3885,15 @@ const owners=ownersAtClock(sched,ballEventsRef.current,clock);
         if (i !== currentRef.current) return p;
         return { ...p, lines: p.lines.map((z) => {
           if (z.id !== id) return z;
-          if (which === 'from') return { ...z, from: n, points: undefined };
+          if (which === 'from') return { ...z, from: n, points: anchoredScannedPath(z, n, z.to) };
           if (which === 'to') return z.action === 'pass' && z.targetPlayerId
-            ? { ...z, to: n, points: undefined, targetMode: 'player' as const, createdTargetPoint: n }
-            : { ...z, to: n, points: undefined };
+            ? { ...z, to: n, points: anchoredScannedPath(z, z.from, n), targetMode: 'player' as const, createdTargetPoint: n }
+            : { ...z, to: n, points: anchoredScannedPath(z, z.from, n) };
           const cur = z.ctrls ?? (z.ctrl ? [z.ctrl] : []);
           const next = cur.slice();
           if (index != null && index < next.length) next[index] = n; else next.push(n);
           const anchor = index === undefined ? undefined : cur[index];
-          const points = z.points && anchor && hasImportedTurnback(z.points)
+          const points = z.points && z.points.length > 2 && anchor
             ? z.points.map((point, j, path) => {
                 const t = j / (path.length - 1);
                 const weight = 1 - Math.abs(2 * t - 1);
@@ -6509,6 +6509,7 @@ const exportJson = () => {
               style={{ background: '#fff', color: '#17151c', borderRadius: 22, width: 'min(1380px, 100%)', maxHeight: '94dvh', overflow: 'auto', padding: '1rem' }}>
               <header style={{ display: 'flex', justifyContent: 'space-between', gap: 12, marginBottom: 12 }}>
                 <strong style={{ color: '#6b1a2c', fontSize: 18 }}>Importer des schémas</strong>
+                <p style={{margin: 0, fontSize: 13}}>Photo d’un schéma papier ou image d’un système. Sélectionne les photos dans l’ordre des phases.</p>
                 <button type="button" className="btn btn-outline btn-small" onClick={() => setPhotoImportOpen(false)}>Fermer</button>
               </header>
               <ExercisePhotoImport drawingOnly initialAssistAI={photoImportAI} onImported={insertPhotoDrawing} />

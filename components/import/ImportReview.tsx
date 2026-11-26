@@ -23,7 +23,7 @@
 import { Undo2, Redo2, ArrowLeftRight, Spline, Link2, UserRound, Check, Trash2 } from "lucide-react";
 import { useReviewHistory } from "./useReviewHistory";
 import { changeImportedActionKind } from "@/lib/import/action-kind";
-import { cleanImportedPath, hasImportedTurnback, importedCurveHandle, sampleImportedArc } from "@/lib/import/curve-handle";
+import { cleanImportedPath, hasImportedTurnback, importedCurveHandle, preserveTracedPath, sampleImportedArc } from "@/lib/import/curve-handle";
 import { resolveImportPassChoices } from "@/lib/import/import-refiner";
 import { reconcileDiagramRosters } from "@/lib/import/diagram-roster";
 import { ActionKindDialog } from "./ActionKindDialog";
@@ -129,6 +129,8 @@ function curveHandles(action: AiDiagramAction | undefined) {
 
 function reviewPath(action: AiDiagramAction): AiPoint[] {
   const from = action.from ?? action.to;
+  const traced = action.geometry === "traced" ? preserveTracedPath(from, action.to, action.points) : undefined;
+  if (traced && (action.action !== "dribble" || traced.length > 2)) return traced;
   if (action.action === "pass") return [from, action.to];
   if (action.action === "dribble" && action.from) return changeImportedActionKind({ ...action, action:"cut", points:cleanImportedPath(from,action.to,action.points,"dribble") }, "dribble").points ?? [from, action.to];
   if (action.geometry === "traced" || action.action === "dribble" || action.action === "freedraw" || hasImportedTurnback(action.points)) {
@@ -248,6 +250,7 @@ export default function ImportReview({
     setAddMode(null); setAnnotationMode(false); traceRef.current = null; setTracePreview([]);
   };
   const [overlay, setOverlay] = useState(0);
+  const [sourceOnly, setSourceOnly] = useState(false);
   const [traceMode, setTraceMode] = useState(false);
   const [traceKind, setTraceKind] = useState<AiDiagramActionKind>("freedraw");
   const traceRef = useRef<AiPoint[] | null>(null);
@@ -298,6 +301,7 @@ export default function ImportReview({
   useEffect(() => {
     setOverlay(result.referenceFallback || result.assistantResult?.status==='failed' ? .65 : 0);
     setOverlayReady(false);
+    setSourceOnly(false);
     overlayImage.current = null;
     if (!diagram?.courtReference?.url) return;
     const image = new Image();
@@ -328,15 +332,16 @@ export default function ImportReview({
     }
 
     // Calque : la photo redressée, sous le dessin, pour comparer d'un coup d'œil.
-    if (overlay > 0 && overlayReady && overlayImage.current && diagram.courtReference) {
+    if ((overlay > 0 || sourceOnly) && overlayReady && overlayImage.current && diagram.courtReference) {
       ctx.save();
-      ctx.globalAlpha = overlay;
+      ctx.globalAlpha = sourceOnly ? 1 : overlay;
       const area = playRect(courtType);
       const { play } = diagram.courtReference;
       const w = (area.x1 - area.x0) * width / (play.x1 - play.x0);
       const h = (area.y1 - area.y0) * height / (play.y1 - play.y0);
       ctx.drawImage(overlayImage.current, area.x0 * width - play.x0 * w, area.y0 * height - play.y0 * h, w, h);
       ctx.restore();
+      if (sourceOnly) return;
     }
 
     // Terrain vectoriel uniquement en repli si l’image native n’est pas disponible.
@@ -529,7 +534,7 @@ export default function ImportReview({
       ctx.fillText(String(player.label || (doubt ? "?" : "")), 0, 1);
       ctx.restore();
     });
-  }, [diagram, courtType, overlay, overlayReady, selection, nativeCourtReady, tracePreview, inkColor, stage, showUncertain]);
+  }, [diagram, courtType, overlay, overlayReady, sourceOnly, selection, nativeCourtReady, tracePreview, inkColor, stage, showUncertain]);
 
   useEffect(() => {
     draw();
@@ -1114,32 +1119,40 @@ export default function ImportReview({
             width={size.w}
             height={size.h}
             style={{ ...styles.canvas, width: `min(${previewZoom}%, ${size.w * previewZoom / 100}px)` }}
-            onPointerDown={handlePointerDown}
+            onPointerDown={sourceOnly ? undefined : handlePointerDown}
             onDoubleClick={event => {
-              if (stage !== "actions" || traceMode || addMode || annotationMode || linkStart) return;
+              if (sourceOnly || stage !== "actions" || traceMode || addMode || annotationMode || linkStart) return;
               const { x, y } = pointerPosition(event);
               const hit = hitTest(x, y);
               if (hit?.kind !== "action" || (hit.end === "curve" && hit.pointIndex !== undefined) ||
                   selection?.kind !== "action" || selection.index !== hit.index) return;
               setActionTypeIndex(hit.index);
             }}
-            onPointerMove={handlePointerMove}
-            onPointerUp={handlePointerUp}
+            onPointerMove={sourceOnly ? undefined : handlePointerMove}
+            onPointerUp={sourceOnly ? undefined : handlePointerUp}
             onPointerCancel={() => { endGesture(); traceRef.current = null; setTracePreview([]); setDragging(false); }}
           />
           </div>
           {diagram.courtReference ? (
+            <>
+              <div className="import-previewbar" role="group" aria-label="Comparer la photo au schéma">
+                <button type="button" aria-pressed={sourceOnly} disabled={!overlayReady} onClick={() => setSourceOnly(true)}>Photo seule</button>
+                <button type="button" aria-pressed={!sourceOnly && overlay > 0} disabled={!overlayReady} onClick={() => { setSourceOnly(false); setOverlay(.55); }}>Superposer</button>
+                <button type="button" aria-pressed={!sourceOnly && overlay === 0} onClick={() => { setSourceOnly(false); setOverlay(0); }}>Schéma seul</button>
+              </div>
             <label style={styles.slider}>
-              Photo d’origine
+              Opacité de la photo
               <input
                 type="range"
                 min={0}
                 max={100}
                 value={Math.round(overlay * 100)}
+                disabled={sourceOnly}
                 onChange={(event) => setOverlay(Number(event.target.value) / 100)}
               />
               <span style={styles.sliderValue}>{Math.round(overlay * 100)} %</span>
             </label>
+            </>
           ) : null}
         </div>
 
@@ -1404,6 +1417,10 @@ export default function ImportReview({
       </div>
       <style>{`.import-scan-audit{border-color:#d4a24c!important;background:#fffaf1!important}.import-missing-trace{display:grid;gap:7px;margin-top:12px;font-size:12px;padding-top:10px;border-top:1px solid #efdfbf}.import-missing-trace span{color:#806c6b}.import-missing-trace button{border:1px solid #dec6d1;border-radius:9px;padding:9px;background:white;color:#6b1a2c;cursor:pointer;font-weight:650}.import-review .import-workspace{align-items:start!important}
 .import-court-viewport{width:100%;overflow-x:auto}
+.import-previewbar{display:flex;flex-wrap:wrap;gap:6px;margin:8px 0}
+.import-previewbar button{border:1px solid #dfcbd6;border-radius:9px;background:#fff;color:#6b1a2c;padding:7px 10px;cursor:pointer;font-weight:700}
+.import-previewbar button[aria-pressed="true"]{background:#6b1a2c;color:#fff}
+.import-previewbar button:disabled{opacity:.5}
 .import-review .import-court canvas{height:auto;display:block;margin-inline:auto}
 .import-preview-controls{display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap;margin-bottom:10px}
 .import-preview-controls label{margin:0!important;flex-wrap:wrap}

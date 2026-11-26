@@ -80,7 +80,7 @@ export function reconcileScan(local: AiExerciseImport, ai: AiExerciseImport): Ai
    && !corrected.some(b=>b.action===a.action&&distance(b.to,a.to)<.027&&b.fromPlayer===a.fromPlayer&&(!b.from||!a.from||distance(b.from,a.from)<.045)));
  const actions=[...corrected,...retained].map((a,index)=>{
   const line={...a,order:index+1};
-  if(line.action!=='dribble'||!line.from||audited)return line;
+  if(line.action!=='dribble'||!line.from||audited||line.geometry==='traced')return line;
   // Vision supplies the centreline; generate the visible dribble wave once.
   return {...changeImportedActionKind({...line,action:'cut'},'dribble'),confidence:line.confidence,source:line.source};
  });

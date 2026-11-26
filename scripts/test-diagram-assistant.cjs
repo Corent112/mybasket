@@ -50,8 +50,23 @@ const hints=previousPhaseHints(diagram);assert.deepEqual({x:hints[0].x,y:hints[0
   const traced=traceGuidedInk(pixels,guide);assert.ok(traced&&traced.support>.8,`Actual ${file} ink can be followed inside the supplied route corridor`);assert.deepEqual(traced.points[0],guide[0]);assert.deepEqual(traced.points.at(-1),guide.at(-1));
   const line={action:'cut',fromPlayer:'a',from:{x:guide[0].x,y:guide[0].y*.5},to:{x:guide.at(-1).x,y:guide.at(-1).y*.5},points:guide.map(p=>({x:p.x,y:p.y*.5})),confidence:1};
   const fitted=refineDiagramInk({...diagram,players:[{key:'a',label:'9',team:'att',...line.from}],actions:[line]},pixels);assert.equal(fitted.actions[0].geometry,'traced');
-  const schema=importToPlaquetteSchema({title:'Reference photo',diagram:fitted});const native=schema.phases[0].lines[0];assert.ok(native.points?.length>2||native.ctrls?.length===1||(!native.points&&!native.ctrls),'Traced geometry becomes an editable native line or smoothed complex path');assert.deepEqual(native.from,line.from);assert.deepEqual(native.to,line.to);
+  const schema=importToPlaquetteSchema({title:'Reference photo',diagram:fitted});const native=schema.phases[0].lines[0];assert.deepEqual(native.points,fitted.actions[0].points,'Traced geometry survives conversion without smoothing');assert.deepEqual(native.from,line.from);assert.deepEqual(native.to,line.to);
  }
+ const sourcePlayer={key:'a',label:'4',team:'att',x:.2,y:.2};
+ const zigzag=[{x:.2,y:.2},{x:.25,y:.22},{x:.30,y:.18},{x:.35,y:.22},{x:.40,y:.18},{x:.45,y:.2}];
+ const curvedPass=[{x:.2,y:.2},{x:.35,y:.3},{x:.55,y:.25},{x:.65,y:.2}];
+ for(const [action,points] of [['dribble',zigzag],['pass',curvedPass]]){
+  const sourceDiagram={...diagram,players:[sourcePlayer],actions:[{action,fromPlayer:'a',from:points[0],to:points.at(-1),points,geometry:'traced'}]};
+  const native=importToPlaquetteSchema({title:'Ink fidelity',diagram:sourceDiagram}).phases[0].lines[0];
+  assert.deepEqual(native.points,points,`Measured ${action} geometry is not replaced by a generated path`);
+ }
+ const crowded={...diagram,scanAudit:{...diagram.scanAudit,terminals:[
+  {id:'flexible',kind:'arrow',x:.50,y:.2},{id:'constrained',kind:'arrow',x:.47,y:.2},
+ ]},actions:[
+  {action:'cut',from:{x:.2,y:.2},to:{x:.49,y:.2}},
+  {action:'cut',from:{x:.2,y:.2},to:{x:.52,y:.2}},
+ ]};
+ assert.equal(coverage(crowded).missing.length,0,'Adjacent terminals use distinct compatible actions without a greedy false positive');
  const empty={width:100,height:100,data:new Uint8ClampedArray(40000).fill(255)};assert.equal(traceGuidedInk(empty,[{x:.1,y:.1},{x:.9,y:.9}]),null,'Blank paper cannot become a confirmed vector path');
  console.log('Dedicated assistant: inventory/path audit/recovery, screen continuation, ambiguous ownership, duplicate labels, perspective, previous-phase hints, bounded failures and actual pen/pencil photo ink tracing passed. Human-provided corridors test geometry, not end-to-end AI recognition.');
 })().catch(error=>{console.error(error);process.exitCode=1});

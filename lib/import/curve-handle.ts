@@ -50,6 +50,12 @@ export function hasImportedTurnback(points: AiPoint[] | undefined): boolean {
   return false;
 }
 
+/** Keep measured bends and zigzags. Only the two endpoints are rebound to the edited anchors. */
+export function preserveTracedPath(from: AiPoint, to: AiPoint, points?: AiPoint[]): AiPoint[] | undefined {
+  if (!points || points.length < 2 || points.some(point => !Number.isFinite(point.x) || !Number.isFinite(point.y))) return;
+  return [from, ...points.slice(1, -1), to];
+}
+
 /** Convert pixel-following samples to a clean editable centreline. */
 export function cleanImportedPath(from: AiPoint, to: AiPoint, points: AiPoint[] | undefined, kind: string): AiPoint[] {
   if (kind === "pass" || !points || points.length < 3) return [from, to];

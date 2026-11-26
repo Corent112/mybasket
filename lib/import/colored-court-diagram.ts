@@ -928,7 +928,7 @@ export async function readColoredCourtDiagram(source: HTMLCanvasElement) {
     }
     const points=[source.player,...sampleStroke(shaft).map(canonical),to];
     actions.push({action:"dribble",from:source.player,to,points,fromPlayer:source.player.key,
-      confidence:.8,source:"Trajet court dans le prolongement du ballon"});
+      confidence:.8,geometry:"traced",source:"Trajet court dans le prolongement du ballon"});
   }
   const short=traces.filter(b=>!used.has(b)&&traceBounds(b)<unit*.125);
   const passCandidates=(source:typeof roster[number],origin:AiPoint,afterCatch=false)=>

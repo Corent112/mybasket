@@ -487,15 +487,18 @@ export function auditLocalInk(mask:Uint8Array,width:number,height:number,unit:nu
   const merged=mergeTerminalRoutes(actions,routes,unit,toImage,canonical);
   // Recover the visible shaft even when its owner was obscured or the
   // player OCR failed. The review must explicitly resolve that ownership.
-  if(!paper){
-    const ink=makeSampler(mask,width,height);
-    for(const terminal of inventory){
-      if(routes.some(route=>route.terminal===terminal)||merged.some(action=>distance(toImage(action.to),terminal)<unit*.027))continue;
-      const partial=continuousRoute(ink,terminal,markers,unit,true);
-      if(!partial||partial.fromPlayer)continue;
-      const points=partial.points.map(canonical);
-      merged.push({action:partial.action,from:points[0],to:points.at(-1)!,points,geometry:"traced",confidence:.45,source:"Trajectoire visible · joueur au départ à confirmer"});
-    }
+  const unownedTerminals = new Set<InkTerminal>();
+  const ink = makeSampler(mask, width, height);
+  for (const terminal of inventory) {
+    if (paper && terminal.score < .97) continue;
+    if (routes.some(route => route.terminal === terminal) ||
+        merged.some(action => distance(toImage(action.to), terminal) < unit * .027)) continue;
+    const partial = continuousRoute(ink, terminal, markers, unit, true);
+    if (!partial || partial.fromPlayer) continue;
+    const points = partial.points.map(canonical);
+    merged.push({ action: partial.action, from: points[0], to: points.at(-1)!, points,
+      geometry: "traced", confidence: .45, source: "Trajectoire visible · joueur au départ à confirmer" });
+    unownedTerminals.add(terminal);
   }
   const recovered=recoverArrivalPasses(mask,width,height,unit,markers,merged,toImage,canonical);
   const final=rejectCrossingScreens(mask,width,height,unit,recovered,toImage);
@@ -505,7 +508,7 @@ export function auditLocalInk(mask:Uint8Array,width:number,height:number,unit:nu
     if(!route&&terminal.score<.94)continue;
     // Masking may leave highlights in printed court markings. Unattached
     // terminals on paper are only counted when close to an existing trace.
-    if(paper&&!route&&!actions.some(action=>distance(toImage(action.to),terminal)<unit*.035))continue;
+    if(paper&&!route&&!unownedTerminals.has(terminal)&&!actions.some(action=>distance(toImage(action.to),terminal)<unit*.035))continue;
     const position=canonical(terminal);
     const style=route?.action==="pass"?"dashed":route?.action==="dribble"?"wave":route?"solid":"unknown";
     terminals.push({...position,id:`local-${terminals.length+1}`,kind:terminal.kind,confidence:terminal.score,strokeStyle:style,styleConfidence:route?.confidence??(route ? .86 : undefined)});
