@@ -77,7 +77,7 @@ export default function HistoricalBoxscoreImport({teamId,teamName,roster,onSaved
         let upload=file;
         let imageCanvas:HTMLCanvasElement|undefined;
         if(!/\.pdf$/i.test(file.name)){
-          if(!file.type.startsWith("image/"))throw new Error("Choisis un PDF, une image, un fichier Excel ou CSV.");
+          if(!file.type.startsWith("image/")&&!/\.(jpe?g|png|webp)$/i.test(file.name))throw new Error("Choisis un PDF, une image, un fichier Excel ou CSV.");
           const bitmap=await createImageBitmap(file);
           try{
             const canvas=document.createElement("canvas"),scale=Math.min(1,2800/Math.max(bitmap.width,bitmap.height));
@@ -180,14 +180,14 @@ export default function HistoricalBoxscoreImport({teamId,teamName,roster,onSaved
   }
   return <section className="tl-card" style={{...card,marginBottom:16}}>
     <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",flexWrap:"wrap",gap:12}}>
-      <div><h3 style={{margin:0,color:"#6b1a2c"}}>Historique des statistiques</h3><p style={{margin:"5px 0",color:"#75666a",fontSize:13}}>Retrouve tes anciens matchs et complète les minutes.</p></div>
+      <div><h3 style={{margin:0,color:"#6b1a2c"}}>Historique des statistiques</h3><p style={{margin:"5px 0",color:"#75666a",fontSize:13}}>Importe une feuille d’une autre application ou complète le temps de jeu d’un match.</p></div>
       <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
-        <button className="tl-btn" type="button" disabled={busy} onClick={()=>{setMode(mode==="import"?null:"import");setError("");setNotice("");}}>＋ Importer une feuille</button>
-        <button className="tl-btn" type="button" disabled={busy} onClick={()=>{setMode(mode==="minutes"?null:"minutes");setError("");setNotice("");}}>◷ Temps de jeu</button>
+        <button className="boxscore-button primary" type="button" aria-expanded={mode==="import"} disabled={busy} onClick={()=>{setMode(mode==="import"?null:"import");setError("");setNotice("");}}>Importer une feuille de stats</button>
+        <button className="boxscore-button" type="button" aria-expanded={mode==="minutes"} disabled={busy} onClick={()=>{setMode(mode==="minutes"?null:"minutes");setError("");setNotice("");}}>◷ Temps de jeu</button>
       </div>
     </div>
     {mode==="import"&&<div style={{display:"grid",gap:14,marginTop:16}}>
-      <label style={field}>Feuille de stats (Excel, CSV, PDF ou image)<input style={input} type="file" accept=".xlsx,.xls,.csv,.pdf,image/*" disabled={busy} onChange={event=>{const file=event.target.files?.[0];if(file)void readFile(file);event.target.value="";}}/></label>
+      <label style={field}>Feuille de stats (PDF, JPEG, PNG, Excel ou CSV)<input style={input} type="file" accept=".xlsx,.xls,.csv,.pdf,.jpg,.jpeg,.png,image/*" disabled={busy} onChange={event=>{const file=event.target.files?.[0];if(file)void readFile(file);event.target.value="";}}/></label>
       {busy&&<p role="status">Lecture de la feuille en cours…</p>}
       {fileName&&<small>{fileName} · {rows.length} lignes · {rows.filter(row=>row.playerId).length} joueurs associés</small>}
       {rows.length>0&&<small style={{color:"#75666a"}}>Vérifie les correspondances de joueurs. Crée les fiches des anciens joueurs si nécessaire. Laisse MIN vide si inconnu.</small>}
@@ -210,17 +210,34 @@ export default function HistoricalBoxscoreImport({teamId,teamName,roster,onSaved
           <td><input type="checkbox" aria-label={`A joué · ${row.name||i+1}`} checked={row.present!==false} onChange={e=>updateRow(i,{present:e.target.checked})}/></td>
           {includeMinutes&&<td><input disabled={row.present===false} style={{...input,width:65}} aria-label="Minutes" placeholder="—" value={row.minutes} onChange={e=>updateRow(i,{minutes:e.target.value})}/></td>}
           {BOX_FIELDS.map(([key,label])=><td key={key}><input style={{...input,width:48,textAlign:"center",padding:"8px 4px"}} aria-label={`${label} ${row.name||i+1}`} disabled={row.present===false} inputMode="numeric" placeholder="—" value={row.stats[key]??""} onChange={e=>updateRow(i,{stats:{...row.stats,[key]:e.target.value}})}/></td>)}
-          <td><button type="button" className="tl-btn" aria-label="Retirer la ligne" onClick={()=>setRows(current=>current.filter((_,j)=>j!==i))}>×</button></td>
+          <td><button type="button" className="boxscore-button" aria-label="Retirer la ligne" onClick={()=>setRows(current=>current.filter((_,j)=>j!==i))}>×</button></td>
         </tr>)}</tbody>
       </table></div>
-      <div style={{display:"flex",gap:8,justifyContent:"space-between"}}><button type="button" className="tl-btn" disabled={busy} onClick={()=>setRows(current=>[...current,blankRow()])}>＋ Ajouter un joueur</button><button type="button" className="tl-btn" style={{background:"#6b1a2c",color:"white"}} disabled={busy||!rows.length} onClick={save}>{busy?"Traitement…":"Créer le match et enregistrer les stats"}</button></div>
+      <div style={{display:"flex",gap:8,justifyContent:"space-between"}}><button type="button" className="boxscore-button" disabled={busy} onClick={()=>setRows(current=>[...current,blankRow()])}>＋ Ajouter un joueur</button><button type="button" className="boxscore-button" style={{background:"#6b1a2c",color:"white"}} disabled={busy||!rows.length} onClick={save}>{busy?"Traitement…":"Créer le match et enregistrer les stats"}</button></div>
     </div>}
     {mode==="minutes"&&<div style={{display:"grid",gap:12,marginTop:16}}>
       <label style={field}>Match terminé<select style={input} disabled={busy||loading} value={selected} onChange={e=>void selectMatch(e.target.value)}><option value="">Choisir un match</option>{matches.map(match=><option key={match.id} value={match.id}>{match.match_date} — {match.opponent}{match.source==="external"?" (importé)":""}</option>)}</select></label>
       {minuteRows.map(row=><label key={row.player_id} style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:12}}><span>{playerNames.get(row.player_id)||"Ancien joueur"}{row.present?"":" · absent"}</span><input style={{...input,width:90,textAlign:"center"}} placeholder="MM:SS" disabled={!row.present||busy} value={minutes[row.player_id]??""} onChange={e=>setMinutes(old=>({...old,[row.player_id]:e.target.value}))}/></label>)}
-      {selected&&minuteRows.length>0&&<><small>Laisse vide si le temps de jeu est inconnu.</small><button type="button" className="tl-btn" style={{background:"#6b1a2c",color:"white",justifySelf:"end"}} disabled={busy} onClick={saveMinutes}>Enregistrer les temps de jeu</button></>}
+      {selected&&minuteRows.length>0&&<><small>Laisse vide si le temps de jeu est inconnu.</small><button type="button" className="boxscore-button" style={{background:"#6b1a2c",color:"white",justifySelf:"end"}} disabled={busy} onClick={saveMinutes}>Enregistrer les temps de jeu</button></>}
     </div>}
     {error&&<p role="alert" style={{color:"#a31532",fontSize:13}}>{error}</p>}
     {notice&&<p role="status" style={{color:"#187344",fontSize:13}}>{notice}</p>}
+    <style jsx>{`
+      .boxscore-button {
+        background: #fff;
+        border: 1px solid #d8c7cd;
+        border-radius: 8px;
+        color: #6b1a2c;
+        cursor: pointer;
+        font: inherit;
+        font-size: 13px;
+        font-weight: 700;
+        min-height: 40px;
+        padding: 8px 12px;
+      }
+      .boxscore-button.primary { background: #6b1a2c; border-color: #6b1a2c; color: #fff; }
+      .boxscore-button:focus-visible { outline: 2px solid #6b1a2c; outline-offset: 2px; }
+      .boxscore-button:disabled { opacity: .55; cursor: default; }
+    `}</style>
   </section>;
 }

@@ -2,7 +2,6 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
-import { getTeams } from "@/lib/equipes-store";
 import type { Team } from "@/types/player";
 
 type Status = "present" | "late" | "absent";
@@ -18,13 +17,12 @@ type Training = {
 
 const statuses = [["present", "Présent"], ["late", "Retard"], ["absent", "Absent"]] as const;
 
-export default function TrainingAttendance({ eventId }: { eventId?: string }) {
+export default function TrainingAttendance({ team }: { team: Team }) {
   const db = useMemo(createClient, []);
   const today = new Intl.DateTimeFormat("sv-SE", { timeZone: "Europe/Paris" }).format(new Date());
-  const [teams, setTeams] = useState<Team[]>([]);
+  const teamId = team.id;
   const [sessions, setSessions] = useState<Training[]>([]);
   const [sessionId, setSessionId] = useState("");
-  const [teamId, setTeamId] = useState("");
   const [marks, setMarks] = useState<Record<string, Status>>({});
   const [changes, setChanges] = useState<Record<string, Status>>({});
   const [loading, setLoading] = useState(true);
@@ -40,10 +38,10 @@ export default function TrainingAttendance({ eventId }: { eventId?: string }) {
       try {
         const { data: { user } } = await db.auth.getUser();
         if (!user) throw new Error("Connecte-toi pour faire l’appel.");
-        const ownedTeams = (await getTeams()).filter(team => !team.isShared && !team.isScoutTeam);
         const result = await db.from("calendar_events")
           .select("id,title,event_date,start_time,team_id,session_id,assigned_player_ids")
           .or(`user_id.eq.${user.id},owner_id.eq.${user.id}`)
+          .or(`team_id.eq.${teamId},and(team_id.is.null,session_id.not.is.null)`)
           .in("event_type", ["training", "entrainement", "entraînement"])
           .order("event_date", { ascending: false }).order("start_time");
         if (result.error) throw result.error;
@@ -56,17 +54,13 @@ export default function TrainingAttendance({ eventId }: { eventId?: string }) {
           for (const row of practice.data ?? []) if (row.team_id) linkedTeams.set(row.id, row.team_id);
         }
         if (!active) return;
-        const allowed = new Set(ownedTeams.map(team => team.id));
         const available = training.map(event => ({
           ...event,
           team_id: event.team_id || (event.session_id ? linkedTeams.get(event.session_id) || null : null),
-        })).filter(event => event.team_id ? allowed.has(event.team_id) : !event.session_id);
-        const initial = eventId ? available.find(event => event.id === eventId) : available.find(event => event.event_date === today);
-        setTeams(ownedTeams);
+        })).filter(event => event.team_id === teamId);
+        const initial = available.find(event => event.event_date === today);
         setSessions(available);
         setSessionId(initial?.id || "");
-        setTeamId(initial?.team_id || "");
-        if (eventId && !initial) setError("Cet entraînement est indisponible pour tes équipes.");
       } catch (failure) {
         if (active) setError(failure instanceof Error ? failure.message : "Impossible de charger les entraînements.");
       } finally {
@@ -75,12 +69,11 @@ export default function TrainingAttendance({ eventId }: { eventId?: string }) {
     }
     void load();
     return () => { active = false; };
-  }, [db, eventId, today]);
+  }, [db, teamId, today]);
 
   const session = sessions.find(training => training.id === sessionId);
-  const team = teams.find(item => item.id === teamId);
   const expected = session?.assigned_player_ids || [];
-  const players = (team?.players || []).filter(player => !expected.length || expected.includes(player.id));
+  const players = team.players.filter(player => !expected.length || expected.includes(player.id));
   const rosterKey = sessionId && teamId ? `${sessionId}:${teamId}` : "";
 
   useEffect(() => {
@@ -111,7 +104,7 @@ export default function TrainingAttendance({ eventId }: { eventId?: string }) {
     return !Object.keys(changes).length || window.confirm("Changer de sélection et abandonner les pointages non enregistrés ?");
   }
 
-  function selectRoster(trainingId: string, nextTeamId: string) {
+  function selectRoster(trainingId: string) {
     if (!canSwitch()) return;
     setLoadedRoster("");
     setReading(false);
@@ -120,7 +113,6 @@ export default function TrainingAttendance({ eventId }: { eventId?: string }) {
     setSaved(false);
     setError("");
     setSessionId(trainingId);
-    setTeamId(nextTeamId);
   }
 
   async function save() {
@@ -145,33 +137,22 @@ export default function TrainingAttendance({ eventId }: { eventId?: string }) {
   }
 
   return <section className="attendance">
-    <h1>Appel à l’entraînement</h1>
+    <h2>Appel à l’entraînement</h2>
     {loading && <p role="status">Chargement des séances…</p>}
     {error && <p role="alert">{error}</p>}
     {saved && <p role="status">Présences enregistrées.</p>}
     {!loading && <fieldset disabled={saving}>
       <label>Entraînement
-        <select value={sessionId} onChange={event => {
-          const next = sessions.find(training => training.id === event.target.value);
-          selectRoster(next?.id || "", next?.team_id || "");
-        }}>
+        <select value={sessionId} onChange={event => selectRoster(event.target.value)}>
           <option value="">Choisir une séance</option>
           {sessions.map(training => <option key={training.id} value={training.id}>
             {new Date(training.event_date + "T12:00:00").toLocaleDateString("fr-FR")} · {training.start_time?.slice(0, 5) || "Sans heure"} · {training.title}
-            {training.team_id ? ` · ${teams.find(item => item.id === training.team_id)?.name || ""}` : ""}
           </option>)}
         </select>
       </label>
-      {!sessions.length && <p>Aucun entraînement disponible dans Mon Calendrier.</p>}
-      {session && !session.team_id && <label>Équipe à pointer
-        <select value={teamId} onChange={event => selectRoster(sessionId, event.target.value)}>
-          <option value="">Choisir ton équipe</option>
-          {teams.map(item => <option key={item.id} value={item.id}>{item.name}</option>)}
-        </select>
-      </label>}
+      {!sessions.length && <p>Aucun entraînement associé à cette équipe. Choisis cette équipe en créant la séance dans Mon Calendrier.</p>}
       {reading && <p role="status">Chargement des présences…</p>}
       {!!rosterKey && loadedRoster === rosterKey && <>
-        <h2>{team?.name}</h2>
         {!players.length && <p>Aucun joueur à pointer pour cette séance.</p>}
         <ul>
           {players.map(player => <li key={player.id}>
@@ -198,7 +179,7 @@ export default function TrainingAttendance({ eventId }: { eventId?: string }) {
       </>}
     </fieldset>}
     <style jsx>{`
-      .attendance{color:#281c21}.attendance h1{color:#6b1a2c}.attendance h2{font-size:1.1rem}
+      .attendance{color:#281c21}.attendance h2{color:#6b1a2c;font-size:1.1rem}
       fieldset{padding:0;border:0;min-width:0}label{display:grid;gap:6px;margin:12px 0;font-weight:700}
       select,button{border:1px solid #d9c8cc;background:#fff;border-radius:9px;color:inherit;font:inherit;min-height:44px;padding:8px}
       select{width:100%}ul{list-style:none;padding:0;margin:0}li{display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;padding:10px 0;border-bottom:1px solid #eadfe1}

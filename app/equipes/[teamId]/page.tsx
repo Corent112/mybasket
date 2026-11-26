@@ -2,6 +2,7 @@
 
 // app/equipes/[teamId]/page.tsx
 import { currentBasketballSeason, linkedCompetitionSeason } from "@/lib/team-season";
+import TrainingAttendance from "@/components/management/TrainingAttendance";
 import HistoricalBoxscoreImport from "@/components/equipes/HistoricalBoxscoreImport";
 import TeamMatchHistoryBlock from "@/components/equipes/TeamMatchHistoryBlock";
 import TeamGoogleDriveSettings from "@/components/video/TeamGoogleDriveSettings";
@@ -94,6 +95,7 @@ const EVENT_EMOJI: Record<string, keyof typeof ICONS> = {
 type TeamMainTab =
   | "presentation"
   | "training"
+  | "attendance"
   | "profiling"
   | "self-evaluations"
   | "shooting"
@@ -817,6 +819,7 @@ export default function EquipeDetailPage({
   );
 
   const isOwner = team ? team.isShared !== true : false;
+  const canTakeAttendance = isOwner && !team?.isScoutTeam;
   const canManagePlayers =
     Boolean(team) &&
     (isOwner || team?.collaborationPermissions?.players === true);
@@ -1394,6 +1397,17 @@ export default function EquipeDetailPage({
             Entraînements {!canUseSessions && team.isShared ? "🔒" : ""}
           </button>
 
+          {canTakeAttendance && (
+            <button
+              type="button"
+              className={activeTab === "attendance" ? "active" : ""}
+              onClick={() => setActiveTab("attendance")}
+            >
+              <Ic d={ICONS.cal} size={16} />
+              Faire l’appel
+            </button>
+          )}
+
           <button
             type="button"
             className={activeTab === "profiling" ? "active" : ""}
@@ -1744,6 +1758,12 @@ export default function EquipeDetailPage({
         {activeTab === "activity" && (
           <div className="team-tab-panel">
             <TeamActivityPanel teamId={team.id} />
+          </div>
+        )}
+
+        {activeTab === "attendance" && canTakeAttendance && (
+          <div className="team-tab-panel">
+            <TrainingAttendance key={team.id} team={team} />
           </div>
         )}
 

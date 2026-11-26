@@ -83,7 +83,6 @@ const MENU: MenuItem[] = [
 
   { key: 'abonnement', label: 'Mon Abonnement', icon: '💎' },
   { key: 'calendrier', label: 'Mon Calendrier', icon: '📒' },
-  { key: 'presences', label: 'Faire l’appel', icon: '✅', href: '/mon-compte/presences' },
   { key: 'assistant', label: 'Coach IA', icon: '✦', href: '/assistant' },
 
   {

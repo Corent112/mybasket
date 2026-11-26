@@ -665,7 +665,7 @@ export default function GestionAdminModule({ clubId }: { clubId: string }) {
 
       <div className="ga-hint">
         💡 Suivi des cotisations, licences, certificats médicaux, et présences synchronisées avec{" "}
-        <b>Mon Calendrier</b>. <a href="/mon-compte/presences">Faire l’appel</a>
+        <b>Mon Calendrier</b>. L’appel se fait depuis la fiche équipe.
       </div>
 
       {/* ----- Administratif ----- */}
