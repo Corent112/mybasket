@@ -85,6 +85,12 @@ const errorLog=console.error;console.error=()=>{};
   assert(!publicQueries.at(-1).includes('prise à deux'), 'Private excerpts never go to the search tool');
   assert(coachInstructions.includes('critère de réussite chiffré'));
   assert(coachInstructions.includes('rotations'));
+  const sections = ['Ce qu’on observe', 'Pourquoi ça peut arriver', 'Quoi corriger', 'Comment le travailler'];
+  const positions = sections.map(section => coachInstructions.indexOf(section));
+  assert(positions[0] >= 0 && positions.every((position, index) => index === 0 || position > positions[index - 1]));
+  assert(coachInstructions.includes('distingue les faits des hypothèses'));
+  assert(coachInstructions.includes('permettrait de la confirmer ou de l’écarter'));
+
   prior = [{role:'user',content:'Défense Blitz sur le pick and roll U18'}];
   const followUp = await chat.POST(req('Adapte à 8 joueurs et 15 minutes',true));
   const adapted = await followUp.text();
