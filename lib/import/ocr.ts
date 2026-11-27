@@ -234,9 +234,9 @@ function extractBoxes(data: any): { lines: OcrBox[]; words: OcrBox[] } {
 }
 
 /** OCR complet d'un canvas (détection de structure). */
-export async function ocrCanvas(canvas: HTMLCanvasElement): Promise<OcrResult> {
+export async function ocrCanvas(canvas: HTMLCanvasElement, options: Record<string, unknown> = {}): Promise<OcrResult> {
   const worker = await getTextWorker();
-  const result = await worker.recognize(canvas, {}, { text: true, blocks: true });
+  const result = await worker.recognize(canvas, options, { text: true, blocks: true });
   const data = result?.data;
   const { lines, words } = extractBoxes(data);
   const source = lines.length ? lines : words;

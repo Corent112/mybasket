@@ -33,6 +33,7 @@ export async function syncCompetitionCalendar(
     if (!match.sourceKey || seen.has(match.sourceKey)) continue;
     seen.add(match.sourceKey);
     if (!/^\d{4}-\d{2}-\d{2}$/.test(match.date) || match.date < today || match.ourScore != null) continue;
+    const opponent = source === "ffbb" ? match.opponent.replace(/\s+0\s+0$/, "") : match.opponent;
     const marker = `[mybasket-match:${source}:${match.sourceKey}]`;
     const escapeLike = (value: string) => value.replace(/[\\%_]/g, char => `\\${char}`);
     const existing = await supabase.from("calendar_events").select("id")
@@ -44,7 +45,7 @@ export async function syncCompetitionCalendar(
       // Reuse an earlier imported event only; manual events remain intact.
       const legacy = await supabase.from("calendar_events").select("id,description")
         .eq("team_id", teamId).eq("user_id", userId).eq("event_type", "game")
-        .eq("event_date", match.date).ilike("title", `%${escapeLike(match.opponent)}%`);
+        .eq("event_date", match.date).ilike("title", `%${escapeLike(opponent)}%`);
       if (legacy.error) throw new Error(`Lecture du calendrier impossible : ${legacy.error.message}`);
       const prefix = new RegExp(`^(Match ${source.toUpperCase()}|Synchronisé ${source.toUpperCase()})`);
       id = legacy.data?.find(row => prefix.test(String(row.description || "")))?.id;
@@ -53,7 +54,7 @@ export async function syncCompetitionCalendar(
     const payload = {
       id: eventId,
       user_id: userId, owner_id: userId, team_id: teamId,
-      title: `Match ${match.homeAway === "away" ? "@" : "vs"} ${match.opponent}`,
+      title: `Match ${match.homeAway === "away" ? "@" : "vs"} ${opponent}`,
       description: [`Synchronisé ${source.toUpperCase()}`, match.competition ? `Compétition : ${match.competition}` : "", marker].filter(Boolean).join(" · "),
       event_date: match.date, start_time: /^\d{2}:\d{2}/.test(match.time || "") ? match.time.slice(0, 5) : null,
       end_time: null, location: match.homeAway === "away" ? "Extérieur" : "Domicile",

@@ -846,8 +846,8 @@ export async function upsertPlayer(
   const isNewPlayer = !isUuid(player.id) && !isUuid((player as any).supabasePlayerId);
   if (isNewPlayer) {
     const team = await getTeam(teamId);
-    if ((team?.players.filter(player => String(player.statut) !== "Archivé").length ?? 0) >= 15) {
-      throw new Error("Effectif complet : une équipe MyBasket est limitée à 15 joueurs actifs.");
+    if ((team?.players.filter(player => String(player.statut) !== "Archivé").length ?? 0) >= 16) {
+      throw new Error("Effectif complet : une équipe MyBasket est limitée à 16 joueurs actifs.");
     }
   }
 
@@ -1665,7 +1665,7 @@ export async function attachExistingPlayer(playerId: string, targetTeamId: strin
   const target = teams.find(team => team.id === targetTeamId);
   if (!target || target.ownerUserId !== userId) throw new Error("Le rattachement est réservé aux équipes dont vous êtes propriétaire.");
   if (target.players.some(player => player.id === playerId)) return;
-  if (target.players.filter(player => player.statut !== ("Archivé" as string)).length >= 15) throw new Error("Effectif complet : 15 joueurs actifs maximum.");
+  if (target.players.filter(player => player.statut !== ("Archivé" as string)).length >= 16) throw new Error("Effectif complet : 16 joueurs actifs maximum.");
   const { data: row, error } = await supabase.from("players").select("id,team_id,user_id,metadata,updated_at").eq("id", playerId).eq("user_id", userId).single();
   if (error) throw error;
   if (!teams.some(team => team.id === row.team_id && team.ownerUserId === userId)) throw new Error("L’équipe principale du joueur doit vous appartenir.");

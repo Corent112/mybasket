@@ -24,7 +24,12 @@ export function calendarTeamAge(team?: CalendarTeam) {
 }
 
 export function calendarCompetitionAge(description?: string | null) {
-  return calendarAgeGroup(description?.match(/compétition\s*:\s*([^·\n]+)/i)?.[1]);
+  return calendarAgeGroup(description?.match(/compétition\s*:\s*([^·•\n]+)/i)?.[1]);
+}
+
+function ffbbFixtureOpponent(title: string, description: string) {
+  const opponent = calendarOpponent(title);
+  return /^Synchronisé FFBB\b/i.test(description) ? opponent.replace(/\s+0\s+0$/, "") : opponent;
 }
 
 export function calendarOpponent(title: string) {
@@ -39,7 +44,11 @@ export function reconcileCalendarFixtures<T extends CalendarRow>(rows: T[], team
   const fixtures = new Map<string, { index: number; rank: number; timestamp: string }>();
   const result: T[] = [];
 
-  for (const row of rows) {
+  const knownPool = (row: T) => /^(?:Match|Synchronisé)\s+FFBB\b/i.test(row.description ?? "") &&
+    /compétition\s*:.*poule\s*:/i.test(row.description ?? "");
+  // Identify the fixture from its competition and pool before folding in
+  // legacy copies that only carry a time or an incomplete source marker.
+  for (const row of rows.toSorted((a, b) => Number(knownPool(b)) - Number(knownPool(a)))) {
     const description = row.description ?? '';
     if (!['game', 'match'].includes(row.event_type ?? '') ||
         !/^(?:Match|Synchronisé)\s+(?:FFBB|LNB)\b/i.test(description)) {
@@ -53,7 +62,7 @@ export function reconcileCalendarFixtures<T extends CalendarRow>(rows: T[], team
     const mismatched = Boolean(competitionAge && linkedAge && competitionAge !== linkedAge);
     const candidates = mismatched ? teams.filter((team) => calendarTeamAge(team) === competitionAge) : [];
     const teamId = mismatched ? (candidates.length === 1 ? candidates[0].id : null) : row.team_id;
-    const opponent = calendarOpponent(row.title ?? '');
+    const opponent = ffbbFixtureOpponent(row.title ?? '', description);
     const side = /(?:@|extérieur)/i.test(`${row.location ?? ''} ${row.title ?? ''} ${description}`) ? '@' :
       /(?:\bvs\b|domicile)/i.test(`${row.location ?? ''} ${row.title ?? ''} ${description}`) ? 'vs' : '';
     const corrected = {
@@ -74,8 +83,14 @@ export function reconcileCalendarFixtures<T extends CalendarRow>(rows: T[], team
       continue;
     }
 
-    const known = fixtures.get(key) ?? (identity ? fixtures.get(identity) : undefined);
-    const rank = (mismatched ? 0 : 4) + (row.attachment_url ? 2 : 0) +
+    const competition = description.match(/compétition\s*:\s*([^·•\n]+)/i)?.[1]?.trim().toLowerCase();
+    const pool = description.match(/poule\s*:\s*(?:poule\s+)?([^·•\n]+)/i)?.[1]?.trim().toLowerCase();
+    const ffbbKey = /^(?:Match|Synchronisé)\s+FFBB\b/i.test(description) && scope && competition && pool
+      ? JSON.stringify([scope, row.event_date, normalizedOpponent, side, competition, pool])
+      : null;
+    const known = fixtures.get(key) ?? (identity ? fixtures.get(identity) : undefined) ??
+      (ffbbKey ? fixtures.get(ffbbKey) : undefined);
+    const rank = (mismatched ? 0 : 8) + (competition && pool ? 1 : 0) + (row.attachment_url ? 4 : 0) +
       (Array.isArray(row.assigned_player_ids) && row.assigned_player_ids.length ? 1 : 0);
     const timestamp = row.updated_at ?? '';
     const slot = known ?? { index: result.length, rank, timestamp };
@@ -87,6 +102,7 @@ export function reconcileCalendarFixtures<T extends CalendarRow>(rows: T[], team
     }
     fixtures.set(key, slot);
     if (identity) fixtures.set(identity, slot);
+    if (ffbbKey) fixtures.set(ffbbKey, slot);
   }
 
   // A finished LiveStats game and its imported fixture are one calendar event.

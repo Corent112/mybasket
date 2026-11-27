@@ -847,7 +847,7 @@ export default function EquipeDetailPage({
   const canManageRpeQuestionnaires =
     Boolean(team) &&
     (isOwner || team?.collaborationPermissions?.rpe_manage_questionnaires === true);
-  const playerLimitReached = !institutionalTeam && (team?.players.length ?? 0) >= 15;
+  const playerLimitReached = !institutionalTeam && (team?.players.filter(player => String(player.statut) !== "Archivé").length ?? 0) >= 16;
 
   async function reload() {
     try {
@@ -1090,7 +1090,7 @@ export default function EquipeDetailPage({
     }
 
     if (!p.id && playerLimitReached) {
-      alert("Effectif complet : une équipe MyBasket est limitée à 15 joueurs actifs.");
+      alert("Effectif complet : une équipe MyBasket est limitée à 16 joueurs actifs.");
       return;
     }
 
@@ -1591,14 +1591,14 @@ export default function EquipeDetailPage({
                     className={`tl-addtile ${playerLimitReached ? "disabled" : ""}`}
                     onClick={() => {
                       if (playerLimitReached) {
-                        alert("Effectif complet : une équipe MyBasket est limitée à 15 joueurs actifs.");
+                        alert("Effectif complet : une équipe MyBasket est limitée à 16 joueurs actifs.");
                         return;
                       }
                       if(institutionalTeam)setInstitutionPickerOpen(true);else setPlayerForm({ open: true });
                     }}
                   >
                     <span className="plus">+</span>
-                    {playerLimitReached ? "Effectif complet (15/15)" : "Ajouter un joueur"}
+                    {playerLimitReached ? "Effectif complet (16/16)" : "Ajouter un joueur"}
                   </div>
                 )}
               </div>

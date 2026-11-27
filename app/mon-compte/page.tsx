@@ -1654,8 +1654,8 @@ return (
                                 return;
                               }
 
-                              if (team.players.length >= 15) {
-                                alert("Effectif complet : une équipe MyBasket est limitée à 15 joueurs actifs.");
+                              if (team.players.filter(player => String(player.statut) !== "Archivé").length >= 16) {
+                                alert("Effectif complet : une équipe MyBasket est limitée à 16 joueurs actifs.");
                                 return;
                               }
 

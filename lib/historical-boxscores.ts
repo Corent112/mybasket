@@ -3,16 +3,21 @@ export const BOX_FIELDS = [
   ["ftm", "LFR"], ["fta", "LFT"], ["off_reb", "RO"], ["def_reb", "RD"],
   ["reb", "RT"], ["ast", "PD"], ["stl", "INT"], ["blk", "CTR"], ["turnovers", "BP"], ["pf", "F"], ["plus_minus", "+/−"],
 ] as const;
-export type BoxField = typeof BOX_FIELDS[number][0];
+export const EXTERNAL_BOX_FIELDS = [
+  ["fgm", "Tirs réussis"], ["fga", "Tirs tentés"], ["fouls_drawn", "Fautes provoquées"], ["eff", "ÉVAL"],
+] as const;
+export const IMPORT_BOX_FIELDS = [...BOX_FIELDS, ...EXTERNAL_BOX_FIELDS] as const;
+export const isSignedBoxField = (key: string) => key === "plus_minus" || key === "eff";
+export type BoxField = typeof IMPORT_BOX_FIELDS[number][0];
 export type ImportedBoxRow = { name: string; number: string; playerId: string; minutes: string; present?: boolean; stats: Partial<Record<BoxField, string>> };
 export type ImportRosterPlayer = { id: string; name: string; number: number | null };
 export const normalizeBoxText = (value: unknown) => String(value ?? "").normalize("NFD").replace(/\p{M}/gu,"").toLowerCase().replace(/[^a-z0-9]/g,"");
 const aliases: Record<string, BoxField> = {
- plusminus:"plus_minus",pm:"plus_minus",
+ plusminus:"plus_minus",pm:"plus_minus",fgm:"fgm",fga:"fga",fpf:"fouls_drawn",foulsdrawn:"fouls_drawn",eff:"eff",eval:"eff",efficiency:"eff",
  pts:"pts",points:"pts",p2m:"p2m","2r":"p2m","2pm":"p2m","2ptm":"p2m",p2a:"p2a","2t":"p2a","2pa":"p2a","2pta":"p2a",
  p3m:"p3m","3r":"p3m","3pm":"p3m","3ptm":"p3m",p3a:"p3a","3t":"p3a","3pa":"p3a","3pta":"p3a",
  ftm:"ftm",lfr:"ftm",fta:"fta",lft:"fta",oreb:"off_reb",offreb:"off_reb",off:"off_reb",ro:"off_reb",dreb:"def_reb",defreb:"def_reb",def:"def_reb",rd:"def_reb",reb:"reb",rt:"reb",tot:"reb",
- ast:"ast",pd:"ast",assists:"ast",stl:"stl",st:"stl",int:"stl",interceptions:"stl",blk:"blk",bs:"blk",ctr:"blk",to:"turnovers",tov:"turnovers",bp:"turnovers",turnovers:"turnovers",pf:"pf",f:"pf",fautes:"pf"
+ ast:"ast",pd:"ast",assists:"ast",stl:"stl",st:"stl",int:"stl",interceptions:"stl",blk:"blk",bs:"blk","8s":"blk",ctr:"blk",to:"turnovers",tov:"turnovers",bp:"turnovers",turnovers:"turnovers",pf:"pf",f:"pf",fautes:"pf"
 };
 
 export function parseBoxTable(table: unknown[][]): ImportedBoxRow[] {
@@ -22,12 +27,14 @@ export function parseBoxTable(table: unknown[][]): ImportedBoxRow[] {
   return table.slice(headerIndex+1).flatMap(row=>{
     const get=(keys:string[])=>String(row[headers.findIndex(h=>keys.includes(h))]??"").trim();
     const name=get(["player","joueur","name","nomprenom","fullname","playername","nomdujoueur"]) || [get(["prenom","firstname"]),get(["nom","lastname"])].filter(Boolean).join(" ");
-    if(!name||/^(total|totaux|equipe|team|coach|entraineur)(\b|$)/i.test(name))return [];
+    if(!name||/^(totals?|totaux|equipe|team|coach|entraineur|opposition rebounds)(\b|$)/i.test(name))return [];
     const stats:ImportedBoxRow["stats"]={};
     headers.forEach((header,i)=>{
-      const val=String(row[i]??"").trim();
-      if(aliases[header]&&(header==="plusminus"||header==="pm"?/^[+-]?\d+$/.test(val):/^\d+$/.test(val)))stats[aliases[header]]=val;
-      const pairs:Record<string,[BoxField,BoxField]>={"2pt":["p2m","p2a"],"2pts":["p2m","p2a"],"2p":["p2m","p2a"],"2pma":["p2m","p2a"],"2ptma":["p2m","p2a"],"3pt":["p3m","p3a"],"3pts":["p3m","p3a"],"3p":["p3m","p3a"],"3pma":["p3m","p3a"],"3ptma":["p3m","p3a"],lf:["ftm","fta"],ft:["ftm","fta"],ftma:["ftm","fta"]};
+      const val=String(row[i]??"").trim()
+        .replace(/\b[oO]+\b/g, () => "0")
+        .replace(/^[(:]?(\d+)[):.]$/, "$1");
+      if(aliases[header]&&(isSignedBoxField(aliases[header])?/^[+-]?\d+$/.test(val):/^\d+$/.test(val)))stats[aliases[header]]=val;
+      const pairs:Record<string,[BoxField,BoxField]>={fgma:["fgm","fga"],"2pt":["p2m","p2a"],"2pts":["p2m","p2a"],"2p":["p2m","p2a"],"2pma":["p2m","p2a"],"2ptma":["p2m","p2a"],"3pt":["p3m","p3a"],"3pts":["p3m","p3a"],"3p":["p3m","p3a"],"3pma":["p3m","p3a"],"3ptma":["p3m","p3a"],lf:["ftm","fta"],ft:["ftm","fta"],ftma:["ftm","fta"]};
       const parts=val.match(/^(\d+)\s*[-/]\s*(\d+)$/);
       if(pairs[header]&&parts){const [made,attempted]=pairs[header];stats[made]=parts[1];stats[attempted]=parts[2];}
     });
@@ -57,6 +64,28 @@ export function matchBoxPlayer(row: ImportedBoxRow, roster: ImportRosterPlayer[]
       name.some((word,i)=>word.length>1&&full.includes(word)&&name[1-i].length===1&&full.some(other=>other!==word&&other.startsWith(name[1-i])));
   });
   return abbreviated.length===1?abbreviated[0].id:"";
+}
+
+export function suggestBoxPlayer(row: ImportedBoxRow, roster: ImportRosterPlayer[]): ImportRosterPlayer | undefined {
+  const tokens = (name: string) => name.split(/\s+/).map(normalizeBoxText).filter(Boolean);
+  const source = tokens(row.name);
+  if (source.length < 2) return;
+  const distance = (left: string, right: string) => {
+    if (left === right) return 0;
+    if (Math.abs(left.length - right.length) > 1 || Math.min(left.length, right.length) < 4) return 2;
+    const [short, long] = left.length <= right.length ? [left, right] : [right, left];
+    const index = [...short].findIndex((char, i) => char !== long[i]);
+    if (index < 0) return 1;
+    return short.slice(index + (short.length === long.length ? 1 : 0)) === long.slice(index + 1) ? 1 : 2;
+  };
+  const similar = roster.filter(player => {
+    const candidate = tokens(player.name);
+    if (candidate.length !== source.length) return false;
+    const shared = source.filter(token => candidate.includes(token));
+    if (!shared.length || shared.length !== source.length - 1) return false;
+    return distance(source.find(token => !shared.includes(token)) ?? "", candidate.find(token => !shared.includes(token)) ?? "") === 1;
+  });
+  return similar.length === 1 ? similar[0] : undefined;
 }
 
 export function associateBoxRows(rows: ImportedBoxRow[], roster: ImportRosterPlayer[]): ImportedBoxRow[] {
@@ -89,11 +118,11 @@ export function formatBoxMinutes(seconds: number | null): string {
 
 type PdfBoxText = { str: string; x: number; y: number; width: number };
 /** Recover cells from the PDF coordinates, rather than flattening the page into prose. */
-export function parsePdfBoxPage(items: PdfBoxText[]): ImportedBoxRow[][] {
+export function parsePdfBoxPage(items: PdfBoxText[], lineTolerance = 2): ImportedBoxRow[][] {
   const lines: { y: number; cells: PdfBoxText[] }[] = [];
   for (const item of items.filter(item=>item.str.trim()).sort((a,b)=>b.y-a.y||a.x-b.x)) {
     const last=lines.at(-1);
-    if(last&&Math.abs(last.y-item.y)<=2)last.cells.push(item);
+    if(last&&Math.abs(last.y-item.y)<=lineTolerance)last.cells.push(item);
     else lines.push({y:item.y,cells:[item]});
   }
   const tables: ImportedBoxRow[][]=[];
@@ -112,7 +141,7 @@ export function parsePdfBoxPage(items: PdfBoxText[]): ImportedBoxRow[][] {
       flush();columns=cells;rows=[cells.map(cell=>cell.str)];continue;
     }
     if(!columns.length)continue;
-    if(cells.some(cell=>/^(total|totaux|team total|équipe)$/i.test(cell.str.trim()))){flush();continue;}
+    if(cells.some(cell=>/^(totals?|totaux|team totals?|équipe|opposition rebounds)$/i.test(cell.str.trim()))){flush();continue;}
     const row=columns.map(()=>"");
     for(const cell of cells){
       const nameColumn=columns.findIndex(c=>["player","joueur","nom","name","nomprenom","fullname","playername","nomdujoueur"].includes(normalizeBoxText(c.str)));
@@ -125,7 +154,9 @@ export function parsePdfBoxPage(items: PdfBoxText[]): ImportedBoxRow[][] {
       row[index]=[row[index],cell.str.trim()].filter(Boolean).join(" ");
     }
     const ptsIndex=columns.findIndex(column=>["pts","points"].includes(normalizeBoxText(column.str)));
-    if(/^\d+$/.test(row[ptsIndex])||row.some(value=>/^(DNP|NP|DND|absent)$/i.test(String(value))))rows.push(row);
+    const hasPoints = /^\d+$/.test(row[ptsIndex]);
+    const hasShooting = row.filter(value => /^\d+\s*[-/]\s*\d+$/.test(value)).length >= 2;
+    if(hasPoints || hasShooting || row.some(value=>/^(DNP|NP|DND|absent)$/i.test(String(value))))rows.push(row);
   }
   flush();
   return tables;

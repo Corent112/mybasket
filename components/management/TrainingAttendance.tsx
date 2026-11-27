@@ -1,7 +1,8 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
+import { getTeam } from "@/lib/equipes-store";
 import type { Team } from "@/types/player";
 
 type Status = "present" | "late" | "absent";
@@ -17,7 +18,7 @@ type Training = {
 
 const statuses = [["present", "Présent"], ["late", "Retard"], ["absent", "Absent"]] as const;
 
-export default function TrainingAttendance({ team }: { team: Team }) {
+export default function TrainingAttendance({ team, eventId }: { team: Team; eventId?: string }) {
   const db = useMemo(createClient, []);
   const today = new Intl.DateTimeFormat("sv-SE", { timeZone: "Europe/Paris" }).format(new Date());
   const teamId = team.id;
@@ -31,6 +32,9 @@ export default function TrainingAttendance({ team }: { team: Team }) {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const [saved, setSaved] = useState(false);
+  const [qrCode, setQrCode] = useState<{ path: string; image: string }>();
+  const [phoneStatus, setPhoneStatus] = useState("");
+  const writeVersion = useRef(0);
 
   useEffect(() => {
     let active = true;
@@ -58,7 +62,8 @@ export default function TrainingAttendance({ team }: { team: Team }) {
           ...event,
           team_id: event.team_id || (event.session_id ? linkedTeams.get(event.session_id) || null : null),
         })).filter(event => event.team_id === teamId);
-        const initial = available.find(event => event.event_date === today);
+        const initial = eventId ? available.find(event => event.id === eventId) : available.find(event => event.event_date === today);
+        if (eventId && !initial) setError("Cette séance est introuvable pour cette équipe.");
         setSessions(available);
         setSessionId(initial?.id || "");
       } catch (failure) {
@@ -69,7 +74,7 @@ export default function TrainingAttendance({ team }: { team: Team }) {
     }
     void load();
     return () => { active = false; };
-  }, [db, teamId, today]);
+  }, [db, eventId, teamId, today]);
 
   const session = sessions.find(training => training.id === sessionId);
   const expected = session?.assigned_player_ids || [];
@@ -81,23 +86,33 @@ export default function TrainingAttendance({ team }: { team: Team }) {
     let active = true;
     setReading(true);
     setLoadedRoster("");
-    async function readRoster() {
+    async function readRoster(initial = false) {
+      const version = writeVersion.current;
       try {
         const { data, error } = await db.from("player_event_presence").select("player_id,status")
           .eq("team_id", teamId).eq("event_id", sessionId);
         if (error) throw error;
-        if (!active) return;
+        if (!active || version !== writeVersion.current) return;
         const existing = (data ?? []) as { player_id: string; status: Status }[];
         setMarks(Object.fromEntries(existing.map(row => [row.player_id, row.status])));
         setLoadedRoster(rosterKey);
       } catch {
-        if (active) setError("Impossible de charger les présences de cette séance.");
+        if (active && initial) setError("Impossible de charger les présences de cette séance.");
       } finally {
         if (active) setReading(false);
       }
     }
-    void readRoster();
-    return () => { active = false; };
+    function refreshRoster() {
+      if (document.visibilityState === "visible") void readRoster();
+    }
+    void readRoster(true);
+    const interval = window.setInterval(refreshRoster, 5000);
+    document.addEventListener("visibilitychange", refreshRoster);
+    return () => {
+      active = false;
+      window.clearInterval(interval);
+      document.removeEventListener("visibilitychange", refreshRoster);
+    };
   }, [db, teamId, sessionId, rosterKey]);
 
   function canSwitch() {
@@ -112,6 +127,8 @@ export default function TrainingAttendance({ team }: { team: Team }) {
     setChanges({});
     setSaved(false);
     setError("");
+    setPhoneStatus("");
+    setQrCode(undefined);
     setSessionId(trainingId);
   }
 
@@ -121,6 +138,7 @@ export default function TrainingAttendance({ team }: { team: Team }) {
       team_id: teamId, event_id: sessionId, player_id: player.id, status: changes[player.id], updated_at: new Date().toISOString(),
     }] : []);
     if (!rows.length) return;
+    writeVersion.current++;
     setSaving(true);
     setError("");
     try {
@@ -132,24 +150,54 @@ export default function TrainingAttendance({ team }: { team: Team }) {
     } catch {
       setError("Impossible d’enregistrer les présences. Tu peux réessayer.");
     } finally {
+      writeVersion.current++;
       setSaving(false);
     }
   }
 
+  const phonePath = sessionId ? `/equipes/${encodeURIComponent(teamId)}/appel?seance=${encodeURIComponent(sessionId)}` : "";
+  async function showQrCode() {
+    const path = phonePath;
+    try {
+      const { default: QRCode } = await import("qrcode");
+      const image = await QRCode.toDataURL(new URL(path, window.location.origin).href, { width: 220, margin: 2 });
+      setQrCode({ path, image });
+    } catch {
+      setPhoneStatus("QR code indisponible. Utilise le lien de la séance.");
+    }
+  }
+
+  const qrImage = qrCode?.path === phonePath ? qrCode.image : "";
+
   return <section className="attendance">
-    <h2>Appel à l’entraînement</h2>
+    <h2>Appel à l’entraînement{eventId ? ` · ${team.name}` : ""}</h2>
     {loading && <p role="status">Chargement des séances…</p>}
     {error && <p role="alert">{error}</p>}
     {saved && <p role="status">Présences enregistrées.</p>}
     {!loading && <fieldset disabled={saving}>
-      <label>Entraînement
+      {!eventId && <label>Entraînement
         <select value={sessionId} onChange={event => selectRoster(event.target.value)}>
           <option value="">Choisir une séance</option>
           {sessions.map(training => <option key={training.id} value={training.id}>
             {new Date(training.event_date + "T12:00:00").toLocaleDateString("fr-FR")} · {training.start_time?.slice(0, 5) || "Sans heure"} · {training.title}
           </option>)}
         </select>
-      </label>
+      </label>}
+      {eventId && session && <p>{session.title} · {new Date(session.event_date + "T12:00:00").toLocaleDateString("fr-FR")} {session.start_time?.slice(0, 5)}</p>}
+      {!eventId && phonePath && <div className="phone">
+        <a href={phonePath}>Ouvrir le formulaire</a>
+        <button type="button" onClick={async () => {
+          try {
+            await navigator.clipboard.writeText(new URL(phonePath, window.location.origin).href);
+            setPhoneStatus("Lien copié.");
+          } catch {
+            setPhoneStatus("Tu peux ouvrir le formulaire pour copier son adresse.");
+          }
+        }}>Copier le lien</button>
+        <button type="button" aria-expanded={!!qrImage} onClick={() => qrImage ? setQrCode(undefined) : void showQrCode()}>QR code</button>
+        {qrImage && <div className="qr"><img src={qrImage} width={220} height={220} alt="QR code du formulaire d’appel de cette séance" /><small>Scanne avec ton téléphone et connecte-toi à MyBasket si nécessaire.</small></div>}
+        {phoneStatus && <small role="status">{phoneStatus}</small>}
+      </div>}
       {!sessions.length && <p>Aucun entraînement associé à cette équipe. Choisis cette équipe en créant la séance dans Mon Calendrier.</p>}
       {reading && <p role="status">Chargement des présences…</p>}
       {!!rosterKey && loadedRoster === rosterKey && <>
@@ -174,7 +222,7 @@ export default function TrainingAttendance({ team }: { team: Team }) {
         </ul>
         {!!players.length && <div className="save">
           <span>{players.filter(player => ["present", "late"].includes(changes[player.id] || marks[player.id])).length} présent(s)</span>
-          <button type="button" disabled={!Object.keys(changes).length} onClick={save}>{saving ? "Enregistrement…" : "Enregistrer l’appel"}</button>
+          <button type="button" disabled={!Object.keys(changes).length} onClick={save}>{saving ? "Enregistrement…" : eventId ? "Envoyer l’appel" : "Enregistrer l’appel"}</button>
         </div>}
       </>}
     </fieldset>}
@@ -184,7 +232,27 @@ export default function TrainingAttendance({ team }: { team: Team }) {
       select,button{border:1px solid #d9c8cc;background:#fff;border-radius:9px;color:inherit;font:inherit;min-height:44px;padding:8px}
       select{width:100%}ul{list-style:none;padding:0;margin:0}li{display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;padding:10px 0;border-bottom:1px solid #eadfe1}
       li div{display:flex;flex-wrap:wrap;gap:6px}button{cursor:pointer}button[aria-pressed="true"],.save button{background:#6b1a2c;color:#fff;border-color:#6b1a2c}
+      .phone{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin:12px 0 18px}.phone a{color:#6b1a2c;font-weight:700}.qr{flex-basis:100%;display:grid;gap:6px}
       button:disabled{opacity:.5;cursor:default}.save{position:sticky;bottom:0;background:white;display:flex;align-items:center;justify-content:space-between;gap:8px;padding:12px 0}
     `}</style>
   </section>;
+}
+
+
+export function MobileTrainingAttendance({ teamId, eventId }: { teamId: string; eventId: string }) {
+  const [team, setTeam] = useState<Team>();
+  const [loading, setLoading] = useState(true);
+  useEffect(() => {
+    let active = true;
+    void getTeam(teamId).then(result => {
+      if (active && result && !result.isShared && !result.isScoutTeam) setTeam(result);
+    }).catch(() => undefined).finally(() => {
+      if (active) setLoading(false);
+    });
+    return () => { active = false; };
+  }, [teamId]);
+  if (!eventId) return <p role="alert">Ouvre le lien de la séance depuis la fiche équipe.</p>;
+  if (loading) return <p role="status">Chargement de l’appel…</p>;
+  if (!team) return <p role="alert">Cette équipe est inaccessible avec ce compte.</p>;
+  return <TrainingAttendance key={eventId} team={team} eventId={eventId} />;
 }

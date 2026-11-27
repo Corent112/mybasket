@@ -1,8 +1,9 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import { readBoxscoreImage } from "@/lib/import/boxscore-image";
 import { createClient } from "@/lib/supabase/client";
-import { BOX_FIELDS, associateBoxRows, completeBoxStats, formatBoxMinutes, parseBoxMinutes, parseBoxTable, parsePdfBoxPage, type ImportedBoxRow, type ImportRosterPlayer } from "@/lib/historical-boxscores";
+import { BOX_FIELDS, EXTERNAL_BOX_FIELDS, IMPORT_BOX_FIELDS, isSignedBoxField, associateBoxRows, completeBoxStats, suggestBoxPlayer, formatBoxMinutes, parseBoxMinutes, parseBoxTable, parsePdfBoxPage, type ImportedBoxRow, type ImportRosterPlayer } from "@/lib/historical-boxscores";
 
 type Match = { id: string; opponent: string; match_date: string; source: string | null; minutes_by_player: Record<string,number|null> | null };
 type MinuteRow = { player_id: string; minutes_seconds: number | null; present: boolean };
@@ -34,6 +35,14 @@ export default function HistoricalBoxscoreImport({teamId,teamName,roster,onSaved
   const [notice,setNotice]=useState("");
   const [sheetIndex,setSheetIndex]=useState(0);
   const [fileName,setFileName]=useState("");
+  const [previewFile,setPreviewFile]=useState<File|null>(null);
+  const [preview,setPreview]=useState("");
+  useEffect(() => {
+    if (!previewFile) { setPreview(""); return; }
+    const url = URL.createObjectURL(previewFile);
+    setPreview(url);
+    return () => URL.revokeObjectURL(url);
+  }, [previewFile]);
   const playerNames=useMemo(()=>new Map(roster.map(p=>[p.id,p.name])),[roster]);
 
   async function loadMatches(){
@@ -65,6 +74,7 @@ export default function HistoricalBoxscoreImport({teamId,teamName,roster,onSaved
   }
   async function readFile(file:File){
     setBusy(true);setError("");setNotice("");
+    setPreviewFile(file.type.startsWith("image/") || /\.(jpe?g|png|webp)$/i.test(file.name) ? file : null);
     setFileName(file.name);setRows([]);setSheets([]);setDate("");setOpponent("");setCategory("");setHome(true);setUs("");setThem("");
     try{
       let parsed:Sheet[]=[];
@@ -93,26 +103,22 @@ export default function HistoricalBoxscoreImport({teamId,teamName,roster,onSaved
         const form=new FormData();
         form.append("teamId",teamId);
         form.append("file",upload);
-        const response=await fetch("/api/teams/import-boxscore",{method:"POST",body:form}).catch(()=>null);
-        const result=await response?.json().catch(()=>null)??{};
-        if(!response?.ok||!Array.isArray(result.teams)||!result.teams.length){
-          if(!imageCanvas)throw new Error(result.error||"Lecture impossible.");
-          const {ocrCanvas,releaseOcr}=await import("@/lib/import/ocr");
-          try{
-            const recognized=await ocrCanvas(imageCanvas);
-            const heights=recognized.words.map(word=>word.y1-word.y0).sort((a,b)=>a-b);
-            const scale=8/Math.max(1,heights[Math.floor(heights.length/2)]||8);
-            const tables=parsePdfBoxPage(recognized.words.filter(word=>word.confidence>=.45).map(word=>({
-              str:word.text,x:word.x0*scale,y:-(word.y0+word.y1)/2*scale,width:(word.x1-word.x0)*scale
-            })));
-            if(!tables.length)throw new Error("Aucun tableau lisible. Essaie une capture recadrée sur les statistiques ou un export PDF/Excel.");
-            result.teams=tables.map((rows,i)=>({name:`Page 1 · Tableau ${i+1}`,rows}));
-          }finally{await releaseOcr();}
+        const local = imageCanvas ? await readBoxscoreImage(imageCanvas).catch(() => []) : [];
+        const complete = local.length > 0 && local.every(rows => rows.every(row =>
+          row.present === false || BOX_FIELDS.every(([key]) => key === "plus_minus" || row.stats[key] != null)));
+        const response = complete ? null : await fetch("/api/teams/import-boxscore",{method:"POST",body:form}).catch(()=>null);
+        const result = await response?.json().catch(()=>null) ?? {};
+        const localTeams = local.map((rows, i) => ({ name: `Page 1 · Tableau ${i + 1}`, rows }));
+        if (localTeams.length && (!response?.ok || !Array.isArray(result.teams) || !result.teams.length)) {
+          result.teams = localTeams;
+        }
+        if (!Array.isArray(result.teams) || !result.teams.length) {
+          throw new Error(result.error || "Aucun tableau lisible. Essaie une capture recadrée ou un export PDF/Excel.");
         }
         parsed=(Array.isArray(result.teams)?result.teams:[]).slice(0,8).map((sheet:any)=>({
           name:String(sheet.name||"Équipe"),score:Number.isInteger(sheet.score)?sheet.score:null,rows:(Array.isArray(sheet.rows)?sheet.rows:[]).slice(0,100).map((r:any)=>{
             const stats:ImportedBoxRow["stats"]={};
-            for(const [key] of BOX_FIELDS)if(r.stats?.[key]!=null&&(key==="plus_minus"?/^[+-]?\d+$/.test(String(r.stats[key])):/^\d+$/.test(String(r.stats[key]))))stats[key]=String(r.stats[key]);
+            for(const [key] of IMPORT_BOX_FIELDS)if(r.stats?.[key]!=null&&(isSignedBoxField(key)?/^[+-]?\d+$/.test(String(r.stats[key])):/^\d+$/.test(String(r.stats[key]))))stats[key]=String(r.stats[key]);
             return {name:String(r.name||""),number:String(r.number??""),playerId:"",minutes:String(r.minutes??""),present:r.present!==false,stats:completeBoxStats(stats)};
           }).filter((r:ImportedBoxRow)=>r.name)
         })).filter((sheet:Sheet)=>sheet.rows.length);
@@ -144,11 +150,17 @@ export default function HistoricalBoxscoreImport({teamId,teamName,roster,onSaved
         if(row.present!==false&&Number(stats.pts)!==2*Number(stats.p2m)+3*Number(stats.p3m)+Number(stats.ftm))throw new Error(`${playerNames.get(row.playerId)} : les points ne correspondent pas aux paniers réussis.`);
         if(row.present!==false&&Number(stats.reb)!==Number(stats.off_reb)+Number(stats.def_reb))throw new Error(`${playerNames.get(row.playerId)} : le total des rebonds est incohérent.`);
         if([[stats.p2m,stats.p2a],[stats.p3m,stats.p3a],[stats.ftm,stats.fta]].some(([m,a])=>Number(m)>Number(a)))throw new Error("Un nombre de tirs réussis dépasse les tentatives.");
-        return {...stats,player_id:row.playerId,present:row.present!==false,minutes_seconds:row.present!==false&&includeMinutes?parseBoxMinutes(row.minutes):null};
+        const external = Object.fromEntries(EXTERNAL_BOX_FIELDS.flatMap(([key, label]) => {
+          const value = row.present === false ? undefined : row.stats[key];
+          if (!value) return [];
+          if (!(isSignedBoxField(key) ? /^[+-]?\d{1,4}$/ : /^\d{1,4}$/).test(value)) throw new Error(`${playerNames.get(row.playerId)} : vérifie ${label}.`);
+          return [[key, Number(value)]];
+        }));
+        return {...stats,...external,player_id:row.playerId,present:row.present!==false,minutes_seconds:row.present!==false&&includeMinutes?parseBoxMinutes(row.minutes):null};
       });
       const {error}=await supabase.rpc("import_historical_boxscore",{p_team:teamId,p_date:date,p_opponent:opponent.trim(),p_home:home,p_category:category,p_us:Number(us),p_them:Number(them),p_rows:payload});
       if(error)throw new Error(error.message);
-      setRows([]);setSheets([]);setDate("");setOpponent("");setUs("");setThem("");setCategory("");setFileName("");
+      setRows([]);setSheets([]);setDate("");setOpponent("");setUs("");setThem("");setCategory("");setFileName("");setPreviewFile(null);
       setNotice("Match importé. Les statistiques de l’équipe et des joueurs sont enregistrées.");
       onSaved();
     }catch(e){setError(e instanceof Error?e.message:"Enregistrement impossible.");}
@@ -178,6 +190,7 @@ export default function HistoricalBoxscoreImport({teamId,teamName,roster,onSaved
     }catch(e){setError(e instanceof Error?e.message:"Enregistrement impossible.");}
     finally{setBusy(false);}
   }
+  const visibleFields = [...BOX_FIELDS, ...EXTERNAL_BOX_FIELDS.filter(([key]) => sheets.some(sheet => sheet.rows.some(row => row.stats[key] != null)))];
   return <section className="tl-card" style={{...card,marginBottom:16}}>
     <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",flexWrap:"wrap",gap:12}}>
       <div><h3 style={{margin:0,color:"#6b1a2c"}}>Historique des statistiques</h3><p style={{margin:"5px 0",color:"#75666a",fontSize:13}}>Importe une feuille d’une autre application ou complète le temps de jeu d’un match.</p></div>
@@ -189,8 +202,9 @@ export default function HistoricalBoxscoreImport({teamId,teamName,roster,onSaved
     {mode==="import"&&<div style={{display:"grid",gap:14,marginTop:16}}>
       <label style={field}>Feuille de stats (PDF, JPEG, PNG, Excel ou CSV)<input style={input} type="file" accept=".xlsx,.xls,.csv,.pdf,.jpg,.jpeg,.png,image/*" disabled={busy} onChange={event=>{const file=event.target.files?.[0];if(file)void readFile(file);event.target.value="";}}/></label>
       {busy&&<p role="status">Lecture de la feuille en cours…</p>}
+      {preview&&<details><summary>Afficher la feuille originale</summary><img src={preview} alt="Feuille de statistiques à vérifier" style={{display:"block",width:"100%",marginTop:8}} /></details>}
       {fileName&&<small>{fileName} · {rows.length} lignes · {rows.filter(row=>row.playerId).length} joueurs associés</small>}
-      {rows.length>0&&<small style={{color:"#75666a"}}>Vérifie les correspondances de joueurs. Crée les fiches des anciens joueurs si nécessaire. Laisse MIN vide si inconnu.</small>}
+      {rows.length>0&&<small style={{color:"#75666a"}}>Les noms reconnus sont associés automatiquement. Pour chaque autre ligne, choisis un joueur MyBasket. Vérifie les chiffres sur la feuille et complète les cases illisibles. Le temps de jeu peut rester vide.</small>}
       {sheets.length>1&&<label style={field}>Feuille / équipe à importer<select style={input} value={sheetIndex} disabled={busy} onChange={event=>chooseSheet(sheets[Number(event.target.value)],Number(event.target.value))}>{sheets.map((sheet,i)=><option key={i} value={i}>{sheet.name}</option>)}</select></label>}
       <div style={{background:"#f8f3ed",borderRadius:8,padding:10,fontSize:13}}>Équipe du nouveau match · <strong>{teamName}</strong></div>
       <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(130px,1fr))",gap:10}}>
@@ -203,15 +217,17 @@ export default function HistoricalBoxscoreImport({teamId,teamName,roster,onSaved
       </div>
       <label style={{display:"flex",alignItems:"center",gap:8,fontWeight:700}}><input type="checkbox" checked={includeMinutes} onChange={e=>setIncludeMinutes(e.target.checked)}/> Importer ou saisir les temps de jeu maintenant (facultatif)</label>
       <div style={{overflowX:"auto"}}><table style={{borderCollapse:"collapse",width:"100%",fontSize:12}}>
-        <thead><tr><th style={{textAlign:"left",minWidth:120}}>Joueur sur la feuille</th><th style={{textAlign:"left",minWidth:160}}>Joueur MyBasket</th><th>MJ</th>{includeMinutes&&<th>MIN</th>}{BOX_FIELDS.map(([key,label])=><th key={key} title={key} style={{padding:5}}>{label}</th>)}<th/></tr></thead>
-        <tbody>{rows.map((row,i)=><tr key={i} style={{borderTop:"1px solid #eee"}}>
+        <thead><tr><th style={{textAlign:"left",minWidth:120}}>Joueur sur la feuille</th><th style={{textAlign:"left",minWidth:160}}>Joueur MyBasket</th><th>MJ</th>{includeMinutes&&<th>MIN</th>}{visibleFields.map(([key,label])=><th key={key} title={key} style={{padding:5}}>{label}</th>)}<th/></tr></thead>
+        <tbody>{rows.map((row,i)=>{
+          const suggestion = row.playerId ? undefined : suggestBoxPlayer(row, roster.filter(player => !rows.some(other => other.playerId === player.id)));
+          return <tr key={i} style={{borderTop:"1px solid #eee"}}>
           <td style={{padding:5}}>{row.number? "#"+row.number+" ":""}{row.name||"Saisie manuelle"}</td>
-          <td><select style={{...input,width:"100%"}} aria-label={`Joueur ligne ${i+1}`} value={row.playerId} onChange={e=>updateRow(i,{playerId:e.target.value})}><option value="">Choisir…</option>{roster.map(p=><option key={p.id} value={p.id} disabled={rows.some((other,j)=>j!==i&&other.playerId===p.id)}>{p.number!=null?`#${p.number} `:""}{p.name}</option>)}</select></td>
+          <td><select style={{...input,width:"100%"}} aria-label={`Joueur ligne ${i+1}`} value={row.playerId} onChange={e=>updateRow(i,{playerId:e.target.value})}><option value="">Choisir…</option>{roster.map(p=><option key={p.id} value={p.id} disabled={rows.some((other,j)=>j!==i&&other.playerId===p.id)}>{p.number!=null?`#${p.number} `:""}{p.name}{suggestion?.id === p.id ? " · suggéré" : ""}</option>)}</select>{suggestion && <small>Association suggérée · {suggestion.name}</small>}</td>
           <td><input type="checkbox" aria-label={`A joué · ${row.name||i+1}`} checked={row.present!==false} onChange={e=>updateRow(i,{present:e.target.checked})}/></td>
           {includeMinutes&&<td><input disabled={row.present===false} style={{...input,width:65}} aria-label="Minutes" placeholder="—" value={row.minutes} onChange={e=>updateRow(i,{minutes:e.target.value})}/></td>}
-          {BOX_FIELDS.map(([key,label])=><td key={key}><input style={{...input,width:48,textAlign:"center",padding:"8px 4px"}} aria-label={`${label} ${row.name||i+1}`} disabled={row.present===false} inputMode="numeric" placeholder="—" value={row.stats[key]??""} onChange={e=>updateRow(i,{stats:{...row.stats,[key]:e.target.value}})}/></td>)}
+          {visibleFields.map(([key,label])=><td key={key}><input style={{...input,width:48,textAlign:"center",padding:"8px 4px"}} aria-label={`${label} ${row.name||i+1}`} disabled={row.present===false} inputMode="numeric" placeholder="—" value={row.stats[key]??""} onChange={e=>updateRow(i,{stats:{...row.stats,[key]:e.target.value}})}/></td>)}
           <td><button type="button" className="boxscore-button" aria-label="Retirer la ligne" onClick={()=>setRows(current=>current.filter((_,j)=>j!==i))}>×</button></td>
-        </tr>)}</tbody>
+        </tr>;})}</tbody>
       </table></div>
       <div style={{display:"flex",gap:8,justifyContent:"space-between"}}><button type="button" className="boxscore-button" disabled={busy} onClick={()=>setRows(current=>[...current,blankRow()])}>＋ Ajouter un joueur</button><button type="button" className="boxscore-button" style={{background:"#6b1a2c",color:"white"}} disabled={busy||!rows.length} onClick={save}>{busy?"Traitement…":"Créer le match et enregistrer les stats"}</button></div>
     </div>}
