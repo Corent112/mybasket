@@ -47,6 +47,7 @@ import { compactPlayerMetrics, shotSplit, codedPlayerStats, officialPlayerStats,
 import { scoutingHighlights, highlightColors } from "@/lib/scouting-highlights";
 import { scoutingProfileIcon, scoutingProfileLabel } from "@/lib/scouting-profiles";
 import { scoutingColors } from "@/lib/scouting-colors";
+import { closeOutColors, defensiveArrowHead, defensiveInk } from "@/lib/scouting-defense";
 import { courtDiagramLayout, drawCourtDiagram, scoutingCourtsPerRow } from "@/lib/pdf-court-diagrams";
 import GamePlanScoutingBoard, { scoutingPlayerNoteFields, type ScoutBoardValue } from "./GamePlanScoutingBoard";
 
@@ -141,6 +142,7 @@ type Scouting = {
   playerCards?: ScoutBoardValue["playerCards"];
   printPlayerIds?: string[];
   playNotes?: ScoutBoardValue["playNotes"];
+  defenseBySystem?: ScoutBoardValue["defenseBySystem"];
   topPlaysCourtsPerRow?: ScoutBoardValue["topPlaysCourtsPerRow"];
   highlightSide?: ScoutBoardValue["highlightSide"];
   highlightMatchIds?: string[];
@@ -2397,8 +2399,8 @@ async function exportGamePlanPdf(team: Team, gp: GamePlan, rotation: Rotation | 
         }
       };
       box("Identité de jeu", gp.scouting.identity || "");
-      pair("Intentions offensives", gp.scouting.offense || gp.scouting.style, "Intentions défensives", gp.scouting.defense || gp.scouting.defensivePlan, false);
-      pair("Nos clés offensives", gp.scouting.offensiveKeys || "", "Nos clés défensives", gp.scouting.defensiveKeys || "", true);
+      pair("Intentions offensives", gp.scouting.offense || gp.scouting.style, "Nos clés défensives", gp.scouting.defensiveKeys || "", true);
+      pair("Intentions défensives", gp.scouting.defense || gp.scouting.defensivePlan, "Nos clés offensives", gp.scouting.offensiveKeys || "", true);
 
       const scoutSystems = [...new Map(gp.librarySystems.filter(system => sysSection(system) === "scout").map(system => [system.id, system])).values()];
       if (scoutSystems.length) {
@@ -2442,6 +2444,21 @@ async function exportGamePlanPdf(team: Team, gp: GamePlan, rotation: Rotation | 
               const image = src ? await imageToDataUrl(src) : null;
               const x = M + column * (width + gap);
               drawCourtDiagram(doc, image, x, y, layout, start + column + 1);
+              const defense = gp.scouting.defenseBySystem?.[system.id]?.[start + column];
+              if (image && defense?.includeInPdf !== false && defense?.arrows.length) {
+                doc.saveGraphicsState();
+                doc.setDrawColor(defensiveInk);
+                doc.setLineWidth(.65);
+                for (const arrow of defense.arrows) {
+                  const scale = (p: { x: number; y: number }) => ({ x: x + p.x * width / 100, y: y + p.y * height / 100 });
+                  const from = scale(arrow.from), to = scale(arrow.to);
+                  const [left, right] = defensiveArrowHead(from, to, Math.min(2.6, width / 12));
+                  doc.line(from.x, from.y, to.x, to.y);
+                  doc.line(left.x, left.y, to.x, to.y);
+                  doc.line(right.x, right.y, to.x, to.y);
+                }
+                doc.restoreGraphicsState();
+              }
             }
             y += rowHeight;
           }
@@ -2467,7 +2484,7 @@ async function exportGamePlanPdf(team: Team, gp: GamePlan, rotation: Rotation | 
             return label ? [{ label, src: scoutingProfileIcon(profile) }] : [];
           });
           const profileWidth = 24;
-          const identityWidth = width - profiles.length * profileWidth - (profiles.length ? 3 : 0);
+          const identityWidth = width - profiles.length * profileWidth - 24;
           doc.setFont("helvetica", "bold"); doc.setFontSize(11);
           const nameLines: string[] = doc.splitTextToSize(playerLabel(p), identityWidth);
           const details = [p.poste || p.postePrincipal, (card?.taille || p.taille) ? `${card?.taille || p.taille} cm` : "", p.age ? `${p.age} ans` : "", row?.person?.nationality, card?.mainDominante || p.mainDominante].filter(Boolean).join(" · ");
@@ -2534,6 +2551,12 @@ async function exportGamePlanPdf(team: Team, gp: GamePlan, rotation: Rotation | 
             doc.setFontSize(7);
             profileLabels[index].forEach((line, row) => doc.text(line, center, y + 15.5 + row * 3, { align: "center" }));
           }
+          const closeOutX = x + width - profiles.length * profileWidth - 12;
+          doc.setFont("helvetica", "bold"); doc.setFontSize(7); doc.setTextColor(...burgundy);
+          doc.text("CLOSE OUT", closeOutX, y + 6, { align: "center" });
+          doc.setDrawColor(128, 110, 116);
+          doc.setFillColor(closeOutColors[card?.closeOut ?? "white"].fill);
+          doc.circle(closeOutX, y + 12, 2.6, "FD");
           const cellWidth = width / Math.max(1, includedPlayerMetrics.length);
           includedPlayerMetrics.forEach((key, index) => {
             const value = stats?.[key];

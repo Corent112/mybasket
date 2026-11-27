@@ -1,5 +1,7 @@
 "use client";
 import { useEffect, useMemo, useState } from "react";
+import ScoutingDefenseOverlay from "./ScoutingDefenseOverlay";
+import { closeOutColors, nextCloseOut, type CloseOutColor, type ScoutingDefense } from "@/lib/scouting-defense";
 import { Crown } from "lucide-react";
 import type { PlayerCompetitionRank } from "@/lib/lnb-competition-rankings";
 import { createClient } from "@/lib/supabase/client";
@@ -61,6 +63,7 @@ export type ScoutCard = {
   hidePdfShotChart?: boolean;
   printShotMap?: boolean;
   shotMapImage?: string;
+  closeOut?: CloseOutColor;
   shotZoneColors?: Record<string, ScoutingShotZoneColor>;
 };
 export const scoutingPlayerNoteFields = [
@@ -93,6 +96,7 @@ export type ScoutBoardValue = {
   playerCards?: ScoutCard[];
   printPlayerIds?: string[];
   playNotes?: Record<string, string>;
+  defenseBySystem?: ScoutingDefense;
   topPlaysCourtsPerRow?: ScoutingCourtsPerRow;
   highlightSide?: ScoutingSide;
   highlightMatchIds?: string[];
@@ -320,6 +324,7 @@ function ScoutingContent({
               playerCards: [],
               printPlayerIds: undefined,
               playNotes: {},
+              defenseBySystem: {},
               highlightSide: undefined,
               highlightMatchIds: undefined,
               highlightNotes: "",
@@ -541,6 +546,11 @@ function ScoutingContent({
                     "Transition, pick and roll, spacing…",
                   ],
                   [
+                    "defensiveKeys",
+                    "Nos clés défensives",
+                    "Ce que nous voulons empêcher…",
+                  ],
+                  [
                     "defense",
                     "Intentions défensives",
                     "Couvertures, aides, pression, zone…",
@@ -549,11 +559,6 @@ function ScoutingContent({
                     "offensiveKeys",
                     "Nos clés offensives",
                     "Ce que nous voulons attaquer…",
-                  ],
-                  [
-                    "defensiveKeys",
-                    "Nos clés défensives",
-                    "Ce que nous voulons empêcher…",
                   ],
                 ].map(([key, title, placeholder]) => (
                   <label className={key === "identity" ? `${styles.card} ${styles.fullWidth}` : styles.card} key={key}>
@@ -636,6 +641,12 @@ function ScoutingContent({
                         </p>
                       </div>
                     </div>
+                    <button type="button" className={styles.closeOut}
+                      aria-label={`Close out de ${label(p)} · ${closeOutColors[card?.closeOut ?? "white"].label}`}
+                      onClick={() => patchCard(p.id, { closeOut: nextCloseOut(card?.closeOut) })}>
+                      CLOSE OUT
+                      <span aria-hidden="true" style={{ background: closeOutColors[card?.closeOut ?? "white"].fill }} />
+                    </button>
                     <label className={styles.pdfToggle}>
                       <input type="checkbox" aria-label={`Inclure ${label(p)} dans le PDF`} style={{ width: 16, height: 16 }} checked={printIds.includes(p.id)} onChange={event => onChange({
                         printPlayerIds: event.target.checked ? [...printIds, p.id] : printIds.filter(id => id !== p.id),
@@ -845,11 +856,11 @@ function ScoutingContent({
                     {(s.schemaImages?.length ? s.schemaImages : [s.schemaImage])
                       .filter(Boolean)
                       .map((src: string, i: number) => (
-                        <img
-                          key={i}
-                          src={src}
-                          alt={`${s.title} · schéma ${i + 1}`}
-                        />
+                        <ScoutingDefenseOverlay key={`${i}:${src}`} src={src} title={`${s.title} · phase ${i + 1}`}
+                          value={value.defenseBySystem?.[s.id]?.[i]}
+                          onChange={phase => onChange({
+                            defenseBySystem: { ...value.defenseBySystem, [s.id]: { ...value.defenseBySystem?.[s.id], [i]: phase } },
+                          })} />
                       ))}
                   </article>
                 ))}
