@@ -47,6 +47,7 @@ export async function POST(request: Request) {
       }
       const { data: previous, error } = await admin.from("platform_conversations")
         .select("id,subject")
+        .eq("status", "open")
         .or(`and(sender_user_id.eq.${user.id},recipient_user_id.eq.${recipientId}),and(sender_user_id.eq.${recipientId},recipient_user_id.eq.${user.id})`)
         .order("updated_at", { ascending: false });
       if (error) throw error;
@@ -54,6 +55,7 @@ export async function POST(request: Request) {
       if (thread) { threadId = thread.id; existing = true; }
     }
 
+    const invitation = !existing && to !== user.email.toLowerCase();
     if (existing) {
       const { error } = await admin.from("platform_conversation_replies").insert({
         conversation_id: threadId, sender_user_id: user.id, message, created_at: now,
@@ -66,7 +68,7 @@ export async function POST(request: Request) {
         id: threadId, conversation_type: "direct", subject, initial_message: message,
         sender_user_id: user.id, sender_name: sender, sender_email: user.email,
         recipient_user_id: recipientId, recipient_email: recipientId ? null : to,
-        status: "open", created_at: now, updated_at: now,
+        status: invitation ? "invited" : "open", created_at: now, updated_at: now,
       });
       if (error) throw error;
     }
@@ -76,7 +78,7 @@ export async function POST(request: Request) {
       const template = messageNotificationEmail(getSiteUrl(), sender, {
         conversationId: recipientId ? threadId : undefined,
         replyEmail: recipientId ? undefined : user.email,
-        subject, message, invitation: !existing,
+        subject, message, invitation, invitationId: invitation ? threadId : undefined,
       });
       emailSent = (await sendTransactionalEmail({ to, replyTo: user.email, ...template })).sent;
     } catch {

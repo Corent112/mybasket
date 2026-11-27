@@ -50,14 +50,14 @@ export async function POST(request: Request) {
     const now = new Date().toISOString(), isGroup=body.mode==='group';
     const name=String(body.groupName||'').trim().slice(0,80);
     if(isGroup&&(!name||ids.length<2))throw new MessagingAccessError('Nomme le groupe et choisis au moins deux destinataires.',400);
-    const rows=(isGroup?recipients.slice(0,1):recipients).map(recipient=>({id:crypto.randomUUID(),conversation_type:'accompagnement',subject:isGroup?GROUP_SUBJECT+name:`Équipe · ${team.name} · ${recipient!.name}`,initial_message:message,sender_user_id:user.id,sender_name:profile?.display_name||'Coach',sender_email:user.email||null,recipient_user_id:recipient!.userId,reference_id:team.id,status:'open',created_at:now,updated_at:now}));
+    const rows=(isGroup?recipients.slice(0,1):recipients).map(recipient=>({id:crypto.randomUUID(),conversation_type:'accompagnement',subject:isGroup?GROUP_SUBJECT+name:`Équipe · ${team.name} · ${recipient!.name}`,initial_message:message,sender_user_id:user.id,sender_name:profile?.display_name||'Coach',sender_email:user.email||null,recipient_user_id:recipient!.userId,reference_id:team.id,status:isGroup?'open':'invited',created_at:now,updated_at:now}));
     const { data, error } = await db.from('platform_conversations').insert(rows).select('id');
     if(error||data?.length!==rows.length)throw new MessagingAccessError('Le message n’a pas pu être enregistré.',503);
     if(isGroup){
       try{await registerMessageGroup(db,team.id,{id:rows[0].id,name,memberIds:[user.id,...ids as string[]],createdBy:user.id,createdAt:now})}
       catch(error){await db.from('platform_conversations').delete().eq('id',rows[0].id);throw error}
     }
-    after(async()=>{if(isGroup)await notifyMessageRecipients(db,ids as string[],{title:name,conversationId:rows[0].id,invitation:true});else await Promise.all(rows.map(row=>notifyMessageRecipients(db,[row.recipient_user_id!],{title:profile?.display_name||'MyBasket',conversationId:row.id,invitation:true}))) });
+    after(async()=>{if(isGroup)await notifyMessageRecipients(db,ids as string[],{title:name,conversationId:rows[0].id});else await Promise.all(rows.map(row=>notifyMessageRecipients(db,[row.recipient_user_id!],{title:profile?.display_name||'MyBasket',conversationId:row.id,invitation:true,invitationId:row.id}))) });
     return NextResponse.json({ id: rows[0].id, ids:rows.map(row=>row.id), count:rows.length, group:isGroup });
   } catch (error) { return failure(error); }
 }

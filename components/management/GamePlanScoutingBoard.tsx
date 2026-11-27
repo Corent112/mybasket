@@ -52,6 +52,8 @@ export type ScoutCard = {
   mainDominante?: string;
   statColors?: Record<string, "green" | "red" | undefined>;
   liveStats?: Record<string, number | null>;
+  hiddenPdfStats?: string[];
+  hidePdfShotChart?: boolean;
 };
 export type ScoutStat = { id: string; metric: string; limit: number };
 export type ScoutBoardValue = {
@@ -64,6 +66,8 @@ export type ScoutBoardValue = {
   teamStats?: Record<string, number | null>;
   teamStatColors?: ScoutCard["statColors"];
   printCompetitionRanks?: boolean;
+  hiddenPdfTeamStats?: string[];
+  hiddenPdfTeamSections?: string[];
   depthChart?: Record<string, string[]>;
   importantStats?: ScoutStat[];
   playerCards?: ScoutCard[];
@@ -208,6 +212,8 @@ function ScoutingContent({
   const teamStat = (key: string) => Object.prototype.hasOwnProperty.call(value.teamStats || {}, key)
     ? value.teamStats?.[key] : autoStats[key];
   const playerTopFive: PlayerCompetitionRank[] = official?.playerTopFive ?? [];
+  const toggleHidden = (hidden: string[] | undefined, key: string, shown: boolean) =>
+    shown ? (hidden || []).filter(item => item !== key) : [...new Set([...(hidden || []), key])];
   const statField = (key: string, title: string) => (
     <div className={styles.teamStatField} key={key}>
       <div className={styles.rankedStatLabel}>
@@ -290,6 +296,8 @@ function ScoutingContent({
               highlightNotes: "",
               teamStats: {},
               teamStatColors: {},
+              hiddenPdfTeamStats: [],
+              hiddenPdfTeamSections: [],
             })
           }
         >
@@ -347,6 +355,17 @@ function ScoutingContent({
                   </div>
                   {official?.ranking && <p><strong>{official.ranking}e</strong> · {official.competition}</p>}
                   <ShotPie two={teamStat("p2a")} three={teamStat("p3a")} />
+                  <details>
+                    <summary>Choisir les statistiques collectives du PDF</summary>
+                    <div className={styles.pdfStatsChoices}>
+                      {teamMetrics.map(([key, title]) => <label key={key}><input type="checkbox"
+                        checked={!value.hiddenPdfTeamStats?.includes(key)}
+                        onChange={event => onChange({ hiddenPdfTeamStats: toggleHidden(value.hiddenPdfTeamStats, key, event.target.checked) })} /> {title}</label>)}
+                      {([["ranking", "Classement général"], ["shotChart", "Répartition des tirs"], ["points", "Points par match"], ["form", "Forme du moment"], ["highlights", "Chiffres des temps forts"]] as const).map(([key, title]) => <label key={key}><input type="checkbox"
+                        checked={!value.hiddenPdfTeamSections?.includes(key)}
+                        onChange={event => onChange({ hiddenPdfTeamSections: toggleHidden(value.hiddenPdfTeamSections, key, event.target.checked) })} /> {title}</label>)}
+                    </div>
+                  </details>
                   <div className={styles.stats}>
                     {teamMetrics.map(([key, title]) => statField(key, title))}
                   </div>
@@ -619,6 +638,15 @@ function ScoutingContent({
                         </select>
                       </label>
                     </div>
+                    <details>
+                      <summary>Choisir les statistiques de ce joueur dans le PDF</summary>
+                      <div className={styles.pdfStatsChoices}>
+                        {compactPlayerMetrics.map(key => <label key={key}><input type="checkbox" checked={!card?.hiddenPdfStats?.includes(key)}
+                          onChange={event => patchCard(p.id, { hiddenPdfStats: toggleHidden(card?.hiddenPdfStats, key, event.target.checked) })} /> {key}</label>)}
+                        <label><input type="checkbox" checked={!card?.hidePdfShotChart}
+                          onChange={event => patchCard(p.id, { hidePdfShotChart: !event.target.checked })} /> Répartition des tirs</label>
+                      </div>
+                    </details>
                     <ShotPie two={stats?.["2T"]} three={stats?.["3T"]} />
                     {stats && <p className={styles.note}>{card?.liveStats ? "LiveStats · stats importées" : officialStats ? "LNB · saison" : "LiveStats · matchs scoutés"}</p>}
                     <div className={styles.scroll}>

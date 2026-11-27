@@ -27,6 +27,7 @@ export async function GET() {
   const rows=[...new Map([...(direct.data||[]),...(groupRows.data||[])].map(row=>[row.id,row])).values()]
    .filter(row=>!row.subject?.startsWith(GROUP_SUBJECT)||(groupMap.get(row.id)?.createdBy===row.sender_user_id&&groupMap.get(row.id)?.teamId===row.reference_id))
    .filter(row => {
+    if ((row.status === "invited" || row.status === "declined") && row.sender_user_id !== user.id) return false;
     const cutoff = hiddenById.get(row.id);
     const peer = messagePeer(user.id, row);
     const messages = row.platform_conversation_replies ?? [];
@@ -49,7 +50,7 @@ export async function GET() {
     ...row, subject:group?group.name:row.subject, is_group:Boolean(group), member_count:group?.memberIds.length,
     participant_name:group?group.name:names.get(peer)||row.recipient_email||row.sender_name||'MyBasket',
     is_blocked:blocked, can_block:Boolean(peer&&!group),
-    can_reply:Boolean(group||peer||!row.recipient_email)&&!blocked&&!incomingBlock,
+    can_reply:Boolean(group||peer||!row.recipient_email)&&!blocked&&!incomingBlock&&row.status!=="invited"&&row.status!=="declined",
     initial_message:Date.parse(row.created_at)>cutoff&&(!group||!blocks.outgoing.has(row.sender_user_id))?row.initial_message:"",
     platform_conversation_replies:[...(row.platform_conversation_replies||[])]
      .filter(reply=>Date.parse(reply.created_at)>cutoff&&(!group||!blocks.outgoing.has(reply.sender_user_id)))
@@ -66,10 +67,11 @@ export async function POST(request:Request){
  if(!isMessageId(id)||!message||message.length>5000)return NextResponse.json({error:'Message invalide (5 000 caractères maximum).'},{status:400});
  const db=createAdminClient();if(!db)return NextResponse.json({error:'Messagerie indisponible.'},{status:503});
  try{
-  const{data:conversation,error:readError}=await db.from('platform_conversations').select('id,subject,reference_id,sender_user_id,recipient_user_id,recipient_email').eq('id',id).maybeSingle();
+  const{data:conversation,error:readError}=await db.from('platform_conversations').select('id,subject,reference_id,sender_user_id,recipient_user_id,recipient_email,status').eq('id',id).maybeSingle();
   if(readError||!conversation)throw new MessagingAccessError('Conversation inaccessible.');
   const group=await groupForConversation(db,conversation,user.id);
   if(!group&&conversation.sender_user_id!==user.id&&conversation.recipient_user_id!==user.id)throw new MessagingAccessError('Conversation inaccessible.');
+  if (conversation.status === "invited" || conversation.status === "declined") throw new MessagingAccessError("Cette invitation n’a pas été acceptée.",403);
   const blocks=await messageBlocks(db,user.id);
   const peer=messagePeer(user.id,conversation);
   if(!group && (conversation.recipient_email || (peer && (blocks.outgoing.has(peer) || blocks.incoming.has(peer))))) {

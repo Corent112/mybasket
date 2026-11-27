@@ -4,7 +4,7 @@ import { getSiteUrl } from "@/lib/site-url";
 import { messageNotificationEmail } from "./message-email";
 import { sendMessagePush } from "./push-server";
 
-export async function notifyMessageRecipients(db: SupabaseClient, userIds: string[], input: { title: string; conversationId: string; invitation?: boolean }) {
+export async function notifyMessageRecipients(db: SupabaseClient, userIds: string[], input: { title: string; conversationId: string; invitation?: boolean; invitationId?: string }) {
   const recipients = [...new Set(userIds)];
   const email = async () => {
     if (!process.env.RESEND_API_KEY || !process.env.RESEND_FROM) return;
@@ -16,5 +16,5 @@ export async function notifyMessageRecipients(db: SupabaseClient, userIds: strin
       }));
     }
   };
-  await Promise.allSettled([sendMessagePush(db, recipients, input), email()]);
+  await Promise.allSettled([sendMessagePush(db, recipients, input.invitationId ? { ...input, url: `/messagerie/invitation/${input.invitationId}?decision=accept` } : input), email()]);
 }

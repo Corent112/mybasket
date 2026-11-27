@@ -129,6 +129,8 @@ type Scouting = {
   teamStats?: Record<string,number|null>;
   teamStatColors?: ScoutBoardValue["teamStatColors"];
   printCompetitionRanks?: boolean;
+  hiddenPdfTeamStats?: ScoutBoardValue["hiddenPdfTeamStats"];
+  hiddenPdfTeamSections?: ScoutBoardValue["hiddenPdfTeamSections"];
   offense?: string;
   defense?: string;
   depthChart?: Record<string, string[]>;
@@ -2206,15 +2208,23 @@ async function exportGamePlanPdf(team: Team, gp: GamePlan, rotation: Rotation | 
         doc.text(`3 pts · ${formatScoutingStat(split.p3)} (${formatScoutingStat((1 - split.share2) * 100)} %)`, x + radius + 3, yy + 5);
       };
 
-      ensure(82);
+      const includedTeamMetrics = teamMetrics.filter(([key]) => !gp.scouting.hiddenPdfTeamStats?.includes(key));
+      const includeTeamSection = (key: string) => !gp.scouting.hiddenPdfTeamSections?.includes(key);
+      const showRanking = includeTeamSection("ranking") && Boolean(official?.ranking);
+      const showShotChart = includeTeamSection("shotChart") &&
+        !gp.scouting.hiddenPdfTeamStats?.some(key => key === "p2a" || key === "p3a") &&
+        Boolean(shotSplit(teamStat("p2a"), teamStat("p3a")));
+      const metricsHeight = includedTeamMetrics.length ? Math.ceil(includedTeamMetrics.length / 4) * 9 + 4 : 0;
+      if (metricsHeight || showRanking || showShotChart) {
+      ensure(8 + metricsHeight + (showRanking ? 6 : 0) + (showShotChart ? 20 : 0));
       title("Statistiques collectives");
-      if (official?.ranking) {
+      if (showRanking && official) {
         doc.setTextColor(...burgundy); doc.setFontSize(10);
         doc.text(`${official.ranking}e · ${official.competition}`, M, y);
         y += 6;
       }
       const metricWidth = (W - 2 * M) / 4;
-      teamMetrics.forEach(([key, label], index) => {
+      includedTeamMetrics.forEach(([key, label], index) => {
         const x = M + (index % 4) * metricWidth;
         const yy = y + Math.floor(index / 4) * 9;
         const n = teamStat(key);
@@ -2237,10 +2247,11 @@ async function exportGamePlanPdf(team: Team, gp: GamePlan, rotation: Rotation | 
           }
         }
       });
-      y += Math.ceil(teamMetrics.length / 4) * 9 + 4;
-      if (shotSplit(teamStat("p2a"), teamStat("p3a"))) {
+      y += metricsHeight;
+      if (showShotChart) {
         pie(M + 8, y + 8, 8, teamStat("p2a"), teamStat("p3a"));
         y += 20;
+      }
       }
 
       const summaryTable = (heading: string, columns: string[], values: string[][], widths: number[]) => {
@@ -2265,17 +2276,17 @@ async function exportGamePlanPdf(team: Team, gp: GamePlan, rotation: Rotation | 
       };
       const tableWidth = W - 2 * M;
       const showStat = (value: number | null) => value == null ? "—" : formatScoutingStat(value);
-      summaryTable("Points par match", ["Situation", "MJ", "Marqués", "Encaissés"],
+      if (includeTeamSection("points") && !gp.scouting.hiddenPdfTeamStats?.some(key => key === "pointsFor" || key === "pointsAgainst")) summaryTable("Points par match", ["Situation", "MJ", "Marqués", "Encaissés"],
         splits.map(row => [row.label, String(row.games), showStat(row.forPoints), showStat(row.against)]),
         [0.4, 0.15, 0.225, 0.225].map(part => part * tableWidth));
-      if (recent.length) summaryTable("Forme du moment", ["Date", "Adversaire", "Lieu", "Score", "Résultat"],
+      if (recent.length && includeTeamSection("form")) summaryTable("Forme du moment", ["Date", "Adversaire", "Lieu", "Score", "Résultat"],
         recent.map(match => [match.date.split("-").reverse().join("/"), match.opponent, match.venue,
           `${match.forPoints}–${match.against}`, match.outcome === "V" ? "Victoire" : match.outcome === "D" ? "Défaite" : "Nul"]),
         [0.16, 0.38, 0.18, 0.14, 0.14].map(part => part * tableWidth));
 
       const side = gp.scouting.highlightSide ?? "attaque";
       const highlights = scoutingHighlights(actions, side, gp.scouting.highlightMatchIds);
-      if (highlights.length) {
+      if (highlights.length && includeTeamSection("highlights")) {
         ensure(62);
         title(`Temps forts · ${side === "attaque" ? "attaque" : "défense"}`);
         const colors = [palette.primary, palette.secondary, ...highlightColors.slice(2)];
@@ -2443,9 +2454,12 @@ async function exportGamePlanPdf(team: Team, gp: GamePlan, rotation: Rotation | 
           const notes: string[] = card?.notes?.trim() ? doc.splitTextToSize(card.notes.trim(), width) : [];
           const lines = notes.slice(0, defendLines.length ? 16 : 18);
           const defense = defendLines.slice(0, 17 - lines.length);
-          const notesY = statsY + 23;
+          const includedPlayerMetrics = compactPlayerMetrics.filter(key => !card?.hiddenPdfStats?.includes(key));
+          const showPlayerChart = !card?.hidePdfShotChart && Boolean(shotSplit(stats?.["2T"], stats?.["3T"]));
+          const afterStats = statsY + (includedPlayerMetrics.length ? 6 : 0);
+          const notesY = Math.max(36, afterStats + (showPlayerChart ? 17 : 5));
           const lineCount = lines.length + (defense.length ? defense.length + 1 : 0);
-          const height = lineCount ? notesY + (lineCount - 1) * 3.6 + 4 : statsY + 20;
+          const height = lineCount ? notesY + (lineCount - 1) * 3.6 + 4 : Math.max(36, afterStats + (showPlayerChart ? 16 : 4));
           if (playerHeadingPending || y + height > H - M) {
             ensure(8 + height);
             title("Fiches joueurs");
@@ -2467,8 +2481,8 @@ async function exportGamePlanPdf(team: Team, gp: GamePlan, rotation: Rotation | 
             doc.setFontSize(7);
             profileLabels[index].forEach((line, row) => doc.text(line, center, y + 15.5 + row * 3, { align: "center" }));
           }
-          const cellWidth = width / compactPlayerMetrics.length;
-          compactPlayerMetrics.forEach((key, index) => {
+          const cellWidth = width / Math.max(1, includedPlayerMetrics.length);
+          includedPlayerMetrics.forEach((key, index) => {
             const value = stats?.[key];
             const dx = x + index * cellWidth;
             const dy = y + statsY;
@@ -2478,7 +2492,7 @@ async function exportGamePlanPdf(team: Team, gp: GamePlan, rotation: Rotation | 
             doc.setTextColor(...muted); doc.setFontSize(6.4); doc.text(key, dx + 1.2, dy + 2.2);
             doc.setTextColor(...black); doc.setFontSize(8); doc.text(value == null ? "—" : formatScoutingStat(value), dx + 1.2, dy + 5.3);
           });
-          pie(x + 6, y + statsY + 13, 6, stats?.["2T"], stats?.["3T"]);
+          if (showPlayerChart) pie(x + 6, y + afterStats + 7, 6, stats?.["2T"], stats?.["3T"]);
           doc.setTextColor(...black); doc.setFont("helvetica", "normal"); doc.setFontSize(8);
           lines.forEach((line, index) => doc.text(line, x, y + notesY + index * 3.6));
           if (defense.length) {

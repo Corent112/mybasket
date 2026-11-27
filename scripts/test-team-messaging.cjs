@@ -21,10 +21,21 @@ const db={auth:{getUser:async()=>({data:{user:current?{id:current,email:'test@ex
  });filters.push(row=>tests.some(test=>test(row)));return q},lt:(k,v)=>{filters.push(r=>r[k]<v);return q},order:()=>q,upsert:value=>{mode='upsert';payload=value;return q},insert:value=>{mode='insert';payload=value;return q},update:value=>{mode='update';payload=value;return q},delete:()=>{mode='delete';return q},maybeSingle:async()=>{const r=run();return{...r,data:r.data[0]||null}},then:(resolve,reject)=>Promise.resolve(run()).then(resolve,reject)};return q}};
 const emitted=[];const actual=Module._load;Module._load=function(request,parent,main){if(request==='next/server')return{NextResponse:{json:(d,init)=>Response.json(d,init)},after:()=>{}};if(request==='@/lib/supabase/server')return{createClient:async()=>db};if(request==='@/lib/supabase/admin-server')return{createAdminClient:()=>db};if(request==='@/lib/server-notifications')return{sendTransactionalEmail:async(template)=>{emitted.push(template);return {sent:true}}};if(request==='@/lib/messaging/push-server')return{sendMessagePush:async()=>{throw Error('Never send real notifications in tests')}};if(request.startsWith('@/'))request=path.resolve(__dirname,'..',request.slice(2));return actual.call(this,request,parent,main)};
 const api=require('../app/api/messages/team/route.ts'),inbox=require('../app/api/messages/platform/route.ts'),email=require('../app/api/messages/email/route.ts');
+const {saveInvitationDecision}=require('../lib/messaging/invitations.ts');
 const req=body=>new Request('https://mybasket.test/api/messages',{method:'POST',body:JSON.stringify(body),headers:{'Content-Type':'application/json'}});
 (async()=>{
  current=null;assert.equal((await inbox.GET()).status,401);current=id(1);
  let response=await api.POST(req({teamId:team,recipientIds:[id(2),id(3)],message:'Private broadcast'}));assert.equal(response.status,200);const broadcast=await response.json();assert.equal(broadcast.count,2);assert.equal(tables.platform_conversations.length,2);
+ const invite=tables.platform_conversations[0];
+ current=id(2);
+ assert.equal((await(await inbox.GET()).json()).conversations.length,0,'Pending invite is hidden from the recipient');
+ assert.equal((await inbox.POST(req({conversationId:invite.id,message:'Too early'}))).status,403);
+ assert.equal(await saveInvitationDecision(db,invite,{id:id(4)},'accept'),null);
+ assert.equal(await saveInvitationDecision(db,invite,{id:id(2)},'accept'),'open');
+ assert.equal((await(await inbox.GET()).json()).conversations[0].id,invite.id);
+ current=id(3);
+ assert.equal(await saveInvitationDecision(db,tables.platform_conversations[1],{id:id(3)},'accept'),'open');
+ current=id(1);
  assert.equal((await api.POST(req({teamId:team,recipientIds:[id(2),id(4)],message:'Blocked'}))).status,403);assert.equal(tables.platform_conversations.length,2,'Invalid broadcast is never partially sent');
  conflicts=1;response=await api.POST(req({teamId:team,recipientIds:[id(2),id(3)],mode:'group',groupName:'Staff et joueur',message:'Shared conversation'}));assert.equal(response.status,200);const group=await response.json();assert.equal(tables.teams[0].metadata.otherSetting,'preserve');assert.equal(tables.teams[0].metadata.messagingGroups.length,1);assert.equal(tables.platform_conversations.length,3,'A group has one shared thread, not N separate copies');
  current=id(3);let list=await(await inbox.GET()).json();assert.equal(list.conversations.length,2);assert.equal(list.conversations.find(c=>c.id===group.id).member_count,3);
@@ -57,6 +68,14 @@ const req=body=>new Request('https://mybasket.test/api/messages',{method:'POST',
  const sentThread=(await(await inbox.GET()).json()).conversations.find(c=>c.id===external.id);
  assert.equal(sentThread.initial_message,'External invitation');
  assert.equal(sentThread.can_reply,false);
+ assert.match(emitted[1].html,/decision=accept/);
+ assert.match(emitted[1].html,/decision=decline/);
+ const externalThread=tables.platform_conversations.find(c=>c.id===external.id);
+ assert.equal(await saveInvitationDecision(db,externalThread,{id:id(4),email:'extern@example.test'},'decline'),null);
+ assert.equal(await saveInvitationDecision(db,externalThread,{id:id(4),email:'extern@example.test',email_confirmed_at:'2026-01-01'},'decline'),'declined');
+ current=id(4);
+ assert.equal((await(await inbox.GET()).json()).conversations.some(c=>c.id===external.id),false);
+ current=id(1);
  assert.equal((await inbox.PATCH(req({conversationId:external.id,action:'hide'}))).status,200);
  assert.equal((await(await inbox.GET()).json()).conversations.some(c=>c.id===external.id),false);
  console.log('Messaging: private broadcast isolation, no partial unauthorized sends, shared group replies, roster access, membership removal and metadata conflict retry passed.');

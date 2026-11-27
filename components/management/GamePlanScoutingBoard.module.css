@@ -263,3 +263,20 @@
 .playerRankList li span {
   margin-left: 8px;
 }
+
+.pdfStatsChoices {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 16px;
+  padding: 10px 0;
+}
+.pdfStatsChoices label {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 12px;
+}
+.pdfStatsChoices input {
+  width: auto;
+  accent-color: #6b1a2c;
+}

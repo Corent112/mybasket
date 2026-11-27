@@ -7,6 +7,7 @@ export function messageNotificationEmail(siteUrl: string, sender: string, option
   message?: string;
   replyEmail?: string;
   invitation?: boolean;
+  invitationId?: string;
 } = {}) {
   const inbox = new URL("/mon-compte?tab=messagerie", siteUrl);
   if (options.conversationId) inbox.searchParams.set("conversation", options.conversationId);
@@ -16,12 +17,16 @@ export function messageNotificationEmail(siteUrl: string, sender: string, option
   const image = new URL("/images/bandeau-message.jpg", siteUrl).href;
   const name = sender.trim() || "MyBasket";
   const title = options.invitation ? "Invitation à échanger" : "Nouveau message";
-  const cta = external ? "Répondre par e-mail" : "Ouvrir la conversation";
+  const invitationLink = (decision: "accept" | "decline") =>
+    new URL(`/messagerie/invitation/${encodeURIComponent(options.invitationId || "")}?decision=${decision}`, siteUrl).href;
+  const actions = options.invitationId
+    ? [["Accepter l’invitation", invitationLink("accept")], ["Refuser", invitationLink("decline")]]
+    : [[external ? "Répondre par e-mail" : "Ouvrir la conversation", target]];
   const subject = options.subject || (options.invitation ? "Tu as reçu une invitation sur MyBasket" : "Tu as reçu un nouveau message sur MyBasket");
   const intro = options.invitation ? "t’invite à échanger via MyBasket." : "t’a envoyé un message sur MyBasket.";
   return {
     subject,
-    text: `${name} ${intro}\n${options.message ? `\n${options.message}\n` : ""}\n${cta} · ${target}`,
+    text: `${name} ${intro}\n${options.message ? `\n${options.message}\n` : ""}\n${actions.map(([label, href]) => `${label} · ${href}`).join("\n")}`,
     html: `<!doctype html><html lang="fr"><body style="margin:0;background:#f5efed;font-family:Arial,sans-serif;color:#27191e">
       <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="background:#f5efed"><tr><td align="center" style="padding:28px 12px">
         <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="max-width:560px;background:#fff;border:1px solid #e5d8d5;border-radius:16px;overflow:hidden">
@@ -32,7 +37,7 @@ export function messageNotificationEmail(siteUrl: string, sender: string, option
             <h1 style="font-size:27px;margin:0 0 14px;color:#6b1a2c">${title}</h1>
             <p style="font-size:16px;line-height:1.55;margin:0 0 18px"><strong>${escapeHtml(name)}</strong> ${intro}</p>
             ${options.message ? `<div style="background:#f9f4f1;border-left:3px solid #d4a24c;padding:15px 17px;margin:0 0 22px;line-height:1.55;overflow-wrap:anywhere">${options.subject ? `<strong>${escapeHtml(options.subject)}</strong><br>` : ""}${escapeHtml(options.message).replace(/\r?\n/g, "<br>")}</div>` : ""}
-            <a href="${escapeHtml(target)}" style="display:inline-block;background:#6b1a2c;color:#fff;padding:14px 20px;border-radius:8px;font-weight:bold;text-decoration:none">${cta}</a>
+            ${actions.map(([label, href], i) => `<a href="${escapeHtml(href)}" style="display:inline-block;margin:0 8px 8px 0;background:${i ? "#f5efed" : "#6b1a2c"};color:${i ? "#6b1a2c" : "#fff"};padding:14px 20px;border-radius:8px;font-weight:bold;text-decoration:none">${label}</a>`).join("")}
           </td></tr>
           <tr><td align="center" style="padding:15px 20px;background:#faf5f1;color:#6b565c;font-size:12px">MyBasket · Messagerie</td></tr>
         </table>
