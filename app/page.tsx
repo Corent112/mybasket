@@ -2,6 +2,8 @@
 
 import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
+import { createClient } from "@/lib/supabase/client";
 import { TESTIMONIALS } from "@/lib/mockData";
 import { listExercises } from "@/lib/exercises";
 import type { Exercise } from "@/types/exercise";
@@ -54,6 +56,7 @@ const getLatestImage = (item: Exercise) => {
 };
 
 export default function Home() {
+  const router = useRouter();
   const [current, setCurrent] = useState(0);
   const [slides, setSlides] = useState<SliderRow[]>([]);
   const [sliderLoading, setSliderLoading] = useState(true);
@@ -112,6 +115,36 @@ export default function Home() {
       behavior: "smooth",
     });
   };
+
+  const [savingFavorite, setSavingFavorite] = useState<string | null>(null);
+  const [favoriteNotice, setFavoriteNotice] = useState("");
+
+  async function addLatestFavorite(item: Exercise) {
+    if (savingFavorite) return;
+    setSavingFavorite(item.id);
+    setFavoriteNotice("");
+    try {
+      const supabase = createClient();
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) {
+        router.push(`/connexion?next=${encodeURIComponent(`/exercices/${item.id}`)}`);
+        return;
+      }
+      const { error } = await supabase.from("favorites").upsert({
+        user_id: user.id,
+        item_type: "exercise",
+        item_id: item.id,
+        title: item.title || "Exercice sans titre",
+        image_url: getLatestImage(item),
+      }, { onConflict: "user_id,item_type,item_id" });
+      if (error) throw error;
+      setFavoriteNotice(`${item.title || "Exercice"} ajouté aux favoris.`);
+    } catch {
+      setFavoriteNotice("Impossible d’ajouter cet exercice aux favoris.");
+    } finally {
+      setSavingFavorite(null);
+    }
+  }
 
   return (
     <>
@@ -176,16 +209,18 @@ export default function Home() {
                   <div className="latest-slider-track">
                     {latest.map((item) => (
                       <article className="latest-slide-card" key={item.id}>
-                        <div className="latest-slide-img">
-                          <img src={getLatestImage(item)} alt={item.title} />
-                          <button className="latest-heart" aria-label="Ajouter aux favoris">♥</button>
-                        </div>
-
-                        <div className="latest-slide-body">
-                          <h3>{item.title}</h3>
-                          <p>{item.category || item.categorie || "Exercice"}</p>
-                          <small>{formatDate(item.createdAt)}</small>
-                        </div>
+                        <Link href={`/exercices/${encodeURIComponent(item.id)}`} className="latest-slide-link">
+                          <div className="latest-slide-img">
+                            <img src={getLatestImage(item)} alt="" />
+                          </div>
+                          <div className="latest-slide-body">
+                            <h3>{item.title}</h3>
+                            <p>{item.category || item.categorie || "Exercice"}</p>
+                            <small>{formatDate(item.createdAt)}</small>
+                          </div>
+                        </Link>
+                        <button type="button" className="latest-heart" disabled={savingFavorite !== null}
+                          aria-label={`Ajouter ${item.title} aux favoris`} onClick={() => void addLatestFavorite(item)}>♥</button>
                       </article>
                     ))}
                   </div>
@@ -194,6 +229,7 @@ export default function Home() {
                 <button className="latest-arrow latest-arrow-right" onClick={() => scrollLatest("next")} aria-label="Voir les ajouts suivants">›</button>
               </div>
             )}
+            {favoriteNotice && <p role="status">{favoriteNotice}</p>}
           </section>
 
           <section className="testimonialsSection">
@@ -265,7 +301,9 @@ export default function Home() {
         .latest-slider::-webkit-scrollbar { height: 8px; }
         .latest-slider::-webkit-scrollbar-thumb { background: #d4a24c; border-radius: 999px; }
         .latest-slider-track { display: grid; grid-auto-flow: column; grid-auto-columns: calc((100% - 2rem) / 3); gap: 1rem; }
-        .latest-slide-card { scroll-snap-align: start; border: 1px solid #c8c8c8; border-radius: 6px; overflow: hidden; background: #fff; }
+        .latest-slide-card { position: relative; scroll-snap-align: start; border: 1px solid #c8c8c8; border-radius: 6px; overflow: hidden; background: #fff; }
+        .latest-slide-link { display: block; color: inherit; text-decoration: none; }
+        .latest-slide-link:focus-visible { outline: 3px solid #6b1a2c; outline-offset: -3px; }
         .latest-slide-img { position: relative; height: 230px; background: #6b1a2c; overflow: hidden; }
         .latest-slide-img img { width: 100%; height: 100%; object-fit: cover; display: block; }
         .latest-heart { position: absolute; top: 14px; right: 14px; width: 46px; height: 46px; border-radius: 50%; background: #fff; color: #6b6b6b; font-size: 1.5rem; display: flex; align-items: center; justify-content: center; box-shadow: 0 4px 12px rgba(0, 0, 0, 0.18); }

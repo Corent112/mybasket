@@ -2677,7 +2677,7 @@ const currentRef = useRef(current);
 
 
   // render() — redessine tout
-  const render = () => {
+  const render = ({ editingGuides = true }: { editingGuides?: boolean } = {}) => {
     const canvas = canvasRef.current; if (!canvas) return;
     const ctx = canvas.getContext('2d'); if (!ctx) return;
     drawBackground(ctx, canvas);
@@ -2692,7 +2692,7 @@ const currentRef = useRef(current);
       ctx.restore();
     });
 
-    if (!anim && dragRef.current) drawLine(ctx, canvas, dragRef.current);
+    if (editingGuides && !anim && dragRef.current) drawLine(ctx, canvas, dragRef.current);
 
     // numéros d'actions (rond doré au milieu de la trajectoire)
     // En animation, on numérote uniquement l'action visible.
@@ -2734,9 +2734,10 @@ if (anim && anim.balls) {
     );
   });
 }
-    if (anim) return; // pas de poignées/sélection pendant l'animation
-    // contour de chaque élément sélectionné
+    if (anim || !editingGuides) return;
+    // Les joueurs et le coach ont leur poignée de rotation sans contour pointillé.
     selectionRef.current.forEach((item) => {
+      if (item.type === 'player') return;
       const g = itemGeom(canvas, item); if (!g) return;
       ctx.save(); ctx.setLineDash([5, 4]); ctx.lineWidth = 2; ctx.strokeStyle = '#1B5E9C';
       ctx.beginPath(); ctx.arc(g.cx, g.cy, g.ringR, 0, Math.PI * 2); ctx.stroke(); ctx.restore();
@@ -4189,7 +4190,7 @@ const captureAllPhaseImages = async () => {
   try {
     for (let i = 0; i < phaseCount; i++) {
       currentRef.current = i;
-      render();
+      render({ editingGuides: false });
       const image = canvas.toDataURL("image/png");
       if (!image.startsWith("data:image/png")) throw new Error(`La phase ${i + 1} n’a pas pu être capturée.`);
       images.push(image);
@@ -4219,15 +4220,22 @@ const uploadPhaseImages = async (images: string[], folder: string) => {
   return urls;
 };
 
-const exportPng = () => {
-  render();
+const captureDiagramPng = (canvas: HTMLCanvasElement) => {
+  try {
+    render({ editingGuides: false });
+    return canvas.toDataURL("image/png");
+  } finally {
+    render();
+  }
+};
 
+const exportPng = () => {
   const c = canvasRef.current;
   if (!c) return;
 
   const a = document.createElement("a");
   a.download = `${title || "play"}.png`;
-  a.href = c.toDataURL("image/png");
+  a.href = captureDiagramPng(c);
   a.click();
 };
 
@@ -4760,11 +4768,17 @@ const exportJson = () => {
     const imgs: string[] = [];
     const c = canvasRef.current; if (!c) return imgs;
     const saved = currentRef.current;
-    for (let i = 0; i < phasesRef.current.length; i++) {
-      currentRef.current = i; render();
-      try { imgs.push(c.toDataURL('image/png')); } catch { imgs.push(''); }
+    stopAnim();
+    try {
+      for (let i = 0; i < phasesRef.current.length; i++) {
+        currentRef.current = i;
+        render({ editingGuides: false });
+        try { imgs.push(c.toDataURL('image/png')); } catch { imgs.push(''); }
+      }
+    } finally {
+      currentRef.current = saved;
+      render();
     }
-    currentRef.current = saved; render();
     return imgs;
   };
   const genPdf = async () => {
@@ -4848,10 +4862,9 @@ const exportJson = () => {
 
   // ----------------------- Vers fiche exercice (handoff Plaquette → /exercices/creer) -----------------------
   const toExerciseDraft = () => {
-    render();
     const c = canvasRef.current; if (!c) return;
     let imageUrl = '';
-    try { imageUrl = c.toDataURL('image/png'); } catch { /* tainted/quota */ }
+    try { imageUrl = captureDiagramPng(c); } catch { /* tainted/quota */ }
     const diagram = {
       id: 'dg_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6),
       title: title || 'Schéma',
