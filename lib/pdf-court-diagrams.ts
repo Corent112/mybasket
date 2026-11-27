@@ -1,11 +1,12 @@
 import type { jsPDF } from "jspdf";
 
 export const DEFAULT_COURTS_PER_ROW = 2;
+export const DEFAULT_SCOUTING_COURTS_PER_ROW = 4;
 export const SCOUTING_COURTS_PER_ROW = [1, 2, 3, 4, 5] as const;
 export type ScoutingCourtsPerRow = typeof SCOUTING_COURTS_PER_ROW[number];
 
 export function scoutingCourtsPerRow(value: unknown): ScoutingCourtsPerRow {
-  return SCOUTING_COURTS_PER_ROW.find(count => count === value) ?? DEFAULT_COURTS_PER_ROW;
+  return SCOUTING_COURTS_PER_ROW.find(count => count === value) ?? DEFAULT_SCOUTING_COURTS_PER_ROW;
 }
 
 export function courtDiagramLayout(availableWidth: number, courtsPerRow: number, showPhaseNumbers: boolean) {
