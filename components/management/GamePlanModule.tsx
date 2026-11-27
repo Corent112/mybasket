@@ -2013,10 +2013,13 @@ async function exportGamePlanPdf(team: Team, gp: GamePlan, rotation: Rotation | 
     const black = [15, 15, 18];
     const muted = [95, 95, 95];
 
-    const ensure = (need = 24) => {
-      if (y + need <= H - M) return;
+    const startPdfPage = () => {
       doc.addPage();
       y = M;
+    };
+
+    const ensure = (need = 24) => {
+      if (y + need > H - M) startPdfPage();
     };
 
     const textLines = (txt: string, width = W - M * 2) => doc.splitTextToSize(String(txt || ""), width);
@@ -2378,6 +2381,7 @@ async function exportGamePlanPdf(team: Team, gp: GamePlan, rotation: Rotation | 
 
       const scoutSystems = [...new Map(gp.librarySystems.filter(system => sysSection(system) === "scout").map(system => [system.id, system])).values()];
       if (scoutSystems.length) {
+        startPdfPage();
         const perRow = scoutingCourtsPerRow(gp.scouting.topPlaysCourtsPerRow);
         const layout = courtDiagramLayout(W - 2 * M, perRow, true);
         const { width, gap, height } = layout;
@@ -2400,7 +2404,7 @@ async function exportGamePlanPdf(team: Team, gp: GamePlan, rotation: Rotation | 
           const lastRowSpace = rowHeight + responseSpace <= H - 2 * M - 13 ? rowHeight + responseSpace : rowHeight;
           const firstRowSpace = 5 + (rowCount === 1 ? lastRowSpace : rowCount ? rowHeight : responseSpace);
           if (systemIndex === 0 || y + firstRowSpace > H - M) {
-            ensure(8 + firstRowSpace);
+            if (systemIndex > 0) startPdfPage();
             title("Top plays");
           }
           systemHeading(system.title);
@@ -2426,6 +2430,7 @@ async function exportGamePlanPdf(team: Team, gp: GamePlan, rotation: Rotation | 
       }
       const selectedPlayers = scoutPlayers.filter(player => !selected || selected.has(player.id));
       if (selectedPlayers.length) {
+        startPdfPage();
         let playerHeadingPending = true;
         for (const player of selectedPlayers) {
           const card = cards.get(player.id);
@@ -2461,7 +2466,7 @@ async function exportGamePlanPdf(team: Team, gp: GamePlan, rotation: Rotation | 
           const lineCount = lines.length + (defense.length ? defense.length + 1 : 0);
           const height = lineCount ? notesY + (lineCount - 1) * 3.6 + 4 : Math.max(36, afterStats + (showPlayerChart ? 16 : 4));
           if (playerHeadingPending || y + height > H - M) {
-            ensure(8 + height);
+            if (!playerHeadingPending) startPdfPage();
             title("Fiches joueurs");
             playerHeadingPending = false;
           }
