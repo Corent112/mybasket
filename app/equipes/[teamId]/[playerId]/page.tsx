@@ -719,7 +719,7 @@ function computeLiveStats(rows: any[], matchesById: Map<string, any>): PlayerLiv
         : match?.source === "external" || (match?.project_state?.minutesByPlayer && Object.hasOwn(match.project_state.minutesByPlayer,String(row.player_id))) ? null
         : [row.min, row.minutes, row.playing_time, row.playing_time_minutes, row.time_played].some(value => value != null && value !== "")
           ? statMinutes([row.min, row.minutes, row.playing_time, row.playing_time_minutes, row.time_played].find(value => value != null && value !== "")) : null,
-      eval:statNumber(row.pts)+offReb+defReb+statNumber(row.ast)+statNumber(row.stl)+statNumber(row.blk)-Math.max(0,statNumber(row.p2a)-statNumber(row.p2m))-Math.max(0,statNumber(row.p3a)-statNumber(row.p3m))-Math.max(0,statNumber(row.fta)-statNumber(row.ftm))-statNumber(row.turnovers)-statNumber(row.pf),
+      eval:row.external_boxscore?.eff != null ? statNumber(row.external_boxscore.eff) : statNumber(row.pts)+offReb+defReb+statNumber(row.ast)+statNumber(row.stl)+statNumber(row.blk)-Math.max(0,statNumber(row.p2a)-statNumber(row.p2m))-Math.max(0,statNumber(row.p3a)-statNumber(row.p3m))-Math.max(0,statNumber(row.fta)-statNumber(row.ftm))-statNumber(row.turnovers)-statNumber(row.pf),
       plusMinus:row.plus_minus==null?null:statNumber(row.plus_minus),
       offReb, defReb,
       pts: statNumber(row.pts),
@@ -741,6 +741,7 @@ function computeLiveStats(rows: any[], matchesById: Map<string, any>): PlayerLiv
   matches.sort((a, b) => String(a.date).localeCompare(String(b.date)));
 
   const totalMinutes = matches.filter(match=>match.present).reduce((sum,match)=>sum+(match.minutes??0),0);
+  const knownMinutes = matches.filter(match => match.present && match.minutes != null).length;
 
   return {
     hasData: allRows.length > 0,
@@ -749,7 +750,7 @@ function computeLiveStats(rows: any[], matchesById: Map<string, any>): PlayerLiv
     missedGames,
     attendancePct: allRows.length ? Math.round((games / allRows.length) * 100) : 0,
     totalMinutes: Math.round(totalMinutes * 10) / 10,
-    averageMinutes: games ? Math.round((totalMinutes / games) * 10) / 10 : 0,
+    averageMinutes: knownMinutes ? Math.round((totalMinutes / knownMinutes) * 10) / 10 : 0,
     totals,
     averages: {
       pts: avg(totals.pts),
@@ -1224,9 +1225,9 @@ export default function JoueurDetailPage({
         // Keep the existing rule: draft matches do not count in player statistics.
         const completedTeamRows = completedPlayerMatchRows(allTeamRows, matchesById);
 
-        const currentPlayerRows = completedTeamRows.filter(
-          (row) => String(row.player_id ?? "") === String(playerId)
-        );
+        const rosterPlayer = team?.players.find(player => String(player.id) === String(playerId));
+        const playerStatIds = new Set([String(playerId), String(rosterPlayer?.supabasePlayerId ?? playerId)]);
+        const currentPlayerRows = completedTeamRows.filter(row => playerStatIds.has(String(row.player_id ?? "")));
 
         if (!active) return;
 

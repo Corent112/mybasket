@@ -1,10 +1,10 @@
 export const BOX_FIELDS = [
-  ["pts", "PTS"], ["p2m", "2R"], ["p2a", "2T"], ["p3m", "3R"], ["p3a", "3T"],
-  ["ftm", "LFR"], ["fta", "LFT"], ["off_reb", "RO"], ["def_reb", "RD"],
-  ["reb", "RT"], ["ast", "PD"], ["stl", "INT"], ["blk", "CTR"], ["turnovers", "BP"], ["pf", "F"], ["plus_minus", "+/−"],
+  ["pts", "Points"], ["p2m", "2 pts réussis"], ["p2a", "2 pts tentés"], ["p3m", "3 pts réussis"], ["p3a", "3 pts tentés"],
+  ["ftm", "Lancers francs réussis"], ["fta", "Lancers francs tentés"], ["off_reb", "Rebonds offensifs"], ["def_reb", "Rebonds défensifs"],
+  ["reb", "Rebonds totaux"], ["ast", "Passes décisives"], ["stl", "Interceptions"], ["blk", "Contres"], ["turnovers", "Ballons perdus"], ["pf", "FP"], ["plus_minus", "+/−"],
 ] as const;
 export const EXTERNAL_BOX_FIELDS = [
-  ["fgm", "Tirs réussis"], ["fga", "Tirs tentés"], ["fouls_drawn", "Fautes provoquées"], ["eff", "ÉVAL"],
+  ["fgm", "Tirs réussis"], ["fga", "Tirs tentés"], ["fouls_drawn", "FPr"], ["eff", "Évaluation"],
 ] as const;
 export const IMPORT_BOX_FIELDS = [...BOX_FIELDS, ...EXTERNAL_BOX_FIELDS] as const;
 export const isSignedBoxField = (key: string) => key === "plus_minus" || key === "eff";
@@ -100,6 +100,23 @@ export function completeBoxStats(stats: ImportedBoxRow["stats"]): ImportedBoxRow
   if(result.reb==null&&result.off_reb!=null&&result.def_reb!=null)result.reb=String(Number(result.off_reb)+Number(result.def_reb));
   if(result.pts==null&&result.p2m!=null&&result.p3m!=null&&result.ftm!=null)result.pts=String(2*Number(result.p2m)+3*Number(result.p3m)+Number(result.ftm));
   return result;
+}
+
+/** Repair one impossible shot pair only when the independent field-goal totals agree. */
+export function reconcileBoxShotAttempts(stats: ImportedBoxRow["stats"]): ImportedBoxRow["stats"] {
+  const { fgm, fga, p2m, p2a, p3m, p3a } = stats;
+  if (![fgm, fga, p2m, p2a, p3m, p3a].every(value => value != null && /^\d+$/.test(value))) return stats;
+  const totalMade = Number(fgm), totalAttempts = Number(fga);
+  const twoMade = Number(p2m), twoAttempts = Number(p2a);
+  const threeMade = Number(p3m), threeAttempts = Number(p3a);
+  if (totalMade !== twoMade + threeMade || totalAttempts < totalMade) return stats;
+  if (twoAttempts < twoMade && threeAttempts >= threeMade && totalAttempts - threeAttempts >= twoMade) {
+    return { ...stats, p2a: String(totalAttempts - threeAttempts) };
+  }
+  if (threeAttempts < threeMade && twoAttempts >= twoMade && totalAttempts - twoAttempts >= threeMade) {
+    return { ...stats, p3a: String(totalAttempts - twoAttempts) };
+  }
+  return stats;
 }
 
 export function parseBoxMinutes(value: string): number | null {

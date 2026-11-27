@@ -1787,7 +1787,7 @@ export default function EquipeDetailPage({
             <TeamMatchStatsBlock teamId={linkedStatsTeamId} matchCategory={statsMatchCategory} />
             <TeamGameStatsBlock teamId={linkedStatsTeamId} matchCategory={statsMatchCategory} onMatchCategoryChange={setStatsMatchCategory} />
             <TeamLineupsBlock teamId={linkedStatsTeamId} matchCategory={statsMatchCategory} />
-            <TeamMatchHistoryBlock teamId={linkedStatsTeamId} />
+            <TeamMatchHistoryBlock teamId={linkedStatsTeamId} onDeleted={isOwner ? () => { setBoxscoreRevision(value => value + 1); void reload(); } : undefined} />
             <TeamSeasonRecordsBlock teamId={linkedStatsTeamId} matchCategory={statsMatchCategory} />
             </div>
             </>}

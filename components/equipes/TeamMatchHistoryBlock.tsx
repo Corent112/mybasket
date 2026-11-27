@@ -1,5 +1,6 @@
 "use client";
 import PostMatchSummary from "./PostMatchSummary";
+import { deleteStatMatch } from "@/lib/equipes-store";
 import { formatBoxMinutes } from "@/lib/historical-boxscores";
 
 import { useEffect, useMemo, useState } from "react";
@@ -266,11 +267,29 @@ function buildMoments(actions: ActionRow[]) {
     .sort((a, b) => b.ppp - a.ppp);
 }
 
-export default function TeamMatchHistoryBlock({ teamId }: { teamId: string }) {
+export default function TeamMatchHistoryBlock({ teamId, onDeleted }: { teamId: string; onDeleted?: () => void }) {
   const supabase = createClient();
 
   const [loading, setLoading] = useState(true);
   const [matches, setMatches] = useState<MatchRow[]>([]);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [deleteError, setDeleteError] = useState("");
+  const [showAll, setShowAll] = useState(false);
+
+  async function deleteMatch(match: MatchRow) {
+    if (deletingId || !window.confirm(`Supprimer le match contre ${match.opponent || "cet adversaire"} et ses statistiques joueurs ?`)) return;
+    setDeletingId(match.id);
+    setDeleteError("");
+    try {
+      await deleteStatMatch(teamId, match.id);
+      setMatches(current => current.filter(item => item.id !== match.id));
+      onDeleted?.();
+    } catch (error) {
+      setDeleteError(error instanceof Error ? error.message : "Impossible de supprimer ce match.");
+    } finally {
+      setDeletingId(null);
+    }
+  }
   const [selectedMatch, setSelectedMatch] = useState<MatchRow | null>(null);
   const [activeTab, setActiveTab] = useState<ModalTab>("resume");
   const [details, setDetails] = useState<MatchDetails>({
@@ -411,7 +430,7 @@ export default function TeamMatchHistoryBlock({ teamId }: { teamId: string }) {
     };
   }, [selectedMatch]);
 
-  const lastMatches = useMemo(() => matches.slice(0, 12), [matches]);
+  const lastMatches = useMemo(() => showAll ? matches : matches.slice(0, 12), [matches, showAll]);
   const collective = useMemo(
     () => addPlayerRows(details.playerRows),
     [details.playerRows],
@@ -452,6 +471,7 @@ export default function TeamMatchHistoryBlock({ teamId }: { teamId: string }) {
           </span>
         </div>
 
+        {deleteError && <p role="alert">{deleteError}</p>}
         {loading && <div className="empty">Chargement...</div>}
 
         {!loading && matches.length === 0 && (
@@ -500,11 +520,16 @@ export default function TeamMatchHistoryBlock({ teamId }: { teamId: string }) {
                     Résumé
                     <span aria-hidden="true">→</span>
                   </button>
+                  {onDeleted && <button type="button" className="delete-match-button" disabled={deletingId !== null}
+                    onClick={() => void deleteMatch(match)} aria-label={`Supprimer le match contre ${match.opponent || "cet adversaire"}`}>
+                    {deletingId === match.id ? "Suppression…" : "Supprimer"}
+                  </button>}
                 </article>
               );
             })}
           </div>
         )}
+        {!loading && matches.length > 12 && <button type="button" className="summary-button" onClick={() => setShowAll(value => !value)}>{showAll ? "Voir les 12 derniers matchs" : "Voir tous les matchs"}</button>}
       </section>
 
       {mounted &&
@@ -1023,6 +1048,8 @@ export default function TeamMatchHistoryBlock({ teamId }: { teamId: string }) {
           font-weight: 950;
         }
 
+        .delete-match-button { color: #8c1934; background: #fff; border: 1px solid #e2c9d0; border-radius: 8px; padding: 6px 9px; cursor: pointer; }
+        .delete-match-button:disabled { opacity: .55; cursor: default; }
         .summary-button {
           width: 100%;
           min-height: 42px;

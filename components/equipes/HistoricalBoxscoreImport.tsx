@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { readBoxscoreImage } from "@/lib/import/boxscore-image";
 import { createClient } from "@/lib/supabase/client";
-import { BOX_FIELDS, EXTERNAL_BOX_FIELDS, IMPORT_BOX_FIELDS, isSignedBoxField, associateBoxRows, completeBoxStats, suggestBoxPlayer, formatBoxMinutes, parseBoxMinutes, parseBoxTable, parsePdfBoxPage, type ImportedBoxRow, type ImportRosterPlayer } from "@/lib/historical-boxscores";
+import { BOX_FIELDS, EXTERNAL_BOX_FIELDS, IMPORT_BOX_FIELDS, isSignedBoxField, associateBoxRows, completeBoxStats, reconcileBoxShotAttempts, suggestBoxPlayer, formatBoxMinutes, parseBoxMinutes, parseBoxTable, type ImportedBoxRow, type ImportRosterPlayer } from "@/lib/historical-boxscores";
 
 type Match = { id: string; opponent: string; match_date: string; source: string | null; minutes_by_player: Record<string,number|null> | null };
 type MinuteRow = { player_id: string; minutes_seconds: number | null; present: boolean };
@@ -24,7 +24,6 @@ export default function HistoricalBoxscoreImport({teamId,teamName,roster,onSaved
   const [category,setCategory]=useState("");
   const [us,setUs]=useState("");
   const [them,setThem]=useState("");
-  const [includeMinutes,setIncludeMinutes]=useState(true);
   const [matches,setMatches]=useState<Match[]>([]);
   const [selected,setSelected]=useState("");
   const [minutes,setMinutes]=useState<Record<string,string>>({});
@@ -119,7 +118,7 @@ export default function HistoricalBoxscoreImport({teamId,teamName,roster,onSaved
           name:String(sheet.name||"Équipe"),score:Number.isInteger(sheet.score)?sheet.score:null,rows:(Array.isArray(sheet.rows)?sheet.rows:[]).slice(0,100).map((r:any)=>{
             const stats:ImportedBoxRow["stats"]={};
             for(const [key] of IMPORT_BOX_FIELDS)if(r.stats?.[key]!=null&&(isSignedBoxField(key)?/^[+-]?\d+$/.test(String(r.stats[key])):/^\d+$/.test(String(r.stats[key]))))stats[key]=String(r.stats[key]);
-            return {name:String(r.name||""),number:String(r.number??""),playerId:"",minutes:String(r.minutes??""),present:r.present!==false,stats:completeBoxStats(stats)};
+            return {name:String(r.name||""),number:String(r.number??""),playerId:"",minutes:String(r.minutes??""),present:r.present!==false,stats:completeBoxStats(reconcileBoxShotAttempts(stats))};
           }).filter((r:ImportedBoxRow)=>r.name)
         })).filter((sheet:Sheet)=>sheet.rows.length);
         if(typeof result.date==="string"&&/^\d{4}-\d{2}-\d{2}$/.test(result.date))setDate(result.date);
@@ -156,7 +155,7 @@ export default function HistoricalBoxscoreImport({teamId,teamName,roster,onSaved
           if (!(isSignedBoxField(key) ? /^[+-]?\d{1,4}$/ : /^\d{1,4}$/).test(value)) throw new Error(`${playerNames.get(row.playerId)} : vérifie ${label}.`);
           return [[key, Number(value)]];
         }));
-        return {...stats,...external,player_id:row.playerId,present:row.present!==false,minutes_seconds:row.present!==false&&includeMinutes?parseBoxMinutes(row.minutes):null};
+        return {...stats,...external,player_id:row.playerId,present:row.present!==false,minutes_seconds:row.present!==false?parseBoxMinutes(row.minutes):null};
       });
       const {error}=await supabase.rpc("import_historical_boxscore",{p_team:teamId,p_date:date,p_opponent:opponent.trim(),p_home:home,p_category:category,p_us:Number(us),p_them:Number(them),p_rows:payload});
       if(error)throw new Error(error.message);
@@ -215,16 +214,16 @@ export default function HistoricalBoxscoreImport({teamId,teamName,roster,onSaved
         <label style={field}>Notre score<input style={input} inputMode="numeric" value={us} onChange={e=>setUs(e.target.value)} /></label>
         <label style={field}>Score adverse<input style={input} inputMode="numeric" value={them} onChange={e=>setThem(e.target.value)} /></label>
       </div>
-      <label style={{display:"flex",alignItems:"center",gap:8,fontWeight:700}}><input type="checkbox" checked={includeMinutes} onChange={e=>setIncludeMinutes(e.target.checked)}/> Importer ou saisir les temps de jeu maintenant (facultatif)</label>
-      <div style={{overflowX:"auto"}}><table style={{borderCollapse:"collapse",width:"100%",fontSize:12}}>
-        <thead><tr><th style={{textAlign:"left",minWidth:120}}>Joueur sur la feuille</th><th style={{textAlign:"left",minWidth:160}}>Joueur MyBasket</th><th>MJ</th>{includeMinutes&&<th>MIN</th>}{visibleFields.map(([key,label])=><th key={key} title={key} style={{padding:5}}>{label}</th>)}<th/></tr></thead>
+      <small>Temps de jeu facultatif, au format MM:SS ou en minutes.</small>
+      <div style={{overflowX:"auto",minWidth:0}}><table className="boxscore-import-table">
+        <thead><tr><th style={{textAlign:"left",minWidth:120}}>Joueur sur la feuille</th><th style={{textAlign:"left",minWidth:160}}>Joueur MyBasket</th><th>A joué</th><th>Temps de jeu</th>{visibleFields.map(([key,label])=><th key={key} title={key === "pf" ? "Fautes personnelles" : key === "fouls_drawn" ? "Fautes provoquées" : undefined} style={{padding:5}}>{label}</th>)}<th/></tr></thead>
         <tbody>{rows.map((row,i)=>{
           const suggestion = row.playerId ? undefined : suggestBoxPlayer(row, roster.filter(player => !rows.some(other => other.playerId === player.id)));
           return <tr key={i} style={{borderTop:"1px solid #eee"}}>
           <td style={{padding:5}}>{row.number? "#"+row.number+" ":""}{row.name||"Saisie manuelle"}</td>
           <td><select style={{...input,width:"100%"}} aria-label={`Joueur ligne ${i+1}`} value={row.playerId} onChange={e=>updateRow(i,{playerId:e.target.value})}><option value="">Choisir…</option>{roster.map(p=><option key={p.id} value={p.id} disabled={rows.some((other,j)=>j!==i&&other.playerId===p.id)}>{p.number!=null?`#${p.number} `:""}{p.name}{suggestion?.id === p.id ? " · suggéré" : ""}</option>)}</select>{suggestion && <small>Association suggérée · {suggestion.name}</small>}</td>
           <td><input type="checkbox" aria-label={`A joué · ${row.name||i+1}`} checked={row.present!==false} onChange={e=>updateRow(i,{present:e.target.checked})}/></td>
-          {includeMinutes&&<td><input disabled={row.present===false} style={{...input,width:65}} aria-label="Minutes" placeholder="—" value={row.minutes} onChange={e=>updateRow(i,{minutes:e.target.value})}/></td>}
+          <td><input disabled={row.present===false} style={{...input,width:65}} aria-label={`Temps de jeu ${row.name || i + 1}`} placeholder="—" value={row.minutes} onChange={e=>updateRow(i,{minutes:e.target.value})}/></td>
           {visibleFields.map(([key,label])=><td key={key}><input style={{...input,width:48,textAlign:"center",padding:"8px 4px"}} aria-label={`${label} ${row.name||i+1}`} disabled={row.present===false} inputMode="numeric" placeholder="—" value={row.stats[key]??""} onChange={e=>updateRow(i,{stats:{...row.stats,[key]:e.target.value}})}/></td>)}
           <td><button type="button" className="boxscore-button" aria-label="Retirer la ligne" onClick={()=>setRows(current=>current.filter((_,j)=>j!==i))}>×</button></td>
         </tr>;})}</tbody>
@@ -239,6 +238,10 @@ export default function HistoricalBoxscoreImport({teamId,teamName,roster,onSaved
     {error&&<p role="alert" style={{color:"#a31532",fontSize:13}}>{error}</p>}
     {notice&&<p role="status" style={{color:"#187344",fontSize:13}}>{notice}</p>}
     <style jsx>{`
+      .boxscore-import-table { border-collapse: collapse; width: max-content; min-width: 100%; font-size: 12px; }
+      .boxscore-import-table th { white-space: nowrap; overflow-wrap: normal; word-break: normal; padding: 5px 8px; }
+      .boxscore-import-table td { text-align: center; }
+      .boxscore-import-table td:first-child { text-align: left; }
       .boxscore-button {
         background: #fff;
         border: 1px solid #d8c7cd;

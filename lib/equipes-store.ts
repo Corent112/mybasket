@@ -1534,17 +1534,20 @@ export async function deleteStatMatch(
   const supabase = createClient();
   const userId = await getUserId();
 
-  const { error } = await supabase
+  const { data, error } = await supabase
     .from("match_stats")
     .delete()
     .eq("id", recordId)
     .eq("team_id", teamId)
-    .eq("user_id", userId);
+    .eq("user_id", userId)
+    .select("id")
+    .maybeSingle();
 
   if (error) {
     logSupabaseError("Erreur deleteStatMatch", error);
     throw error;
   }
+  if (!data) throw new Error("Match introuvable ou suppression non autorisée.");
 }
 
 export async function applyManagementPresence(
