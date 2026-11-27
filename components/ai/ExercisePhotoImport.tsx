@@ -47,6 +47,7 @@ type Props = {
   drawingOnly?: boolean;
   phaseRoom?: number;
   initialAssistAI?: boolean;
+  compact?: boolean;
 };
 
 /** Étapes de l'écran : rien → analyse → résumé → correction. */
@@ -57,7 +58,7 @@ const rect = (r: { x0: number; y0: number; x1: number; y1: number }) =>
 
 const plural = (count: number, one: string, many: string) => (count > 1 ? many : one);
 
-export default function ExercisePhotoImport({ onImported, playersOnly = false, drawingOnly = false, phaseRoom = 50, initialAssistAI = true }: Props) {
+export default function ExercisePhotoImport({ onImported, playersOnly = false, drawingOnly = false, phaseRoom = 50, initialAssistAI = true, compact = false }: Props) {
   const inputRef = useRef<HTMLInputElement | null>(null);
   const [step, setStep] = useState<Step>("idle");
   const [busy, setBusy] = useState(false);
@@ -291,7 +292,7 @@ export default function ExercisePhotoImport({ onImported, playersOnly = false, d
 
   return (
     <div
-      className={`ce-ai-import${step === "review" ? " ce-ai-import-review" : ""}`}
+      className={`ce-ai-import${compact ? " scan-compact" : ""}${step === "review" ? " ce-ai-import-review" : ""}`}
       onDragOver={(event) => { event.preventDefault(); setDragging(true); }}
       onDragLeave={() => setDragging(false)}
       onDrop={(event) => {
@@ -301,13 +302,19 @@ export default function ExercisePhotoImport({ onImported, playersOnly = false, d
       }}
       style={dragging ? { outline: "2px dashed #8F1D35", outlineOffset: 8, borderRadius: 12 } : undefined}
     >
-      <style>{`.scan-upload-card{text-align:center;border:1.5px dashed #d9c4ce;background:linear-gradient(145deg,#fdf9fb,#f7f0f4);padding:30px 20px;border-radius:20px;color:#382c36}.scan-upload-icon{display:grid;place-items:center;width:52px;height:52px;margin:0 auto 14px;background:#6b1a2c;color:#fff;border-radius:16px;font-size:30px}.scan-upload-card h2{font-size:23px;margin:0 0 8px;color:#6b1a2c}.scan-upload-card p{font-size:14px;color:#877680;margin:0 0 20px}.scan-upload-button{border:0;border-radius:12px;background:#6b1a2c;color:white;font-size:14px;font-weight:800;padding:14px 22px;cursor:pointer}.scan-upload-button:disabled{opacity:.5}.scan-ai-option{display:flex;align-items:center;justify-content:center;gap:7px;font-size:13px;color:#75626d;margin:15px auto 0}.scan-ai-option input{accent-color:#6b1a2c}.scan-details{padding:12px;background:#faf7f9;border-radius:12px;font-size:13px}.scan-details summary{color:#6b1a2c;font-weight:700;cursor:pointer}`}</style>
+      <style>{`.scan-upload-card{text-align:center;border:1.5px dashed #d9c4ce;background:linear-gradient(145deg,#fdf9fb,#f7f0f4);padding:30px 20px;border-radius:20px;color:#382c36}.scan-upload-icon{display:grid;place-items:center;width:52px;height:52px;margin:0 auto 14px;background:#6b1a2c;color:#fff;border-radius:16px;font-size:30px}.scan-upload-card h2{font-size:23px;margin:0 0 8px;color:#6b1a2c}.scan-upload-card p{font-size:14px;color:#877680;margin:0 0 20px}.scan-upload-button{border:0;border-radius:12px;background:#6b1a2c;color:white;font-size:14px;font-weight:800;padding:14px 22px;cursor:pointer}.scan-upload-button:disabled{opacity:.5}.scan-ai-option{display:flex;align-items:center;justify-content:center;gap:7px;font-size:13px;color:#75626d;margin:15px auto 0}.scan-ai-option input{accent-color:#6b1a2c}.scan-details{padding:12px;background:#faf7f9;border-radius:12px;font-size:13px}.scan-details summary{color:#6b1a2c;font-weight:700;cursor:pointer}
+      .ce-ai-import.scan-compact{display:block;margin:0 0 14px;padding:0;border:0;background:none;box-shadow:none}
+      .scan-compact .scan-upload-card{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;column-gap:12px;row-gap:6px;padding:6px 8px 6px 12px;border-radius:8px;text-align:left}
+      .scan-compact .scan-upload-card h2{margin:0;font-size:13px}
+      .scan-compact .scan-upload-button{min-height:32px;padding:5px 10px;border-radius:7px;font-size:12px}
+      .scan-compact .scan-ai-option{justify-content:flex-start;margin:6px 0 0;font-size:12px}`}</style>
       {(step === "idle" || step === "scanning") && <div className="scan-upload-card">
-        <span className="scan-upload-icon">↥</span><h2>Importe tes schémas</h2>
-        <p>Glisse tes photos ici, une par phase.</p>
+        {!compact && <span className="scan-upload-icon">↥</span>}<h2>{compact ? "Importer des schémas" : "Importe tes schémas"}</h2>
+        {!compact && <p>Glisse tes photos ici, une par phase.</p>}
         <button type="button" className="scan-upload-button" disabled={busy} onClick={() => inputRef.current?.click()}>{busy ? "Analyse en cours…" : "Choisir mes photos"}</button>
-        {!playersOnly && <label className="scan-ai-option"><input type="checkbox" checked={assistAI} disabled={busy} onChange={event=>setAssistAI(event.target.checked)} /> Assistant schémas MyBasket</label>}
+        {!compact && !playersOnly && <label className="scan-ai-option"><input type="checkbox" checked={assistAI} disabled={busy} onChange={event=>setAssistAI(event.target.checked)} /> Assistant schémas MyBasket</label>}
       </div>}
+      {compact && (step === "idle" || step === "scanning") && !playersOnly && <label className="scan-ai-option"><input type="checkbox" checked={assistAI} disabled={busy} onChange={event=>setAssistAI(event.target.checked)} /> Assistant schémas MyBasket</label>}
 
       <input
         ref={inputRef}

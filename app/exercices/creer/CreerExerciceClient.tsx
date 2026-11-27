@@ -893,10 +893,9 @@ export default function CreerExerciceClient() {
         tant que tu ne le proposes pas au CEO.
       </p>
 
-      <ExercisePhotoImport onImported={applyAIImport} phaseRoom={Math.max(0, 50 - Math.max(ex.schemaImages.length, ex.schemaDataList.length))} />
-
       <div className="ce-grid">
         <div className="ce-card">
+          <ExercisePhotoImport compact onImported={applyAIImport} phaseRoom={Math.max(0, 50 - Math.max(ex.schemaImages.length, ex.schemaDataList.length))} />
           <label className="ce-lab">
             Titre de l’exercice <b className="req">*</b>
           </label>
