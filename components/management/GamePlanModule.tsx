@@ -2030,9 +2030,15 @@ async function exportGamePlanPdf(team: Team, gp: GamePlan, rotation: Rotation | 
       y += 8;
     };
 
+    const boxLines = (value: string): string[] => {
+      doc.setFont("helvetica", "normal");
+      doc.setFontSize(9);
+      return hasText(value) ? textLines(value, W - M * 2 - 8) : [];
+    };
+
     const box = (label: string, value: string) => {
-      if (!hasText(value)) return;
-      const lines = textLines(value, W - M * 2 - 8);
+      const lines = boxLines(value);
+      if (!lines.length) return;
       ensure(12 + lines.length * 4.2);
       doc.setFillColor(250, 247, 240);
       doc.setDrawColor(235, 220, 195);
@@ -2363,7 +2369,8 @@ async function exportGamePlanPdf(team: Team, gp: GamePlan, rotation: Rotation | 
       if (scoutSystems.length) {
         const perRow = scoutingCourtsPerRow(gp.scouting.topPlaysCourtsPerRow);
         const layout = courtDiagramLayout(W - 2 * M, perRow, true);
-        const { width, gap, rowHeight } = layout;
+        const { width, gap, height } = layout;
+        const rowHeight = height + 10;
         const systemHeading = (label: string) => {
           doc.setTextColor(...burgundy);
           doc.setFont("helvetica", "bold");
@@ -2375,41 +2382,40 @@ async function exportGamePlanPdf(team: Team, gp: GamePlan, rotation: Rotation | 
         for (const [systemIndex, system] of scoutSystems.entries()) {
           const phases = system.schemaImages?.filter(Boolean);
           const images = phases?.length ? phases : [system.schemaImage].filter(Boolean);
-          const firstRowSpace = (images.length ? rowHeight : 0) + 9;
+          const response = gp.scouting.playNotes?.[system.id] || "";
+          const responseLines = boxLines(response);
+          const responseSpace = responseLines.length ? 12 + responseLines.length * 4.2 : 0;
+          const rowCount = Math.ceil(images.length / perRow);
+          const lastRowSpace = rowHeight + responseSpace <= H - 2 * M - 13 ? rowHeight + responseSpace : rowHeight;
+          const firstRowSpace = 5 + (rowCount === 1 ? lastRowSpace : rowCount ? rowHeight : responseSpace);
           if (systemIndex === 0 || y + firstRowSpace > H - M) {
             ensure(8 + firstRowSpace);
             title("Top plays");
           }
           systemHeading(system.title);
 
-          for (const [index, src] of images.entries()) {
-            if (index > 0 && index % perRow === 0) {
-              y += rowHeight;
-              if (y + rowHeight > H - M) {
-                ensure(13 + rowHeight);
-                title("Top plays");
-                systemHeading(`${system.title} (suite)`);
-              }
+          for (let start = 0; start < images.length; start += perRow) {
+            const row = images.slice(start, start + perRow);
+            const space = start + perRow >= images.length ? lastRowSpace : rowHeight;
+            if (start > 0 && y + space > H - M) {
+              ensure(13 + space);
+              title("Top plays");
+              systemHeading(`${system.title} (suite)`);
             }
-            const image = src ? await imageToDataUrl(src) : null;
-            const x = M + (index % perRow) * (width + gap);
-            drawCourtDiagram(doc, image, x, y, layout, index + 1);
+            for (const [column, src] of row.entries()) {
+              const image = src ? await imageToDataUrl(src) : null;
+              const x = M + column * (width + gap);
+              drawCourtDiagram(doc, image, x, y, layout, start + column + 1);
+            }
+            y += rowHeight;
           }
-          if (images.length) y += rowHeight;
-          box("Notre réponse", gp.scouting.playNotes?.[system.id] || "");
+          box("Notre réponse", response);
           y += 3;
         }
       }
       const selectedPlayers = scoutPlayers.filter(player => !selected || selected.has(player.id));
       if (selectedPlayers.length) {
-        let playersOnPage = 0;
-        const startPage = () => {
-          doc.addPage();
-          y = 16;
-          title("Fiches joueurs");
-          playersOnPage = 0;
-        };
-        startPage();
+        let playerHeadingPending = true;
         for (const player of selectedPlayers) {
           const card = cards.get(player.id);
           const row = officialPlayers.get(player.id);
@@ -2440,7 +2446,11 @@ async function exportGamePlanPdf(team: Team, gp: GamePlan, rotation: Rotation | 
           const notesY = statsY + 23;
           const lineCount = lines.length + (defense.length ? defense.length + 1 : 0);
           const height = lineCount ? notesY + (lineCount - 1) * 3.6 + 4 : statsY + 20;
-          if (playersOnPage >= 6 || y + height > H - M) startPage();
+          if (playerHeadingPending || y + height > H - M) {
+            ensure(8 + height);
+            title("Fiches joueurs");
+            playerHeadingPending = false;
+          }
           doc.setDrawColor(215, 200, 199); doc.setFillColor(252, 249, 246);
           doc.roundedRect(M, y, W - 2 * M, height, 2, 2, "FD");
           const photoUrl = card?.photo || p.photo;
@@ -2479,7 +2489,6 @@ async function exportGamePlanPdf(team: Team, gp: GamePlan, rotation: Rotation | 
             defense.forEach((line, index) => doc.text(line, x, headingY + (index + 1) * 3.6));
           }
           y += height + 4;
-          playersOnPage++;
         }
       }
     }

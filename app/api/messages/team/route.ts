@@ -1,5 +1,6 @@
 import { after, NextResponse } from 'next/server';
 import { GROUP_SUBJECT, messageGroups, registerMessageGroup } from '@/lib/messaging/groups';
+import { messageBlocks } from '@/lib/messaging/inbox-controls';
 import { notifyMessageRecipients } from '@/lib/messaging/notify-server';
 import { createClient } from '@/lib/supabase/server';
 import { createAdminClient } from '@/lib/supabase/admin-server';
@@ -41,6 +42,10 @@ export async function POST(request: Request) {
     const { contacts, team } = await teamMessagingContacts(db, user.id, body.teamId);
     const recipients=ids.map(id=>contacts.find(row=>row.userId===id));
     if(recipients.some(row=>!row||row.userId===user.id))throw new MessagingAccessError('Un destinataire n’est pas relié à cette équipe.');
+    const blocks = await messageBlocks(db, user.id);
+    if (ids.some(id => blocks.incoming.has(String(id)) || blocks.outgoing.has(String(id)))) {
+      throw new MessagingAccessError('Un destinataire ne peut pas recevoir ce message.', 403);
+    }
     const { data: profile } = await db.from('profiles').select('display_name').eq('id', user.id).maybeSingle();
     const now = new Date().toISOString(), isGroup=body.mode==='group';
     const name=String(body.groupName||'').trim().slice(0,80);
@@ -52,7 +57,7 @@ export async function POST(request: Request) {
       try{await registerMessageGroup(db,team.id,{id:rows[0].id,name,memberIds:[user.id,...ids as string[]],createdBy:user.id,createdAt:now})}
       catch(error){await db.from('platform_conversations').delete().eq('id',rows[0].id);throw error}
     }
-    after(async()=>{if(isGroup)await notifyMessageRecipients(db,ids as string[],{title:name,conversationId:rows[0].id});else await Promise.all(rows.map(row=>notifyMessageRecipients(db,[row.recipient_user_id!],{title:profile?.display_name||'MyBasket',conversationId:row.id}))) });
+    after(async()=>{if(isGroup)await notifyMessageRecipients(db,ids as string[],{title:name,conversationId:rows[0].id,invitation:true});else await Promise.all(rows.map(row=>notifyMessageRecipients(db,[row.recipient_user_id!],{title:profile?.display_name||'MyBasket',conversationId:row.id,invitation:true}))) });
     return NextResponse.json({ id: rows[0].id, ids:rows.map(row=>row.id), count:rows.length, group:isGroup });
   } catch (error) { return failure(error); }
 }

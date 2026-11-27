@@ -1,19 +1,26 @@
 const assert=require('node:assert/strict'),fs=require('node:fs'),path=require('node:path'),Module=require('node:module'),ts=require('typescript');
 for(const ext of ['.ts','.tsx'])require.extensions[ext]=(mod,file)=>mod._compile(ts.transpileModule(fs.readFileSync(file,'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2020,esModuleInterop:true}}).outputText,file);
 const id=n=>`00000000-0000-4000-8000-${String(n).padStart(12,'0')}`;
-let current=id(1);const team=id(10),tables={teams:[{id:team,user_id:id(1),name:'U18',metadata:{otherSetting:'preserve'},updated_at:'v1'}],team_members:[{team_id:team,user_id:id(2),status:'active',permissions:{players:true}}],players:[{id:id(5),team_id:team,first_name:'Player',metadata:{messagingUserId:id(3)}}],profiles:[1,2,3,4].map(n=>({id:id(n),display_name:`User ${n}`})),platform_conversations:[],platform_conversation_replies:[]};
+let current=id(1);const team=id(10),tables={teams:[{id:team,user_id:id(1),name:'U18',metadata:{otherSetting:'preserve'},updated_at:'v1'}],team_members:[{team_id:team,user_id:id(2),status:'active',permissions:{players:true}}],players:[{id:id(5),team_id:team,first_name:'Player',metadata:{messagingUserId:id(3)}}],profiles:[1,2,3,4].map(n=>({id:id(n),display_name:`User ${n}`})),platform_conversations:[],platform_conversation_replies:[],message_user_blocks:[],message_hidden_threads:[]};
 const clone=v=>JSON.parse(JSON.stringify(v));
 function contains(row,needle){if(Array.isArray(needle))return needle.every(n=>Array.isArray(row)&&row.some(r=>contains(r,n)));if(needle&&typeof needle==='object')return Object.entries(needle).every(([k,v])=>contains(row?.[k],v));return row===needle}
 let conflicts=0;
-const db={auth:{getUser:async()=>({data:{user:current?{id:current,email:'test@example.test'}:null}})},from(table){let filters=[],mode='select',payload,executed;
+const db={auth:{getUser:async()=>({data:{user:current?{id:current,email:'test@example.test',email_confirmed_at:'2026-01-01'}:null}})},rpc:async(_name,{p_email})=>({data:p_email==='staff@example.test'?id(2):null,error:null}),from(table){let filters=[],mode='select',payload,executed;
  const run=()=>{if(executed)return executed;let rows=tables[table].filter(row=>filters.every(f=>f(row)));
  if(mode==='insert'){rows=(Array.isArray(payload)?payload:[payload]).map(r=>({...clone(r),id:r.id||crypto.randomUUID()}));tables[table].push(...rows)}
+ if(mode==='upsert'){
+   const keys=table==='message_hidden_threads'?['user_id','conversation_id']:['blocker_id','blocked_id'];
+   const current=tables[table].find(row=>keys.every(key=>row[key]===payload[key]));
+   if(current)Object.assign(current,clone(payload));else tables[table].push(clone(payload));
+ }
  if(mode==='update'){if(table==='teams'&&conflicts){conflicts--;rows=[]}else rows.forEach(r=>Object.assign(r,clone(payload)))}
  if(mode==='delete')tables[table]=tables[table].filter(r=>!rows.includes(r));
  rows=clone(rows);if(table==='platform_conversations')rows=rows.map(r=>({...r,platform_conversation_replies:clone(tables.platform_conversation_replies.filter(x=>x.conversation_id===r.id))}));return executed={data:rows,error:null}};
- const q={select:()=>q,eq:(k,v)=>{filters.push(r=>r[k]===v);return q},is:(k,v)=>{filters.push(r=>r[k]==v);return q},in:(k,v)=>{filters.push(r=>v.includes(r[k]));return q},contains:(k,v)=>{filters.push(r=>contains(r[k],v));return q},or:expression=>{const tests=expression.split(',').map(x=>{const[k,,value]=x.split('.');return r=>r[k]===value});filters.push(r=>tests.some(f=>f(r)));return q},order:()=>q,insert:value=>{mode='insert';payload=value;return q},update:value=>{mode='update';payload=value;return q},delete:()=>{mode='delete';return q},maybeSingle:async()=>{const r=run();return{...r,data:r.data[0]||null}},then:(resolve,reject)=>Promise.resolve(run()).then(resolve,reject)};return q}};
-const actual=Module._load;Module._load=function(request,parent,main){if(request==='next/server')return{NextResponse:{json:(d,init)=>Response.json(d,init)},after:()=>{}};if(request==='@/lib/supabase/server')return{createClient:async()=>db};if(request==='@/lib/supabase/admin-server')return{createAdminClient:()=>db};if(request==='@/lib/messaging/push-server')return{sendMessagePush:async()=>{throw Error('Never send real notifications in tests')}};if(request.startsWith('@/'))request=path.resolve(__dirname,'..',request.slice(2));return actual.call(this,request,parent,main)};
-const api=require('../app/api/messages/team/route.ts'),inbox=require('../app/api/messages/platform/route.ts');
+ const q={select:()=>q,eq:(k,v)=>{filters.push(r=>r[k]===v);return q},is:(k,v)=>{filters.push(r=>r[k]==v);return q},in:(k,v)=>{filters.push(r=>v.includes(r[k]));return q},contains:(k,v)=>{filters.push(r=>contains(r[k],v));return q},or:expression=>{const terms=expression.match(/and\([^)]*\)|[^,]+/g)||[];const tests=terms.map(term=>{
+ const atoms=term.startsWith('and(')?term.slice(4,-1).split(','):[term];return row=>atoms.every(atom=>{const[key,,value]=atom.split('.');return row[key]===value});
+ });filters.push(row=>tests.some(test=>test(row)));return q},lt:(k,v)=>{filters.push(r=>r[k]<v);return q},order:()=>q,upsert:value=>{mode='upsert';payload=value;return q},insert:value=>{mode='insert';payload=value;return q},update:value=>{mode='update';payload=value;return q},delete:()=>{mode='delete';return q},maybeSingle:async()=>{const r=run();return{...r,data:r.data[0]||null}},then:(resolve,reject)=>Promise.resolve(run()).then(resolve,reject)};return q}};
+const emitted=[];const actual=Module._load;Module._load=function(request,parent,main){if(request==='next/server')return{NextResponse:{json:(d,init)=>Response.json(d,init)},after:()=>{}};if(request==='@/lib/supabase/server')return{createClient:async()=>db};if(request==='@/lib/supabase/admin-server')return{createAdminClient:()=>db};if(request==='@/lib/server-notifications')return{sendTransactionalEmail:async(template)=>{emitted.push(template);return {sent:true}}};if(request==='@/lib/messaging/push-server')return{sendMessagePush:async()=>{throw Error('Never send real notifications in tests')}};if(request.startsWith('@/'))request=path.resolve(__dirname,'..',request.slice(2));return actual.call(this,request,parent,main)};
+const api=require('../app/api/messages/team/route.ts'),inbox=require('../app/api/messages/platform/route.ts'),email=require('../app/api/messages/email/route.ts');
 const req=body=>new Request('https://mybasket.test/api/messages',{method:'POST',body:JSON.stringify(body),headers:{'Content-Type':'application/json'}});
 (async()=>{
  current=null;assert.equal((await inbox.GET()).status,401);current=id(1);
@@ -26,5 +33,31 @@ const req=body=>new Request('https://mybasket.test/api/messages',{method:'POST',
  current=id(4);assert.equal((await inbox.POST(req({conversationId:group.id,message:'Intrusion'}))).status,403);assert.equal((await(await inbox.GET()).json()).conversations.length,0);
  current=id(3);const privateForStaff=tables.platform_conversations.find(r=>r.recipient_user_id===id(2)&&r.id!==group.id);assert.equal((await inbox.POST(req({conversationId:privateForStaff.id,message:'Intrusion'}))).status,403);
  tables.teams[0].metadata.messagingGroups[0].memberIds=[id(1),id(3)];current=id(2);assert.equal((await inbox.POST(req({conversationId:group.id,message:'Removed'}))).status,403);assert.equal((await(await inbox.GET()).json()).conversations.some(c=>c.id===group.id),false,'Removed first recipient cannot bypass group membership');
+ assert.equal((await inbox.PATCH(req({conversationId:privateForStaff.id,action:'block'}))).status,200);
+ current=id(1);
+ assert.equal((await inbox.POST(req({conversationId:privateForStaff.id,message:'Blocked reply'}))).status,403);
+ assert.equal((await api.POST(req({teamId:team,recipientIds:[id(2)],message:'Blocked new thread'}))).status,403);
+ assert.equal((await email.POST(req({to:'staff@example.test',subject:'Blocked email',message:'Blocked email'}))).status,403);
+ assert.equal(emitted.length,0);
+ current=id(2);
+ assert.equal((await inbox.PATCH(req({conversationId:privateForStaff.id,action:'hide'}))).status,200);
+ let hidden=await(await inbox.GET()).json();
+ assert.equal(hidden.conversations.some(c=>c.id===privateForStaff.id),false);
+ assert.deepEqual(hidden.blockedContacts,[{id:id(1),name:'User 1'}]);
+ assert.equal((await inbox.PATCH(req({contactId:id(1),action:'unblock'}))).status,200);
+ current=id(1);
+ let sent=await email.POST(req({to:'staff@example.test',subject:'Internal',message:'Added to the same thread'}));
+ assert.equal(sent.status,200);assert.equal((await sent.json()).id,privateForStaff.id);
+ assert.match(emitted[0].html,/logo-mybasket-header\.png/);
+ assert.match(emitted[0].html,new RegExp(privateForStaff.id));
+ sent=await email.POST(req({to:'extern@example.test',subject:'External',message:'External invitation'}));
+ assert.equal(sent.status,200);
+ const external=await sent.json();
+ assert.match(emitted[1].html,/Invitation à échanger/);
+ const sentThread=(await(await inbox.GET()).json()).conversations.find(c=>c.id===external.id);
+ assert.equal(sentThread.initial_message,'External invitation');
+ assert.equal(sentThread.can_reply,false);
+ assert.equal((await inbox.PATCH(req({conversationId:external.id,action:'hide'}))).status,200);
+ assert.equal((await(await inbox.GET()).json()).conversations.some(c=>c.id===external.id),false);
  console.log('Messaging: private broadcast isolation, no partial unauthorized sends, shared group replies, roster access, membership removal and metadata conflict retry passed.');
 })().catch(e=>{console.error(e);process.exitCode=1});
