@@ -41,6 +41,8 @@ import GamePlanMontage, { type GamePlanMontageItem } from "./GamePlanMontage";
 import { loadMatchAnalysis, loadOfficialTeamMatches } from "@/lib/analytics/load-matches";
 import { loadLnbTeamStatistics } from "@/lib/lnb-statistics-client";
 import { fillLnbIdentity } from "@/lib/lnb-statistics-model";
+import { SCOUTING_SHOT_COURT, scoutingPlayerShotZones, scoutingShotsByPlayer } from "@/lib/scouting-player-shots";
+import { COURT_H, COURT_W } from "@/lib/shot-chart-zones";
 import { compactPlayerMetrics, shotSplit, codedPlayerStats, officialPlayerStats, scoutingTeamStats, scoutingTeamForm, teamMetrics, formatScoutingStat } from "@/lib/scouting-report-stats";
 import { scoutingHighlights, highlightColors } from "@/lib/scouting-highlights";
 import { scoutingProfileIcon, scoutingProfileLabel } from "@/lib/scouting-profiles";
@@ -2432,6 +2434,8 @@ async function exportGamePlanPdf(team: Team, gp: GamePlan, rotation: Rotation | 
       if (selectedPlayers.length) {
         startPdfPage();
         let playerHeadingPending = true;
+        const shotsByPlayer = scoutingShotsByPlayer(actions);
+        let shotCourt: string | null | undefined;
         for (const player of selectedPlayers) {
           const card = cards.get(player.id);
           const row = officialPlayers.get(player.id);
@@ -2462,9 +2466,29 @@ async function exportGamePlanPdf(team: Team, gp: GamePlan, rotation: Rotation | 
           const includedPlayerMetrics = compactPlayerMetrics.filter(key => !card?.hiddenPdfStats?.includes(key));
           const showPlayerChart = !card?.hidePdfShotChart && Boolean(shotSplit(stats?.["2T"], stats?.["3T"]));
           const afterStats = statsY + (includedPlayerMetrics.length ? 6 : 0);
-          const notesY = Math.max(36, afterStats + (showPlayerChart ? 17 : 5));
+          const shotZones = card?.printShotMap && !card.shotMapImage ? scoutingPlayerShotZones(shotsByPlayer, p) : [];
+          if (shotZones.length && shotCourt === undefined) shotCourt = await imageToDataUrl(SCOUTING_SHOT_COURT);
+          const shotImage = card?.printShotMap ? card.shotMapImage || (shotZones.length ? shotCourt : null) : null;
+          const shotMapWidth = 72;
+          let shotMapHeight = 0;
+          let shotMapDrawWidth = shotMapWidth;
+          if (shotImage) {
+            const ratio = card?.shotMapImage ? (() => {
+              try {
+                const image = doc.getImageProperties(shotImage);
+                return image.height / image.width;
+              } catch { return 0; }
+            })() : COURT_H / COURT_W;
+            if (ratio > 0) {
+              shotMapHeight = Math.min(65, shotMapWidth * ratio);
+              shotMapDrawWidth = shotMapHeight / ratio;
+            }
+          }
+          const shotMapY = afterStats + (showPlayerChart ? 17 : 5);
+          const shotMapSpace = shotMapHeight ? shotMapHeight + 10 : 0;
+          const notesY = Math.max(36, shotMapY + shotMapSpace);
           const lineCount = lines.length + (defense.length ? defense.length + 1 : 0);
-          const height = lineCount ? notesY + (lineCount - 1) * 3.6 + 4 : Math.max(36, afterStats + (showPlayerChart ? 16 : 4));
+          const height = lineCount ? notesY + (lineCount - 1) * 3.6 + 4 : Math.max(36, shotMapY + shotMapSpace);
           if (playerHeadingPending || y + height > H - M) {
             if (!playerHeadingPending) startPdfPage();
             title("Fiches joueurs");
@@ -2498,6 +2522,20 @@ async function exportGamePlanPdf(team: Team, gp: GamePlan, rotation: Rotation | 
             doc.setTextColor(...black); doc.setFontSize(8); doc.text(value == null ? "—" : formatScoutingStat(value), dx + 1.2, dy + 5.3);
           });
           if (showPlayerChart) pie(x + 6, y + afterStats + 7, 6, stats?.["2T"], stats?.["3T"]);
+          if (shotImage && shotMapHeight) {
+            const top = y + shotMapY + 5;
+            doc.setFont("helvetica", "bold"); doc.setFontSize(8); doc.setTextColor(...burgundy);
+            doc.text(card?.shotMapImage ? "Carte de tirs · source externe" : "Carte de tirs · réussis / tentés", x, top - 1);
+            doc.addImage(shotImage, card?.shotMapImage ? "JPEG" : "PNG", x, top, shotMapDrawWidth, shotMapHeight);
+            shotZones.forEach(({ zone, made, attempts }) => {
+              const cx = x + zone.px / COURT_W * shotMapDrawWidth;
+              const cy = top + zone.py / COURT_H * shotMapHeight;
+              doc.setFillColor(107, 26, 44);
+              doc.roundedRect(cx - 2.9, cy - 1.15, 5.8, 2.3, .6, .6, "F");
+              doc.setFont("helvetica", "bold"); doc.setFontSize(5.5); doc.setTextColor(255);
+              doc.text(`${made}/${attempts}`, cx, cy + .65, { align: "center" });
+            });
+          }
           doc.setTextColor(...black); doc.setFont("helvetica", "normal"); doc.setFontSize(8);
           lines.forEach((line, index) => doc.text(line, x, y + notesY + index * 3.6));
           if (defense.length) {

@@ -13,6 +13,8 @@ import {
 } from "@/lib/analytics/matches";
 import { fillLnbIdentity } from "@/lib/lnb-statistics-model";
 import { useLnbTeamStatistics } from "@/lib/lnb-statistics-client";
+import { SCOUTING_SHOT_COURT, scoutingPlayerShotZones, scoutingShotsByPlayer } from "@/lib/scouting-player-shots";
+import { COURT_H, COURT_W } from "@/lib/shot-chart-zones";
 import { compactPlayerMetrics, shotSplit, codedPlayerStats, officialPlayerStats, scoutingTeamStats, scoutingTeamForm, teamMetrics } from "@/lib/scouting-report-stats";
 import { scoutingColors } from "@/lib/scouting-colors";
 import { SCOUTING_COURTS_PER_ROW, scoutingCourtsPerRow, type ScoutingCourtsPerRow } from "@/lib/pdf-court-diagrams";
@@ -54,6 +56,8 @@ export type ScoutCard = {
   liveStats?: Record<string, number | null>;
   hiddenPdfStats?: string[];
   hidePdfShotChart?: boolean;
+  printShotMap?: boolean;
+  shotMapImage?: string;
 };
 export type ScoutStat = { id: string; metric: string; limit: number };
 export type ScoutBoardValue = {
@@ -87,14 +91,14 @@ function ShotPie({ two, three }: { two: unknown; three: unknown }) {
   </div>;
 }
 
-async function scoutingPhoto(file: File) {
+async function scoutingPhoto(file: File, maxDimension = 360) {
   if (file.size > 15 * 1024 * 1024) throw new Error("Image trop volumineuse");
   const url = URL.createObjectURL(file);
   try {
     const image = new Image();
     image.src = url;
     await image.decode();
-    const scale = Math.min(1, 360 / Math.max(image.naturalWidth, image.naturalHeight));
+    const scale = Math.min(1, maxDimension / Math.max(image.naturalWidth, image.naturalHeight));
     const canvas = document.createElement("canvas");
     canvas.width = Math.max(1, Math.round(image.naturalWidth * scale));
     canvas.height = Math.max(1, Math.round(image.naturalHeight * scale));
@@ -136,6 +140,7 @@ function ScoutingContent({
 }: ScoutingProps) {
   const team = scoutTeams.find((t) => t.id === value.scoutTeamId);
   const [profilePicker, setProfilePicker] = useState<{ id: string; slot: "profile" | "profile2" } | null>(null);
+  const [shotMapError, setShotMapError] = useState("");
   const [photoError, setPhotoError] = useState("");
   const [importedCount, setImportedCount] = useState(0);
   const [tab, setTab] = useState<"team" | "players" | "plays">("team");
@@ -144,6 +149,7 @@ function ScoutingContent({
     rows: [],
     actions: [],
   });
+  const shotsByPlayer = useMemo(() => scoutingShotsByPlayer(data.actions), [data.actions]);
   const { data: official, loading: officialLoading, error: officialError } =
     useLnbTeamStatistics(team?.id || "", team?.competitionSource === "lnb");
   const [fixtures, setFixtures] = useState<DataRow[]>([]);
@@ -582,6 +588,7 @@ function ScoutingContent({
                 const officialStats = officialPlayerStats(published);
                 const stats = card?.liveStats ?? officialStats ?? liveStats.get(p.id);
                 const activeSlot = profilePicker && profilePicker.id === p.id ? profilePicker.slot : null;
+                const shotZones = scoutingPlayerShotZones(shotsByPlayer, p);
                 const columns = compactPlayerMetrics.map(title => [title, stats?.[title] ?? null] as const);
                 return (
                   <article className={`${styles.card} ${styles.playerCard}`} key={p.id}>
@@ -646,6 +653,39 @@ function ScoutingContent({
                         <label><input type="checkbox" checked={!card?.hidePdfShotChart}
                           onChange={event => patchCard(p.id, { hidePdfShotChart: !event.target.checked })} /> Répartition des tirs</label>
                       </div>
+                    </details>
+                    <details>
+                      <summary>Carte de tirs (shot chart)</summary>
+                      <div className={styles.pdfStatsChoices}>
+                        <label><input type="checkbox" checked={card?.printShotMap === true}
+                          onChange={event => patchCard(p.id, { printShotMap: event.target.checked })} /> Inclure la carte de tirs dans le PDF</label>
+                        <label className={styles.photoButton}>Ajouter une carte externe
+                          <input type="file" accept="image/*" onChange={async event => {
+                            const file = event.currentTarget.files?.[0];
+                            event.currentTarget.value = "";
+                            if (!file) return;
+                            setShotMapError("");
+                            try {
+                              const image = await scoutingPhoto(file, 1000);
+                              patchCard(p.id, { shotMapImage: image, printShotMap: true });
+                            } catch { setShotMapError(p.id); }
+                          }} />
+                        </label>
+                        {card?.shotMapImage && <button type="button" onClick={() => patchCard(p.id, { shotMapImage: undefined })}>Retirer la carte externe</button>}
+                      </div>
+                      {shotMapError === p.id && <p role="alert">Impossible de charger cette image.</p>}
+                      {card?.shotMapImage ? <img className={styles.shotMapPreview} src={card.shotMapImage} alt={`Carte de tirs de ${label(p)} · source externe`} />
+                      : shotZones.length ? <>
+                        <svg className={styles.shotMapPreview} viewBox={`0 0 ${COURT_W} ${COURT_H}`} role="img" aria-label={`Carte de tirs de ${label(p)}`}>
+                          <image href={SCOUTING_SHOT_COURT} width={COURT_W} height={COURT_H} />
+                          {shotZones.map(({ zone, made, attempts }) => <g key={zone.id}>
+                            <title>{zone.label} · {made} sur {attempts}</title>
+                            <rect x={zone.px - 63} y={zone.py - 25} width={126} height={50} rx={16} fill="#6b1a2c" />
+                            <text x={zone.px} y={zone.py + 12} textAnchor="middle" fill="white" fontSize={38} fontWeight={700}>{made}/{attempts}</text>
+                          </g>)}
+                        </svg>
+                        <p className={styles.note}>LiveStats · tirs réussis / tentés par zone</p>
+                      </> : <p className={styles.note}>Aucun tir localisé disponible. Tu peux ajouter une carte provenant d’une source externe.</p>}
                     </details>
                     <ShotPie two={stats?.["2T"]} three={stats?.["3T"]} />
                     {stats && <p className={styles.note}>{card?.liveStats ? "LiveStats · stats importées" : officialStats ? "LNB · saison" : "LiveStats · matchs scoutés"}</p>}

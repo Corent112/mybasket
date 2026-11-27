@@ -280,3 +280,10 @@
   width: auto;
   accent-color: #6b1a2c;
 }
+
+.shotMapPreview {
+  display: block;
+  width: min(100%, 480px);
+  height: auto;
+  margin: 8px 0;
+}
