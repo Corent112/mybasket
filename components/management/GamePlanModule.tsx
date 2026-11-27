@@ -129,6 +129,7 @@ type Scouting = {
   offensiveKeys?: string;
   defensiveKeys?: string;
   teamStats?: Record<string,number|null>;
+  summaryColors?: ScoutBoardValue["summaryColors"];
   teamStatColors?: ScoutBoardValue["teamStatColors"];
   printCompetitionRanks?: boolean;
   hiddenPdfTeamStats?: ScoutBoardValue["hiddenPdfTeamStats"];
@@ -2267,7 +2268,7 @@ async function exportGamePlanPdf(team: Team, gp: GamePlan, rotation: Rotation | 
       }
       }
 
-      const summaryTable = (heading: string, columns: string[], values: string[][], widths: number[]) => {
+      const summaryTable = (heading: string, columns: string[], values: string[][], widths: number[], colorKey: (row: number, column: number) => string = () => "") => {
         ensure(20 + values.length * 8);
         title(heading);
         const drawRow = (cells: string[], header: boolean, index: number) => {
@@ -2277,6 +2278,13 @@ async function exportGamePlanPdf(team: Team, gp: GamePlan, rotation: Rotation | 
           doc.setTextColor(...(header ? burgundy : black)); doc.setFontSize(8);
           let x = M;
           cells.forEach((cell, column) => {
+            const tone = header ? undefined : gp.scouting.summaryColors?.[colorKey(index, column)];
+            doc.setTextColor(...(header ? burgundy : black));
+            if (tone === "green" || tone === "red") {
+              doc.setFillColor(tone === "green" ? "#def1e4" : "#fae0e3");
+              doc.roundedRect(x + 1, y + 1, widths[column] - 2, 6, 1, 1, "F");
+              doc.setTextColor(scoutingShotZoneColors[tone]);
+            }
             const lines = doc.splitTextToSize(cell, widths[column] - 4).slice(0, 2);
             doc.text(lines, x + 2, y + (lines.length === 2 ? 3 : 5));
             x += widths[column];
@@ -2291,11 +2299,13 @@ async function exportGamePlanPdf(team: Team, gp: GamePlan, rotation: Rotation | 
       const showStat = (value: number | null) => value == null ? "—" : formatScoutingStat(value);
       if (includeTeamSection("points") && !gp.scouting.hiddenPdfTeamStats?.some(key => key === "pointsFor" || key === "pointsAgainst")) summaryTable("Points par match", ["Situation", "MJ", "Marqués", "Encaissés"],
         splits.map(row => [row.label, String(row.games), showStat(row.forPoints), showStat(row.against)]),
-        [0.4, 0.15, 0.225, 0.225].map(part => part * tableWidth));
+        [0.4, 0.15, 0.225, 0.225].map(part => part * tableWidth),
+        (row, col) => col === 2 || col === 3 ? `points:${splits[row].label}:${col === 2 ? "for" : "against"}` : "");
       if (recent.length && includeTeamSection("form")) summaryTable("Forme du moment", ["Date", "Adversaire", "Lieu", "Score", "Résultat"],
         recent.map(match => [match.date.split("-").reverse().join("/"), match.opponent, match.venue,
           `${match.forPoints}–${match.against}`, match.outcome === "V" ? "Victoire" : match.outcome === "D" ? "Défaite" : "Nul"]),
-        [0.16, 0.38, 0.18, 0.14, 0.14].map(part => part * tableWidth));
+        [0.16, 0.38, 0.18, 0.14, 0.14].map(part => part * tableWidth),
+        (row, col) => col === 4 ? `form:${recent[row].id}:result` : "");
 
       const side = gp.scouting.highlightSide ?? "attaque";
       const highlights = scoutingHighlights(actions, side, gp.scouting.highlightMatchIds);
@@ -2541,6 +2551,18 @@ async function exportGamePlanPdf(team: Team, gp: GamePlan, rotation: Rotation | 
             doc.setFont("helvetica", "bold"); doc.setFontSize(8); doc.setTextColor(...burgundy);
             doc.text(card?.shotMapImage ? "Carte de tirs · source externe" : "Carte de tirs · réussite par zone", shotMapX, top - 1);
             doc.addImage(shotImage, card?.shotMapImage ? "JPEG" : "PNG", shotMapX, top, shotMapDrawWidth, shotMapHeight);
+            for (const { zone } of shotZones) {
+              const color = card?.shotZoneColors?.[zone.id];
+              if (!color) continue;
+              const points = zone.polygon.map(([px, py]) => [px / 100 * shotMapDrawWidth, py / 100 * shotMapHeight]);
+              const [first] = points;
+              doc.saveGraphicsState();
+              doc.setGState(new doc.GState({ opacity: .24 }));
+              doc.setFillColor(scoutingShotZoneColors[color]);
+              doc.lines(points.slice(1).map(([px, py], index) => [px - points[index][0], py - points[index][1]]),
+                shotMapX + first[0], top + first[1], [1, 1], "F", true);
+              doc.restoreGraphicsState();
+            }
             shotZones.forEach(({ zone, made, attempts }) => {
               const cx = shotMapX + zone.px / COURT_W * shotMapDrawWidth;
               const cy = top + zone.py / COURT_H * shotMapHeight;

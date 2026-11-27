@@ -69,6 +69,11 @@ export const scoutingPlayerNoteFields = [
   { key: "keys", label: "Clés", legacy: "defend" },
 ] as const;
 
+export type ScoutEmphasis = "green" | "red" | "neutral";
+export function nextScoutEmphasis(color?: ScoutEmphasis): ScoutEmphasis {
+  return color === "green" ? "red" : color === "red" ? "neutral" : "green";
+}
+
 export type ScoutStat = { id: string; metric: string; limit: number };
 export type ScoutBoardValue = {
   scoutTeamId?: string;
@@ -78,6 +83,7 @@ export type ScoutBoardValue = {
   offensiveKeys?: string;
   defensiveKeys?: string;
   teamStats?: Record<string, number | null>;
+  summaryColors?: Record<string, ScoutEmphasis>;
   teamStatColors?: ScoutCard["statColors"];
   printCompetitionRanks?: boolean;
   hiddenPdfTeamStats?: string[];
@@ -230,6 +236,13 @@ function ScoutingContent({
   const playerTopFive: PlayerCompetitionRank[] = official?.playerTopFive ?? [];
   const toggleHidden = (hidden: string[] | undefined, key: string, shown: boolean) =>
     shown ? (hidden || []).filter(item => item !== key) : [...new Set([...(hidden || []), key])];
+  const summaryMark = (key: string, label: string, text: string) => {
+    const color = value.summaryColors?.[key];
+    return <button type="button" className={styles.statMark} data-color={color}
+      aria-label={`${label} · ${text} · ${color === "green" ? "vert" : color === "red" ? "rouge" : "sans couleur"}`}
+      title="Cliquer pour alterner vert, rouge et sans couleur"
+      onClick={() => onChange({ summaryColors: { ...value.summaryColors, [key]: nextScoutEmphasis(color) } })}>{text}</button>;
+  };
   const statField = (key: string, title: string) => (
     <div className={styles.teamStatField} key={key}>
       <div className={styles.rankedStatLabel}>
@@ -312,6 +325,7 @@ function ScoutingContent({
               highlightNotes: "",
               teamStats: {},
               teamStatColors: {},
+              summaryColors: {},
               hiddenPdfTeamStats: [],
               hiddenPdfTeamSections: [],
             })
@@ -398,7 +412,7 @@ function ScoutingContent({
                   <h3>Points par match</h3>
                   <div className={styles.scroll}><table>
                     <thead><tr><th>Situation</th><th>MJ</th><th>Marqués</th><th>Encaissés</th></tr></thead>
-                    <tbody>{splits.map(row => <tr key={row.label}><th>{row.label}</th><td>{row.games}</td><td>{fmt(row.forPoints)}</td><td>{fmt(row.against)}</td></tr>)}</tbody>
+                    <tbody>{splits.map(row => <tr key={row.label}><th>{row.label}</th><td>{row.games}</td><td>{summaryMark(`points:${row.label}:for`, "Points marqués", fmt(row.forPoints))}</td><td>{summaryMark(`points:${row.label}:against`, "Points encaissés", fmt(row.against))}</td></tr>)}</tbody>
                   </table></div>
                 </section>
                 <section className={styles.card}>
@@ -408,7 +422,7 @@ function ScoutingContent({
                     <tbody>{recent.map((match, index) => <tr key={`${match.id}-${index}`}>
                       <td>{match.date.split("-").reverse().join("/")}</td><th>{match.opponent}</th><td>{match.venue}</td>
                       <td>{match.forPoints}–{match.against}</td>
-                      <td><span className={styles.matchOutcome} data-result={match.outcome}>{match.outcome === "V" ? "Victoire" : match.outcome === "D" ? "Défaite" : "Nul"}</span></td>
+                      <td>{summaryMark(`form:${match.id}:result`, match.opponent, match.outcome === "V" ? "Victoire" : match.outcome === "D" ? "Défaite" : "Nul")}</td>
                     </tr>)}</tbody>
                   </table></div> : <p>Aucun résultat daté disponible.</p>}
                 </section>
@@ -686,12 +700,24 @@ function ScoutingContent({
                       {shotMapError === p.id && <p role="alert">Impossible de charger cette image.</p>}
                       {card?.shotMapImage ? <img className={styles.shotMapPreview} src={card.shotMapImage} alt={`Carte de tirs de ${label(p)} · source externe`} />
                       : shotZones.length ? <>
-                        <svg className={styles.shotMapPreview} viewBox={`0 0 ${COURT_W} ${COURT_H}`} role="img" aria-label={`Carte de tirs de ${label(p)}`}>
+                        <svg className={styles.shotMapPreview} viewBox={`0 0 ${COURT_W} ${COURT_H}`} role="group" aria-label={`Carte de tirs de ${label(p)}`}>
                           <image href={SCOUTING_SHOT_COURT} width={COURT_W} height={COURT_H} />
                           {shotZones.map(({ zone, made, attempts }) => {
                             const color = card?.shotZoneColors?.[zone.id];
                             const percent = scoutingShotPercentage(made, attempts);
-                            return <g key={zone.id}>
+                            const changeColor = () => {
+                              const colors = { ...card?.shotZoneColors };
+                              const next = nextScoutEmphasis(color);
+                              if (next === "neutral") delete colors[zone.id];
+                              else colors[zone.id] = next;
+                              patchCard(p.id, { shotZoneColors: colors });
+                            };
+                            return <g key={zone.id} role="button" tabIndex={0} style={{ cursor: "pointer" }}
+                              aria-label={`${zone.label} · ${percent} · ${color === "green" ? "vert" : color === "red" ? "rouge" : "sans couleur"}`}
+                              onClick={changeColor} onKeyDown={event => {
+                                if (event.key === "Enter" || event.key === " ") { event.preventDefault(); changeColor(); }
+                              }}>
+                              <path d={zone.d} fill={color ? scoutingShotZoneColors[color] : "transparent"} fillOpacity={color ? .24 : 1} />
                               <title>{zone.label} · {made}/{attempts} · {percent}</title>
                               <rect x={zone.px - 60} y={zone.py - 25} width={120} height={50} rx={16} fill={color ? scoutingShotZoneColors[color] : "#fff"} />
                               <text x={zone.px} y={zone.py + 12} textAnchor="middle" fill={color ? "white" : "#28191d"} fontSize={35} fontWeight={700}>{percent}</text>
