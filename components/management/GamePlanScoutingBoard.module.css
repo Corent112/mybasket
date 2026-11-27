@@ -302,3 +302,5 @@
   width: 100%;
   resize: vertical;
 }
+
+.fullWidth { grid-column: 1 / -1; }

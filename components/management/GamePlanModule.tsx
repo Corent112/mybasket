@@ -1019,7 +1019,7 @@ export default function GamePlanModule() {
     }, "Impossible de charger les Game Plans sauvegardés.");
   };
 
-  const replaceCurrentPlan = async (next: GamePlan) => {
+  const replaceCurrentPlan = async (next: GamePlan, tab: "match" | "scout" = "match") => {
     planRevision.current++;
     await writeCurrentPlan(teamId, next);
     try {
@@ -1041,7 +1041,7 @@ export default function GamePlanModule() {
     setAddSysFor(null);
     setDrawingFor(null);
     setShowScoutDataPicker(false);
-    setActiveTab("match");
+    setActiveTab(tab);
   };
 
   const resumeSavedPlan = async (id: string) => {
@@ -1057,6 +1057,11 @@ export default function GamePlanModule() {
   const resetGamePlan = async () => {
     if (!window.confirm("Vider le Game Plan en cours ? Les informations du match, le scouting, les systèmes et les dessins seront réinitialisés. Les Game Plans sauvegardés seront conservés.")) return;
     await runPlanAction(() => replaceCurrentPlan(EMPTY_GP), "Impossible de réinitialiser le Game Plan.");
+  };
+
+  const startNewScouting = async () => {
+    if (!window.confirm("Créer un nouveau scouting ? Le Game Plan en cours sera vidé. Les sauvegardes seront conservées.")) return;
+    await runPlanAction(() => replaceCurrentPlan(EMPTY_GP, "scout"), "Impossible de créer un nouveau scouting.");
   };
 
   /* --- Mon Calendrier (localStorage) : ajout robuste, sans erreur --- */
@@ -1498,6 +1503,9 @@ export default function GamePlanModule() {
 
       <div className="gp-actions">
         {savedFlash && <span className="gp-saved">✓ Enregistré</span>}
+        {activeTab === "scout" && <button type="button" className="gp-btn ghost" onClick={startNewScouting}>
+          Nouveau scouting
+        </button>}
         <button type="button" className="gp-btn ghost" onClick={() => saveNow(true)}>
           💾 Sauvegarder le Game Plan
         </button>
@@ -2378,6 +2386,7 @@ async function exportGamePlanPdf(team: Team, gp: GamePlan, rotation: Rotation | 
           y += height + 4;
         }
       };
+      box("Identité de jeu", gp.scouting.identity || "");
       pair("Intention offensive", gp.scouting.offense || gp.scouting.style, "Intention défensive", gp.scouting.defense || gp.scouting.defensivePlan, false);
       pair("Nos clés offensives", gp.scouting.offensiveKeys || "", "Nos clés défensives", gp.scouting.defensiveKeys || "", true);
 

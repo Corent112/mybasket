@@ -542,7 +542,7 @@ function ScoutingContent({
                     "Ce que nous voulons empêcher…",
                   ],
                 ].map(([key, title, placeholder]) => (
-                  <label className={styles.card} key={key}>
+                  <label className={key === "identity" ? `${styles.card} ${styles.fullWidth}` : styles.card} key={key}>
                     <h3>{title}</h3>
                     <textarea
                       value={String(value[key as keyof ScoutBoardValue] || "")}
