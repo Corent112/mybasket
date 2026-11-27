@@ -9,7 +9,7 @@ export const EXTERNAL_BOX_FIELDS = [
 export const IMPORT_BOX_FIELDS = [...BOX_FIELDS, ...EXTERNAL_BOX_FIELDS] as const;
 export const isSignedBoxField = (key: string) => key === "plus_minus" || key === "eff";
 export type BoxField = typeof IMPORT_BOX_FIELDS[number][0];
-export type ImportedBoxRow = { name: string; number: string; playerId: string; minutes: string; present?: boolean; stats: Partial<Record<BoxField, string>> };
+export type ImportedBoxRow = { name: string; number: string; playerId: string; minutes: string; present?: boolean; starter?: boolean; stats: Partial<Record<BoxField, string>> };
 export type ImportRosterPlayer = { id: string; name: string; number: number | null };
 export const normalizeBoxText = (value: unknown) => String(value ?? "").normalize("NFD").replace(/\p{M}/gu,"").toLowerCase().replace(/[^a-z0-9]/g,"");
 const aliases: Record<string, BoxField> = {

@@ -16,6 +16,7 @@ type MatchRow = {
   result: string | null;
   home: boolean | null;
   source?: string | null;
+  imported_starting_five?: string[] | null;
   minutes_by_player?: Record<string,number|null> | null;
 };
 
@@ -308,7 +309,7 @@ export default function TeamMatchHistoryBlock({ teamId, onDeleted }: { teamId: s
 
       const { data, error } = await supabase
         .from("match_stats")
-        .select("id, opponent, match_date, us_score, them_score, result, home, source, minutes_by_player:project_state->minutesByPlayer")
+        .select("id, opponent, match_date, us_score, them_score, result, home, source, imported_starting_five:project_state->importedStartingFive, minutes_by_player:project_state->minutesByPlayer")
         .eq("team_id", teamId)
         .order("match_date", { ascending: false });
 
@@ -749,6 +750,7 @@ export default function TeamMatchHistoryBlock({ teamId, onDeleted }: { teamId: s
                               <td className="left player-cell">
                                 {details.playerNames[playerId] ||
                                   `Joueur ${playerId.slice(0, 8)}`}
+                                {selectedMatch?.imported_starting_five?.includes(playerId) && <span className="place"> · 5 majeur</span>}
                               </td>
                               <td>{formatBoxMinutes(selectedMatch?.minutes_by_player?.[playerId]??row.minutes_seconds??null)||"—"}</td>
                               <td className="strong">{n(row.pts)}</td>

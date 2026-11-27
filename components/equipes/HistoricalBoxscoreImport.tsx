@@ -13,6 +13,32 @@ const input = {border:"1px solid #dfd5d8",borderRadius:8,padding:"9px 10px",back
 const card = {border:"1px solid #e7dfe1",borderRadius:14,padding:16,background:"white"};
 const field = {display:"grid",gap:5,fontSize:13,fontWeight:700} as const;
 
+function parseBoxEntryTime(value: string) {
+  if (!/^\d{0,2}:\d{0,2}$/.test(value)) return parseBoxMinutes(value);
+  const [min, sec] = value.split(":");
+  return parseBoxMinutes(`${min || "0"}:${sec.padStart(2, "0")}`);
+}
+
+function TimeInputs({ value, label, disabled, onChange }: {
+  value: string; label: string; disabled?: boolean; onChange: (value: string) => void;
+}) {
+  let display = value;
+  if (value && !/^\d{0,2}:\d{0,2}$/.test(value)) {
+    try { display = formatBoxMinutes(parseBoxMinutes(value)); } catch { /* Keep the value available for correction. */ }
+  }
+  const [minutes = "", seconds = ""] = display.split(":");
+  function update(min: string, sec: string) {
+    onChange(min || sec ? `${min}:${sec}` : "");
+  }
+  const style = { ...input, width: 52, textAlign: "center" } as const;
+  return <span role="group" aria-label={`Temps de jeu · ${label}`} style={{ display: "inline-flex", gap: 4 }}>
+    <input style={style} inputMode="numeric" maxLength={2} placeholder="Min" aria-label={`Minutes · ${label}`}
+      disabled={disabled} value={minutes} onChange={event => update(event.target.value.replace(/\D/g, ""), seconds)} />
+    <input style={style} inputMode="numeric" maxLength={2} placeholder="Sec" aria-label={`Secondes · ${label}`}
+      disabled={disabled} value={seconds} onChange={event => update(minutes, event.target.value.replace(/\D/g, ""))} />
+  </span>;
+}
+
 export default function HistoricalBoxscoreImport({teamId,teamName,roster,onSaved}:{teamId:string;teamName:string;roster:ImportRosterPlayer[];onSaved:()=>void}) {
   const supabase=useMemo(()=>createClient(),[]);
   const [mode,setMode]=useState<"import"|"minutes"|null>(null);
@@ -138,6 +164,7 @@ export default function HistoricalBoxscoreImport({teamId,teamName,roster,onSaved
     try{
       if(!date||!opponent.trim()||!category||!/^\d+$/.test(us)||!/^\d+$/.test(them))throw new Error("Renseigne la date, l’adversaire, la compétition et les deux scores.");
       if(!rows.length||rows.some(row=>!row.playerId||!playerNames.has(row.playerId))||new Set(rows.map(row=>row.playerId)).size!==rows.length)throw new Error("Associe chaque ligne à un joueur différent de l’équipe.");
+      if (rows.filter(row => row.starter && row.present !== false).length > 5) throw new Error("Le cinq majeur est limité à cinq joueurs.");
       const payload=rows.map(row=>{
         const stats=Object.fromEntries(BOX_FIELDS.map(([key,label])=>{
           if(row.present===false)return [key,key==="plus_minus"?null:0];
@@ -155,7 +182,7 @@ export default function HistoricalBoxscoreImport({teamId,teamName,roster,onSaved
           if (!(isSignedBoxField(key) ? /^[+-]?\d{1,4}$/ : /^\d{1,4}$/).test(value)) throw new Error(`${playerNames.get(row.playerId)} : vérifie ${label}.`);
           return [[key, Number(value)]];
         }));
-        return {...stats,...external,player_id:row.playerId,present:row.present!==false,minutes_seconds:row.present!==false?parseBoxMinutes(row.minutes):null};
+        return {...stats,...external,player_id:row.playerId,present:row.present!==false,starter:row.present!==false&&row.starter===true,minutes_seconds:row.present!==false?parseBoxEntryTime(row.minutes):null};
       });
       const {error}=await supabase.rpc("import_historical_boxscore",{p_team:teamId,p_date:date,p_opponent:opponent.trim(),p_home:home,p_category:category,p_us:Number(us),p_them:Number(them),p_rows:payload});
       if(error)throw new Error(error.message);
@@ -182,7 +209,7 @@ export default function HistoricalBoxscoreImport({teamId,teamName,roster,onSaved
   async function saveMinutes(){
     setBusy(true);setError("");setNotice("");
     try{
-      const payload=minuteRows.filter(row=>row.present).map(row=>({player_id:row.player_id,minutes_seconds:parseBoxMinutes(minutes[row.player_id]||"")}));
+      const payload=minuteRows.filter(row=>row.present).map(row=>({player_id:row.player_id,minutes_seconds:parseBoxEntryTime(minutes[row.player_id]||"")}));
       const {error}=await supabase.rpc("edit_historical_boxscore_minutes",{p_team:teamId,p_match:selected,p_rows:payload});
       if(error)throw new Error(error.message);
       setNotice("Temps de jeu enregistrés.");onSaved();await loadMatches();
@@ -214,16 +241,20 @@ export default function HistoricalBoxscoreImport({teamId,teamName,roster,onSaved
         <label style={field}>Notre score<input style={input} inputMode="numeric" value={us} onChange={e=>setUs(e.target.value)} /></label>
         <label style={field}>Score adverse<input style={input} inputMode="numeric" value={them} onChange={e=>setThem(e.target.value)} /></label>
       </div>
-      <small>Temps de jeu facultatif, au format MM:SS ou en minutes.</small>
+      <small>Temps de jeu et cinq majeur facultatifs.</small>
       <div style={{overflowX:"auto",minWidth:0}}><table className="boxscore-import-table">
-        <thead><tr><th style={{textAlign:"left",minWidth:120}}>Joueur sur la feuille</th><th style={{textAlign:"left",minWidth:160}}>Joueur MyBasket</th><th>A joué</th><th>Temps de jeu</th>{visibleFields.map(([key,label])=><th key={key} title={key === "pf" ? "Fautes personnelles" : key === "fouls_drawn" ? "Fautes provoquées" : undefined} style={{padding:5}}>{label}</th>)}<th/></tr></thead>
+        <thead><tr><th style={{textAlign:"left",minWidth:120}}>Joueur sur la feuille</th><th style={{textAlign:"left",minWidth:160}}>Joueur MyBasket</th><th>A joué</th><th>5 majeur</th><th>Temps de jeu</th>{visibleFields.map(([key,label])=><th key={key} title={key === "pf" ? "Fautes personnelles" : key === "fouls_drawn" ? "Fautes provoquées" : undefined} style={{padding:5}}>{label}</th>)}<th/></tr></thead>
         <tbody>{rows.map((row,i)=>{
           const suggestion = row.playerId ? undefined : suggestBoxPlayer(row, roster.filter(player => !rows.some(other => other.playerId === player.id)));
           return <tr key={i} style={{borderTop:"1px solid #eee"}}>
           <td style={{padding:5}}>{row.number? "#"+row.number+" ":""}{row.name||"Saisie manuelle"}</td>
           <td><select style={{...input,width:"100%"}} aria-label={`Joueur ligne ${i+1}`} value={row.playerId} onChange={e=>updateRow(i,{playerId:e.target.value})}><option value="">Choisir…</option>{roster.map(p=><option key={p.id} value={p.id} disabled={rows.some((other,j)=>j!==i&&other.playerId===p.id)}>{p.number!=null?`#${p.number} `:""}{p.name}{suggestion?.id === p.id ? " · suggéré" : ""}</option>)}</select>{suggestion && <small>Association suggérée · {suggestion.name}</small>}</td>
-          <td><input type="checkbox" aria-label={`A joué · ${row.name||i+1}`} checked={row.present!==false} onChange={e=>updateRow(i,{present:e.target.checked})}/></td>
-          <td><input disabled={row.present===false} style={{...input,width:65}} aria-label={`Temps de jeu ${row.name || i + 1}`} placeholder="—" value={row.minutes} onChange={e=>updateRow(i,{minutes:e.target.value})}/></td>
+          <td><input type="checkbox" aria-label={`A joué · ${row.name||i+1}`} checked={row.present!==false} onChange={e=>updateRow(i,{present:e.target.checked,...(!e.target.checked ? { starter:false } : {})})}/></td>
+          <td><input type="checkbox" aria-label={`5 majeur · ${row.name || i + 1}`} checked={row.starter === true}
+            disabled={row.present === false || (!row.starter && rows.filter(player => player.starter).length >= 5)}
+            onChange={e=>updateRow(i,{starter:e.target.checked})}/></td>
+          <td><TimeInputs value={row.minutes} label={row.name || String(i + 1)} disabled={row.present===false || busy}
+            onChange={value=>updateRow(i,{minutes:value})}/></td>
           {visibleFields.map(([key,label])=><td key={key}><input style={{...input,width:48,textAlign:"center",padding:"8px 4px"}} aria-label={`${label} ${row.name||i+1}`} disabled={row.present===false} inputMode="numeric" placeholder="—" value={row.stats[key]??""} onChange={e=>updateRow(i,{stats:{...row.stats,[key]:e.target.value}})}/></td>)}
           <td><button type="button" className="boxscore-button" aria-label="Retirer la ligne" onClick={()=>setRows(current=>current.filter((_,j)=>j!==i))}>×</button></td>
         </tr>;})}</tbody>
@@ -232,7 +263,8 @@ export default function HistoricalBoxscoreImport({teamId,teamName,roster,onSaved
     </div>}
     {mode==="minutes"&&<div style={{display:"grid",gap:12,marginTop:16}}>
       <label style={field}>Match terminé<select style={input} disabled={busy||loading} value={selected} onChange={e=>void selectMatch(e.target.value)}><option value="">Choisir un match</option>{matches.map(match=><option key={match.id} value={match.id}>{match.match_date} — {match.opponent}{match.source==="external"?" (importé)":""}</option>)}</select></label>
-      {minuteRows.map(row=><label key={row.player_id} style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:12}}><span>{playerNames.get(row.player_id)||"Ancien joueur"}{row.present?"":" · absent"}</span><input style={{...input,width:90,textAlign:"center"}} placeholder="MM:SS" disabled={!row.present||busy} value={minutes[row.player_id]??""} onChange={e=>setMinutes(old=>({...old,[row.player_id]:e.target.value}))}/></label>)}
+      {minuteRows.map(row=><label key={row.player_id} style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:12}}><span>{playerNames.get(row.player_id)||"Ancien joueur"}{row.present?"":" · absent"}</span><TimeInputs value={minutes[row.player_id]??""} label={playerNames.get(row.player_id) || "Ancien joueur"} disabled={!row.present||busy}
+        onChange={value=>setMinutes(old=>({...old,[row.player_id]:value}))}/></label>)}
       {selected&&minuteRows.length>0&&<><small>Laisse vide si le temps de jeu est inconnu.</small><button type="button" className="boxscore-button" style={{background:"#6b1a2c",color:"white",justifySelf:"end"}} disabled={busy} onClick={saveMinutes}>Enregistrer les temps de jeu</button></>}
     </div>}
     {error&&<p role="alert" style={{color:"#a31532",fontSize:13}}>{error}</p>}
