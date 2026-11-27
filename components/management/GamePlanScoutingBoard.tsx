@@ -522,12 +522,12 @@ function ScoutingContent({
                   ],
                   [
                     "offense",
-                    "Tendances offensives",
+                    "Intention offensive",
                     "Transition, pick and roll, spacing…",
                   ],
                   [
                     "defense",
-                    "Tendances défensives",
+                    "Intention défensive",
                     "Couvertures, aides, pression, zone…",
                   ],
                   [

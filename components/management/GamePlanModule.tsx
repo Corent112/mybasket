@@ -2378,7 +2378,7 @@ async function exportGamePlanPdf(team: Team, gp: GamePlan, rotation: Rotation | 
           y += height + 4;
         }
       };
-      pair("Tendances offensives", gp.scouting.offense || gp.scouting.style, "Tendances défensives", gp.scouting.defense || gp.scouting.defensivePlan, false);
+      pair("Intention offensive", gp.scouting.offense || gp.scouting.style, "Intention défensive", gp.scouting.defense || gp.scouting.defensivePlan, false);
       pair("Nos clés offensives", gp.scouting.offensiveKeys || "", "Nos clés défensives", gp.scouting.defensiveKeys || "", true);
 
       const scoutSystems = [...new Map(gp.librarySystems.filter(system => sysSection(system) === "scout").map(system => [system.id, system])).values()];
@@ -2471,7 +2471,7 @@ async function exportGamePlanPdf(team: Team, gp: GamePlan, rotation: Rotation | 
           const shotZones = card?.printShotMap && !card.shotMapImage ? scoutingPlayerShotZones(shotsByPlayer, p) : [];
           if (shotZones.length && shotCourt === undefined) shotCourt = await imageToDataUrl(SCOUTING_SHOT_COURT);
           const shotImage = card?.printShotMap ? card.shotMapImage || (shotZones.length ? shotCourt : null) : null;
-          const shotMapWidth = 72;
+          const shotMapWidth = 58;
           let shotMapHeight = 0;
           let shotMapDrawWidth = shotMapWidth;
           if (shotImage) {
@@ -2482,7 +2482,7 @@ async function exportGamePlanPdf(team: Team, gp: GamePlan, rotation: Rotation | 
               } catch { return 0; }
             })() : COURT_H / COURT_W;
             if (ratio > 0) {
-              shotMapHeight = Math.min(65, shotMapWidth * ratio);
+              shotMapHeight = Math.min(44, shotMapWidth * ratio);
               shotMapDrawWidth = shotMapHeight / ratio;
             }
           }
