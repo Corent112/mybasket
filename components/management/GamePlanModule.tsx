@@ -2486,9 +2486,10 @@ async function exportGamePlanPdf(team: Team, gp: GamePlan, rotation: Rotation | 
               shotMapDrawWidth = shotMapHeight / ratio;
             }
           }
-          const shotMapY = afterStats + (showPlayerChart ? 17 : 5);
-          const shotMapSpace = shotMapHeight ? shotMapHeight + 10 : 0;
-          const notesY = Math.max(36, shotMapY + shotMapSpace);
+          const shotMapY = afterStats + 5;
+          const shotMapX = x + width - shotMapDrawWidth;
+          const notesY = Math.max(36, afterStats + (showPlayerChart ? 17 : 5),
+            shotMapHeight ? shotMapY + shotMapHeight + 5 : 0);
           const noteLineCount = Math.max(...noteBlocks.map(block => block.lines.length));
           const noteHeight = noteLineCount ? 9 + noteLineCount * 3.6 : 0;
           const firstNoteHeight = Math.min(noteHeight, H - 2 * M - 8 - notesY - 3);
@@ -2527,12 +2528,12 @@ async function exportGamePlanPdf(team: Team, gp: GamePlan, rotation: Rotation | 
           });
           if (showPlayerChart) pie(x + 6, y + afterStats + 7, 6, stats?.["2T"], stats?.["3T"]);
           if (shotImage && shotMapHeight) {
-            const top = y + shotMapY + 5;
+            const top = y + shotMapY;
             doc.setFont("helvetica", "bold"); doc.setFontSize(8); doc.setTextColor(...burgundy);
-            doc.text(card?.shotMapImage ? "Carte de tirs · source externe" : "Carte de tirs · réussis / tentés", x, top - 1);
-            doc.addImage(shotImage, card?.shotMapImage ? "JPEG" : "PNG", x, top, shotMapDrawWidth, shotMapHeight);
+            doc.text(card?.shotMapImage ? "Carte de tirs · source externe" : "Carte de tirs · réussis / tentés", shotMapX, top - 1);
+            doc.addImage(shotImage, card?.shotMapImage ? "JPEG" : "PNG", shotMapX, top, shotMapDrawWidth, shotMapHeight);
             shotZones.forEach(({ zone, made, attempts }) => {
-              const cx = x + zone.px / COURT_W * shotMapDrawWidth;
+              const cx = shotMapX + zone.px / COURT_W * shotMapDrawWidth;
               const cy = top + zone.py / COURT_H * shotMapHeight;
               doc.setFillColor(107, 26, 44);
               doc.roundedRect(cx - 2.9, cy - 1.15, 5.8, 2.3, .6, .6, "F");
