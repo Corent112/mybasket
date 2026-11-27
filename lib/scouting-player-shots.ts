@@ -37,3 +37,10 @@ export function scoutingPlayerShotZones(players: ReturnType<typeof scoutingShots
     return attempts ? [{ zone, made, attempts }] : [];
   });
 }
+
+export type ScoutingShotZoneColor = "green" | "red";
+export const scoutingShotZoneColors = { green: "#166534", red: "#a32135" } as const;
+
+export function scoutingShotPercentage(made: number, attempts: number) {
+  return attempts > 0 ? `${Math.round(100 * made / attempts)} %` : "—";
+}

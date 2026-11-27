@@ -13,7 +13,7 @@ import {
 } from "@/lib/analytics/matches";
 import { fillLnbIdentity } from "@/lib/lnb-statistics-model";
 import { useLnbTeamStatistics } from "@/lib/lnb-statistics-client";
-import { SCOUTING_SHOT_COURT, scoutingPlayerShotZones, scoutingShotsByPlayer } from "@/lib/scouting-player-shots";
+import { SCOUTING_SHOT_COURT, scoutingPlayerShotZones, scoutingShotsByPlayer, scoutingShotPercentage, scoutingShotZoneColors, type ScoutingShotZoneColor } from "@/lib/scouting-player-shots";
 import { COURT_H, COURT_W } from "@/lib/shot-chart-zones";
 import { compactPlayerMetrics, shotSplit, codedPlayerStats, officialPlayerStats, scoutingTeamStats, scoutingTeamForm, teamMetrics } from "@/lib/scouting-report-stats";
 import { scoutingColors } from "@/lib/scouting-colors";
@@ -61,6 +61,7 @@ export type ScoutCard = {
   hidePdfShotChart?: boolean;
   printShotMap?: boolean;
   shotMapImage?: string;
+  shotZoneColors?: Record<string, ScoutingShotZoneColor>;
 };
 export const scoutingPlayerNoteFields = [
   { key: "strengths", label: "Points forts", legacy: "notes" },
@@ -687,13 +688,31 @@ function ScoutingContent({
                       : shotZones.length ? <>
                         <svg className={styles.shotMapPreview} viewBox={`0 0 ${COURT_W} ${COURT_H}`} role="img" aria-label={`Carte de tirs de ${label(p)}`}>
                           <image href={SCOUTING_SHOT_COURT} width={COURT_W} height={COURT_H} />
-                          {shotZones.map(({ zone, made, attempts }) => <g key={zone.id}>
-                            <title>{zone.label} · {made} sur {attempts}</title>
-                            <rect x={zone.px - 63} y={zone.py - 25} width={126} height={50} rx={16} fill="#6b1a2c" />
-                            <text x={zone.px} y={zone.py + 12} textAnchor="middle" fill="white" fontSize={38} fontWeight={700}>{made}/{attempts}</text>
-                          </g>)}
+                          {shotZones.map(({ zone, made, attempts }) => {
+                            const color = card?.shotZoneColors?.[zone.id];
+                            const percent = scoutingShotPercentage(made, attempts);
+                            return <g key={zone.id}>
+                              <title>{zone.label} · {made}/{attempts} · {percent}</title>
+                              <rect x={zone.px - 60} y={zone.py - 25} width={120} height={50} rx={16} fill={color ? scoutingShotZoneColors[color] : "#fff"} />
+                              <text x={zone.px} y={zone.py + 12} textAnchor="middle" fill={color ? "white" : "#28191d"} fontSize={35} fontWeight={700}>{percent}</text>
+                            </g>;
+                          })}
                         </svg>
-                        <p className={styles.note}>LiveStats · tirs réussis / tentés par zone</p>
+                        <div className={styles.pdfStatsChoices}>
+                          {shotZones.map(({ zone, made, attempts }) => <label key={zone.id}>
+                            {zone.label} · {scoutingShotPercentage(made, attempts)} ({made}/{attempts})
+                            <select aria-label={`Couleur · ${zone.label}`} value={card?.shotZoneColors?.[zone.id] ?? ""}
+                              onChange={event => {
+                                const colors = { ...card?.shotZoneColors };
+                                const color = event.target.value;
+                                if (color === "green" || color === "red") colors[zone.id] = color;
+                                else delete colors[zone.id];
+                                patchCard(p.id, { shotZoneColors: colors });
+                              }}>
+                              <option value="">Sans couleur</option><option value="green">Vert</option><option value="red">Rouge</option>
+                            </select>
+                          </label>)}
+                        </div>
                       </> : <p className={styles.note}>Aucun tir localisé disponible. Tu peux ajouter une carte provenant d’une source externe.</p>}
                     </details>
                     <ShotPie two={stats?.["2T"]} three={stats?.["3T"]} />

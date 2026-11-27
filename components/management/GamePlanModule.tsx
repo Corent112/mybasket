@@ -41,7 +41,7 @@ import GamePlanMontage, { type GamePlanMontageItem } from "./GamePlanMontage";
 import { loadMatchAnalysis, loadOfficialTeamMatches } from "@/lib/analytics/load-matches";
 import { loadLnbTeamStatistics } from "@/lib/lnb-statistics-client";
 import { fillLnbIdentity } from "@/lib/lnb-statistics-model";
-import { SCOUTING_SHOT_COURT, scoutingPlayerShotZones, scoutingShotsByPlayer } from "@/lib/scouting-player-shots";
+import { SCOUTING_SHOT_COURT, scoutingPlayerShotZones, scoutingShotsByPlayer, scoutingShotPercentage, scoutingShotZoneColors } from "@/lib/scouting-player-shots";
 import { COURT_H, COURT_W } from "@/lib/shot-chart-zones";
 import { compactPlayerMetrics, shotSplit, codedPlayerStats, officialPlayerStats, scoutingTeamStats, scoutingTeamForm, teamMetrics, formatScoutingStat } from "@/lib/scouting-report-stats";
 import { scoutingHighlights, highlightColors } from "@/lib/scouting-highlights";
@@ -2530,15 +2530,16 @@ async function exportGamePlanPdf(team: Team, gp: GamePlan, rotation: Rotation | 
           if (shotImage && shotMapHeight) {
             const top = y + shotMapY;
             doc.setFont("helvetica", "bold"); doc.setFontSize(8); doc.setTextColor(...burgundy);
-            doc.text(card?.shotMapImage ? "Carte de tirs · source externe" : "Carte de tirs · réussis / tentés", shotMapX, top - 1);
+            doc.text(card?.shotMapImage ? "Carte de tirs · source externe" : "Carte de tirs · réussite par zone", shotMapX, top - 1);
             doc.addImage(shotImage, card?.shotMapImage ? "JPEG" : "PNG", shotMapX, top, shotMapDrawWidth, shotMapHeight);
             shotZones.forEach(({ zone, made, attempts }) => {
               const cx = shotMapX + zone.px / COURT_W * shotMapDrawWidth;
               const cy = top + zone.py / COURT_H * shotMapHeight;
-              doc.setFillColor(107, 26, 44);
-              doc.roundedRect(cx - 2.9, cy - 1.15, 5.8, 2.3, .6, .6, "F");
-              doc.setFont("helvetica", "bold"); doc.setFontSize(5.5); doc.setTextColor(255);
-              doc.text(`${made}/${attempts}`, cx, cy + .65, { align: "center" });
+              const color = card?.shotZoneColors?.[zone.id];
+              doc.setFillColor(color ? scoutingShotZoneColors[color] : "#ffffff");
+              doc.roundedRect(cx - 2.7, cy - 1.15, 5.4, 2.3, .6, .6, "F");
+              doc.setFont("helvetica", "bold"); doc.setFontSize(5); doc.setTextColor(color ? "#ffffff" : "#28191d");
+              doc.text(scoutingShotPercentage(made, attempts), cx, cy + .65, { align: "center" });
             });
           }
           const drawNotes = (top: number, start: number, count: number) => {
