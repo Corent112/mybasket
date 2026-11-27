@@ -48,7 +48,7 @@ import { scoutingHighlights, highlightColors } from "@/lib/scouting-highlights";
 import { scoutingProfileIcon, scoutingProfileLabel } from "@/lib/scouting-profiles";
 import { scoutingColors } from "@/lib/scouting-colors";
 import { courtDiagramLayout, drawCourtDiagram, scoutingCourtsPerRow } from "@/lib/pdf-court-diagrams";
-import GamePlanScoutingBoard, { type ScoutBoardValue } from "./GamePlanScoutingBoard";
+import GamePlanScoutingBoard, { scoutingPlayerNoteFields, type ScoutBoardValue } from "./GamePlanScoutingBoard";
 
 /* =============================== Stores ================================ */
 
@@ -2459,10 +2459,12 @@ async function exportGamePlanPdf(team: Team, gp: GamePlan, rotation: Rotation | 
           const profileLabels: string[][] = profiles.map(({ label }) => doc.splitTextToSize(label, profileWidth - 2));
           const statsY = Math.max(16, detailsY + detailLines.length * 3.4, ...profileLabels.map(lines => 15.5 + lines.length * 3));
           doc.setFontSize(8);
-          const defendLines: string[] = card?.defend?.trim() ? doc.splitTextToSize(card.defend.trim(), width) : [];
-          const notes: string[] = card?.notes?.trim() ? doc.splitTextToSize(card.notes.trim(), width) : [];
-          const lines = notes.slice(0, defendLines.length ? 16 : 18);
-          const defense = defendLines.slice(0, 17 - lines.length);
+          const noteGap = 2;
+          const noteWidth = (W - 2 * M - 6 - 2 * noteGap) / 3;
+          const noteBlocks = scoutingPlayerNoteFields.map(({ key, label, legacy }) => {
+            const value = (card?.[key] ?? (legacy ? card?.[legacy] : "") ?? "").trim();
+            return { label, lines: value ? doc.splitTextToSize(value, noteWidth - 6) as string[] : [] };
+          });
           const includedPlayerMetrics = compactPlayerMetrics.filter(key => !card?.hiddenPdfStats?.includes(key));
           const showPlayerChart = !card?.hidePdfShotChart && Boolean(shotSplit(stats?.["2T"], stats?.["3T"]));
           const afterStats = statsY + (includedPlayerMetrics.length ? 6 : 0);
@@ -2487,8 +2489,10 @@ async function exportGamePlanPdf(team: Team, gp: GamePlan, rotation: Rotation | 
           const shotMapY = afterStats + (showPlayerChart ? 17 : 5);
           const shotMapSpace = shotMapHeight ? shotMapHeight + 10 : 0;
           const notesY = Math.max(36, shotMapY + shotMapSpace);
-          const lineCount = lines.length + (defense.length ? defense.length + 1 : 0);
-          const height = lineCount ? notesY + (lineCount - 1) * 3.6 + 4 : Math.max(36, shotMapY + shotMapSpace);
+          const noteLineCount = Math.max(...noteBlocks.map(block => block.lines.length));
+          const noteHeight = noteLineCount ? 9 + noteLineCount * 3.6 : 0;
+          const firstNoteHeight = Math.min(noteHeight, H - 2 * M - 8 - notesY - 3);
+          const height = notesY + (firstNoteHeight ? firstNoteHeight + 3 : 0);
           if (playerHeadingPending || y + height > H - M) {
             if (!playerHeadingPending) startPdfPage();
             title("Fiches joueurs");
@@ -2536,16 +2540,32 @@ async function exportGamePlanPdf(team: Team, gp: GamePlan, rotation: Rotation | 
               doc.text(`${made}/${attempts}`, cx, cy + .65, { align: "center" });
             });
           }
-          doc.setTextColor(...black); doc.setFont("helvetica", "normal"); doc.setFontSize(8);
-          lines.forEach((line, index) => doc.text(line, x, y + notesY + index * 3.6));
-          if (defense.length) {
-            const headingY = y + notesY + lines.length * 3.6;
-            doc.setFont("helvetica", "bold");
-            doc.text("Comment le défendre :", x, headingY);
-            doc.setFont("helvetica", "normal");
-            defense.forEach((line, index) => doc.text(line, x, headingY + (index + 1) * 3.6));
-          }
+          const drawNotes = (top: number, start: number, count: number) => {
+            const blockHeight = 9 + count * 3.6;
+            noteBlocks.forEach(({ label, lines }, index) => {
+              const left = M + 3 + index * (noteWidth + noteGap);
+              doc.setFillColor(245, 235, 233);
+              doc.roundedRect(left, top, noteWidth, blockHeight, 2, 2, "F");
+              doc.setFont("helvetica", "bold"); doc.setFontSize(8); doc.setTextColor(...burgundy);
+              doc.text(label, left + 3, top + 5);
+              doc.setFont("helvetica", "normal"); doc.setTextColor(...black);
+              lines.slice(start, start + count).forEach((line, row) => doc.text(line, left + 3, top + 9 + row * 3.6));
+            });
+          };
+          const firstCount = noteHeight ? Math.max(0, Math.floor((firstNoteHeight - 9 + 0.001) / 3.6)) : 0;
+          if (firstCount) drawNotes(y + notesY, 0, firstCount);
           y += height + 4;
+          for (let start = firstCount; start < noteLineCount;) {
+            startPdfPage();
+            title("Fiches joueurs");
+            doc.setFont("helvetica", "bold"); doc.setFontSize(10); doc.setTextColor(...burgundy);
+            doc.text(`${playerLabel(p)} (suite)`, M, y, { maxWidth: W - 2 * M });
+            y += 9;
+            const count = Math.min(noteLineCount - start, Math.floor((H - M - y - 13) / 3.6));
+            drawNotes(y, start, count);
+            start += count;
+            y += 13 + count * 3.6;
+          }
         }
       }
     }

@@ -49,6 +49,9 @@ export type ScoutCard = {
   profile2?: string;
   notes: string;
   defend?: string;
+  strengths?: string;
+  weaknesses?: string;
+  keys?: string;
   photo?: string;
   taille?: string;
   mainDominante?: string;
@@ -59,6 +62,12 @@ export type ScoutCard = {
   printShotMap?: boolean;
   shotMapImage?: string;
 };
+export const scoutingPlayerNoteFields = [
+  { key: "strengths", label: "Points forts", legacy: "notes" },
+  { key: "weaknesses", label: "Points faibles", legacy: null },
+  { key: "keys", label: "Clés", legacy: "defend" },
+] as const;
+
 export type ScoutStat = { id: string; metric: string; limit: number };
 export type ScoutBoardValue = {
   scoutTeamId?: string;
@@ -741,26 +750,15 @@ function ScoutingContent({
                           </div>
                           <button type="button" onClick={() => { patchCard(p.id, { [activeSlot]: "" }); setProfilePicker(null); }}>Retirer ce profil</button>
                         </fieldset>}
-                        <label>Observations
-                        <textarea
-                          value={card?.notes || ""}
-                          onChange={(e) =>
-                            patchCard(p.id, { notes: e.target.value })
-                          }
-                          placeholder="Qualités, habitudes et tendances…"
-                        />
-                        </label>
                       </div>
-                      <label>
-                        Comment le défendre
-                        <textarea
-                          value={card?.defend || ""}
-                          onChange={(e) =>
-                            patchCard(p.id, { defend: e.target.value })
-                          }
-                          placeholder="Orientation, distance, écrans, aides…"
-                        />
-                      </label>
+                    </div>
+                    <div className={styles.playerNotesGrid}>
+                      {scoutingPlayerNoteFields.map(({ key, label, legacy }) => (
+                        <label key={key}>{label}
+                          <textarea rows={3} value={card?.[key] ?? (legacy ? card?.[legacy] : "") ?? ""}
+                            onChange={event => patchCard(p.id, { [key]: event.target.value })} />
+                        </label>
+                      ))}
                     </div>
                   </article>
                 );
