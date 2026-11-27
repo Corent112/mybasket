@@ -2387,7 +2387,7 @@ async function exportGamePlanPdf(team: Team, gp: GamePlan, rotation: Rotation | 
         }
       };
       box("Identité de jeu", gp.scouting.identity || "");
-      pair("Intention offensive", gp.scouting.offense || gp.scouting.style, "Intention défensive", gp.scouting.defense || gp.scouting.defensivePlan, false);
+      pair("Intentions offensives", gp.scouting.offense || gp.scouting.style, "Intentions défensives", gp.scouting.defense || gp.scouting.defensivePlan, false);
       pair("Nos clés offensives", gp.scouting.offensiveKeys || "", "Nos clés défensives", gp.scouting.defensiveKeys || "", true);
 
       const scoutSystems = [...new Map(gp.librarySystems.filter(system => sysSection(system) === "scout").map(system => [system.id, system])).values()];
